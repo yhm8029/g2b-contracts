@@ -47,6 +47,7 @@ type CsvRecord = {
 };
 
 const requiredHeaders = ["biz_no", "business_name", "contract_date", "contract_name"];
+const amountPattern = /^(?:\d+|\d{1,3}(?:,\d{3})+)$/;
 
 const requiredRowSchema = z.object({
   biz_no: z.string().trim().min(1, "biz_no is required."),
@@ -66,6 +67,15 @@ export function parseContractCsv(content: string, sourceFileName: string): Contr
   }
 
   const headers = records[0].fields.map((header) => header.trim());
+  const duplicateHeaders = findDuplicateHeaders(headers);
+
+  if (duplicateHeaders.length > 0) {
+    return {
+      validRows: [],
+      errors: [`Duplicate CSV headers: ${duplicateHeaders.join(", ")}`],
+    };
+  }
+
   const missingHeaders = requiredHeaders.filter((header) => !headers.includes(header));
 
   if (missingHeaders.length > 0) {
@@ -142,6 +152,21 @@ function toRawRow(headers: string[], fields: string[]): CsvRawRow {
   return Object.fromEntries(headers.map((header, index) => [header, fields[index] ?? ""]));
 }
 
+function findDuplicateHeaders(headers: string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+
+  for (const header of headers) {
+    if (seen.has(header)) {
+      duplicates.add(header);
+    }
+
+    seen.add(header);
+  }
+
+  return [...duplicates];
+}
+
 function parseRawRow(
   raw: CsvRawRow,
   sourceFileName: string,
@@ -210,6 +235,10 @@ function parseOptionalAmount(row: CsvRawRow, key: string): number | null {
 
   if (raw === null) {
     return null;
+  }
+
+  if (!amountPattern.test(raw)) {
+    throw new Error(`${key} must be a valid amount.`);
   }
 
   const parsed = parseAmountToWon(raw);

@@ -34,6 +34,19 @@ describe("parseContractCsv", () => {
     expect(result.errors).toEqual(["Missing required CSV headers: contract_name"]);
   });
 
+  it("returns an error for duplicate headers", () => {
+    const result = parseContractCsv(
+      [
+        "biz_no,business_name,contract_date,contract_name,contract_name",
+        "123-45-67890,Sample Co,2026-01-15,Printer supply,Paper supply",
+      ].join("\n"),
+      "sample.csv",
+    );
+
+    expect(result.validRows).toEqual([]);
+    expect(result.errors).toEqual(["Duplicate CSV headers: contract_name"]);
+  });
+
   it("returns an error for empty CSV content", () => {
     const result = parseContractCsv(" \r\n\n", "empty.csv");
 
@@ -129,6 +142,46 @@ describe("parseContractCsv", () => {
     expect(result.errors).toEqual([
       "Row 2: current_contract_amount must be a valid amount.",
       "Row 3: total_contract_amount must be a valid amount.",
+    ]);
+  });
+
+  it("accepts unsigned integer amount fields with optional comma grouping", () => {
+    const result = parseContractCsv(
+      [
+        "biz_no,business_name,contract_date,contract_name,current_contract_amount,total_contract_amount",
+        '123-45-67890,Sample Co,2026-01-15,Printer supply,"1,200,000",0',
+      ].join("\n"),
+      "sample.csv",
+    );
+
+    expect(result.validRows).toHaveLength(1);
+    expect(result.validRows[0]).toMatchObject({
+      currentContractAmount: 1200000,
+      totalContractAmount: 0,
+    });
+    expect(result.errors).toEqual([]);
+  });
+
+  it("rejects non-decimal amount formats", () => {
+    const result = parseContractCsv(
+      [
+        "biz_no,business_name,contract_date,contract_name,current_contract_amount",
+        "123-45-67890,Sample Co,2026-01-15,Hex amount,0x10",
+        "123-45-67890,Sample Co,2026-01-16,Exponent amount,1e6",
+        "123-45-67890,Sample Co,2026-01-17,Negative amount,-100",
+        "123-45-67890,Sample Co,2026-01-18,Decimal amount,12.7",
+        '123-45-67890,Sample Co,2026-01-19,Bad grouping,"1,2,3"',
+      ].join("\n"),
+      "sample.csv",
+    );
+
+    expect(result.validRows).toEqual([]);
+    expect(result.errors).toEqual([
+      "Row 2: current_contract_amount must be a valid amount.",
+      "Row 3: current_contract_amount must be a valid amount.",
+      "Row 4: current_contract_amount must be a valid amount.",
+      "Row 5: current_contract_amount must be a valid amount.",
+      "Row 6: current_contract_amount must be a valid amount.",
     ]);
   });
 });
