@@ -27,7 +27,7 @@ describe("apiStatusLabels", () => {
 
 describe("exportHrefForLastSearch", () => {
   it("is disabled before a successful search", () => {
-    expect(exportHrefForLastSearch(null)).toBeNull();
+    expect(exportHrefForLastSearch(null, 0)).toBeNull();
   });
 
   it("uses the last successful search params instead of live form edits", () => {
@@ -38,8 +38,19 @@ describe("exportHrefForLastSearch", () => {
       businessCategory: "goods",
     };
 
-    expect(exportHrefForLastSearch(lastSearchParams)).toBe(
+    expect(exportHrefForLastSearch(lastSearchParams, 2)).toBe(
       "/api/export?bizNo=123-45-67890&dateFrom=2026-01-01&businessCategory=goods",
     );
+  });
+
+  it("is disabled when stale search params no longer have visible rows", () => {
+    const lastSearchParams = {
+      bizNo: "123-45-67890",
+      dateFrom: "",
+      dateTo: "",
+      businessCategory: "all",
+    };
+
+    expect(exportHrefForLastSearch(lastSearchParams, 0)).toBeNull();
   });
 });

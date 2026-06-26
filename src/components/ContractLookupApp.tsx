@@ -66,8 +66,8 @@ function buildQueryString(params: SearchFormParams) {
   return searchParams.toString();
 }
 
-export function exportHrefForLastSearch(params: SearchFormParams | null) {
-  if (params === null) {
+export function exportHrefForLastSearch(params: SearchFormParams | null, visibleRowCount: number) {
+  if (params === null || visibleRowCount === 0) {
     return null;
   }
 
@@ -165,7 +165,7 @@ export function ContractLookupApp() {
     () => buildQueryString({ bizNo, dateFrom, dateTo, businessCategory }),
     [bizNo, dateFrom, dateTo, businessCategory],
   );
-  const exportHref = exportHrefForLastSearch(lastSearchParams);
+  const exportHref = exportHrefForLastSearch(lastSearchParams, rows.length);
   const selectedLinks = selectedRow ? sourceLinks(selectedRow) : [];
   const latestEnrichmentError = selectedRow?.latestEnrichmentError
     ? redactSensitiveText(selectedRow.latestEnrichmentError)
@@ -203,6 +203,7 @@ export function ContractLookupApp() {
       setRows([]);
       setSummary(emptySummary);
       setSelectedRow(null);
+      setLastSearchParams(null);
       setError(searchError instanceof Error ? searchError.message : "Search failed.");
     } finally {
       setLoading(false);
