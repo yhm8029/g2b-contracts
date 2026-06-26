@@ -36,6 +36,8 @@ export type ContractSearchRow = {
   sourceStatus: string;
   lastImportedAt: string;
   lastEnrichedAt: string | null;
+  latestEnrichmentStatus: string | null;
+  latestEnrichmentError: string | null;
 };
 
 export type ImportResult = {
@@ -49,4 +51,6 @@ export type ImportResult = {
 export type DatabaseHealth = {
   contractCount: number;
   latestImportAt: string | null;
+  apiKeyConfigured?: boolean;
+  enrichmentEnabled?: boolean;
 };

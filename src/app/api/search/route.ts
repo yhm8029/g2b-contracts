@@ -44,6 +44,13 @@ function validationMessage(error: z.ZodError): string {
     .join("; ");
 }
 
+function apiHealth() {
+  return {
+    apiKeyConfigured: (process.env.DATA_GO_KR_SERVICE_KEY?.trim().length ?? 0) > 0,
+    enrichmentEnabled: process.env.ENRICHMENT_ENABLED === "true",
+  };
+}
+
 export function GET(request: NextRequest) {
   const parsed = querySchema.safeParse(queryFromRequest(request));
 
@@ -60,7 +67,7 @@ export function GET(request: NextRequest) {
     const params: ContractSearchParams = parsed.data;
     const rows = searchContractsByBusinessNumber(connection.db, params);
     const summary = summarizeContracts(rows);
-    const health = getDatabaseHealth(connection.db);
+    const health = { ...getDatabaseHealth(connection.db), ...apiHealth() };
 
     return NextResponse.json({ rows, summary, health });
   } catch (error) {

@@ -7,7 +7,7 @@ import type {
   ImportResult,
 } from "@/lib/contracts/types";
 import type { Db } from "@/lib/db/client";
-import { businesses, contractRecords, importRuns } from "@/lib/db/schema";
+import { apiEnrichmentLogs, businesses, contractRecords, importRuns } from "@/lib/db/schema";
 import { parseBusinessNumber } from "@/lib/domain/business-number";
 import type { ParsedContractCsvRow } from "@/lib/import/csv";
 
@@ -214,6 +214,20 @@ export function searchContractsByBusinessNumber(
       sourceStatus: contractRecords.sourceStatus,
       lastImportedAt: contractRecords.lastImportedAt,
       lastEnrichedAt: contractRecords.lastEnrichedAt,
+      latestEnrichmentStatus: sql<string | null>`(
+        select ${apiEnrichmentLogs.responseStatus}
+        from ${apiEnrichmentLogs}
+        where ${apiEnrichmentLogs.contractRecordId} = ${contractRecords.id}
+        order by ${apiEnrichmentLogs.createdAt} desc, ${apiEnrichmentLogs.id} desc
+        limit 1
+      )`,
+      latestEnrichmentError: sql<string | null>`(
+        select ${apiEnrichmentLogs.errorMessage}
+        from ${apiEnrichmentLogs}
+        where ${apiEnrichmentLogs.contractRecordId} = ${contractRecords.id}
+        order by ${apiEnrichmentLogs.createdAt} desc, ${apiEnrichmentLogs.id} desc
+        limit 1
+      )`,
     })
     .from(contractRecords)
     .leftJoin(businesses, eq(contractRecords.businessId, businesses.id))

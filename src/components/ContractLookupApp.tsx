@@ -117,6 +117,10 @@ function detailValue(value: string | number | null | undefined) {
   return String(value);
 }
 
+function redactSensitiveText(value: string) {
+  return value.replace(/(serviceKey|DATA_GO_KR_SERVICE_KEY)=([^&\s]+)/gi, "$1=[REDACTED]");
+}
+
 export function ContractLookupApp() {
   const [bizNo, setBizNo] = useState("123-45-67890");
   const [dateFrom, setDateFrom] = useState("");
@@ -136,6 +140,11 @@ export function ContractLookupApp() {
   );
   const exportHref = `/api/export${queryString.length > 0 ? `?${queryString}` : ""}`;
   const selectedLinks = selectedRow ? sourceLinks(selectedRow) : [];
+  const latestEnrichmentError = selectedRow?.latestEnrichmentError
+    ? redactSensitiveText(selectedRow.latestEnrichmentError)
+    : null;
+  const showEnrichmentIssue =
+    latestEnrichmentError !== null || selectedRow?.latestEnrichmentStatus === "error";
   const statusLabel = loading ? "Searching" : error ? "Error" : health ? "Connected" : "Ready";
 
   async function handleSearch(event?: FormEvent<HTMLFormElement>) {
@@ -184,7 +193,8 @@ export function ContractLookupApp() {
           </div>
           <span>DB rows {health ? formatNumber(health.contractCount) : "-"}</span>
           <span>Latest import {formatDateTime(health?.latestImportAt)}</span>
-          <span>API enrichment: manual</span>
+          <span>API key: {health?.apiKeyConfigured ? "configured" : "missing"}</span>
+          <span>Enrichment: {health?.enrichmentEnabled ? "enabled" : "disabled"}</span>
         </div>
       </header>
 
@@ -427,6 +437,15 @@ export function ContractLookupApp() {
                   <dt>Business at contract</dt>
                   <dd>{detailValue(selectedRow.businessNameAtContract)}</dd>
                 </div>
+                {showEnrichmentIssue ? (
+                  <div className="api-error-row">
+                    <dt>API error</dt>
+                    <dd>
+                      {latestEnrichmentError ??
+                        `Latest enrichment status: ${selectedRow.latestEnrichmentStatus}`}
+                    </dd>
+                  </div>
+                ) : null}
               </dl>
 
               <section className="source-section">

@@ -155,6 +155,61 @@ describe("contract repository", () => {
     }
   });
 
+  it("returns latest enrichment log status and error with search rows", () => {
+    const { sqlite, db } = createTempDb();
+    const sourceFileName = "sample-contracts.csv";
+    const csv = readFileSync(join(process.cwd(), "data", sourceFileName), "utf8");
+    const parsed = parseContractCsv(csv, sourceFileName);
+
+    expect(parsed.errors).toEqual([]);
+
+    try {
+      importParsedRows(db, parsed.validRows, sourceFileName);
+
+      const record = sqlite
+        .prepare("select id from contract_records where contract_no = ?")
+        .get("CN-2026-0001") as { id: number };
+
+      sqlite
+        .prepare(
+          [
+            "insert into api_enrichment_logs",
+            "(contract_record_id, provider, operation, response_status, error_message, created_at)",
+            "values (?, ?, ?, ?, ?, ?)",
+          ].join(" "),
+        )
+        .run(record.id, "data-go-kr", "contract-info", "ok", null, "2026-06-26T01:00:00.000Z");
+      sqlite
+        .prepare(
+          [
+            "insert into api_enrichment_logs",
+            "(contract_record_id, provider, operation, response_status, error_message, created_at)",
+            "values (?, ?, ?, ?, ?, ?)",
+          ].join(" "),
+        )
+        .run(
+          record.id,
+          "data-go-kr",
+          "contract-info",
+          "error",
+          "DATA_GO_KR_SERVICE_KEY=[REDACTED] timeout",
+          "2026-06-26T02:00:00.000Z",
+        );
+
+      const [latestRow] = searchContractsByBusinessNumber(db, {
+        bizNo: "1234567890",
+        businessCategory: "goods",
+      });
+
+      expect(latestRow).toMatchObject({
+        latestEnrichmentStatus: "error",
+        latestEnrichmentError: "DATA_GO_KR_SERVICE_KEY=[REDACTED] timeout",
+      });
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("does not leave a business-only partial write when a contract row fails", () => {
     const { sqlite, db } = createTempDb();
     const sourceFileName = "sample-contracts.csv";

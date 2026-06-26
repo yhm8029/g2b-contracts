@@ -35,6 +35,8 @@ function contractRow(overrides: Partial<ContractSearchRow> = {}): ContractSearch
     sourceStatus: "local_only",
     lastImportedAt: "2026-06-26T00:00:00.000Z",
     lastEnrichedAt: null,
+    latestEnrichmentStatus: null,
+    latestEnrichmentError: null,
     ...overrides,
   };
 }

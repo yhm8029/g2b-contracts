@@ -513,6 +513,19 @@ tbody tr.selected {
   overflow-wrap: anywhere;
 }
 
+.detail-list .api-error-row {
+  background: var(--danger-soft);
+  border: 1px solid #ffc9c1;
+  border-radius: 8px;
+  margin-top: 8px;
+  padding: 10px;
+}
+
+.api-error-row dt,
+.api-error-row dd {
+  color: var(--danger);
+}
+
 .source-section,
 .freshness-section {
   display: grid;

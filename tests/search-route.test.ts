@@ -22,6 +22,8 @@ vi.mock("@/lib/contracts/repository", () => ({
 
 describe("GET /api/search", () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
     vi.clearAllMocks();
     mocks.searchContractsByBusinessNumber.mockReset();
     mocks.getDatabaseHealth.mockReset();
@@ -42,5 +44,24 @@ describe("GET /api/search", () => {
     await expect(response.json()).resolves.toEqual({ error: "Search failed." });
     expect(response.status).toBe(500);
     expect(mocks.close).toHaveBeenCalledOnce();
+  });
+
+  it("returns safe API key and enrichment status in health payload", async () => {
+    vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "test-secret-value");
+    vi.stubEnv("ENRICHMENT_ENABLED", "true");
+    mocks.getDatabaseHealth.mockReturnValue({ contractCount: 7, latestImportAt: "2026-06-26T01:02:03.000Z" });
+
+    const { GET } = await import("@/app/api/search/route");
+    const response = await GET(new NextRequest("http://localhost/api/search?bizNo=1234567890"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      health: {
+        contractCount: 7,
+        latestImportAt: "2026-06-26T01:02:03.000Z",
+        apiKeyConfigured: true,
+        enrichmentEnabled: true,
+      },
+    });
   });
 });
