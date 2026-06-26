@@ -142,7 +142,7 @@ export function importParsedRows(
 
     tx.insert(importRuns)
       .values({
-        sourceName: "contract_index_csv",
+        sourceName: "csv",
         sourceFileName,
         rowCount: result.rowCount,
         insertedCount: result.insertedCount,

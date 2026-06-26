@@ -101,6 +101,11 @@ describe("contract repository", () => {
         .prepare("select count(*) as count from contract_records")
         .get() as { count: number };
       expect(records.count).toBe(2);
+
+      const latestImportRun = sqlite
+        .prepare("select source_name as sourceName from import_runs order by id desc limit 1")
+        .get() as { sourceName: string };
+      expect(latestImportRun.sourceName).toBe("csv");
     } finally {
       sqlite.close();
     }
