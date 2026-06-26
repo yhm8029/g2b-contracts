@@ -48,10 +48,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unexpected server error";
 }
 
-function isRepositoryValidationError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("Business registration number");
-}
-
 export function GET(request: NextRequest) {
   const parsed = querySchema.safeParse(queryFromRequest(request));
 
@@ -77,8 +73,7 @@ export function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    const status = isRepositoryValidationError(error) ? 400 : 500;
-    return NextResponse.json({ error: errorMessage(error) }, { status });
+    return NextResponse.json({ error: errorMessage(error) }, { status: 400 });
   } finally {
     connection?.sqlite.close();
   }
