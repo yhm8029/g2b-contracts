@@ -130,11 +130,8 @@ export async function enrichContractRecord(
       applyValue(updates, record, "contractDetailUrl", contract.contractDetailUrl);
     }
 
-    if (Object.keys(updates).length === 0) {
-      return { updated: false, message: "No enrichment fields changed." };
-    }
-
     const now = new Date().toISOString();
+    const fieldsChanged = Object.keys(updates).length > 0;
 
     db.update(contractRecords)
       .set({
@@ -147,7 +144,10 @@ export async function enrichContractRecord(
       .run();
 
     insertLog(db, record.id, "success", requestParams);
-    return { updated: true, message: "Record enriched." };
+    return {
+      updated: true,
+      message: fieldsChanged ? "Record enriched." : "Record enrichment checked.",
+    };
   } catch (error) {
     const message = errorMessage(error);
     insertLog(db, record?.id ?? null, "error", requestParams, message);

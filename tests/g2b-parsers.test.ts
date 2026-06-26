@@ -216,6 +216,85 @@ describe("enrichContractRecord", () => {
     }
   });
 
+  it("writes metadata and a success log when API checks succeed without field changes", async () => {
+    const { sqlite, db } = createTempDb();
+    insertContractRecord(sqlite);
+    sqlite
+      .prepare(
+        [
+          "update contract_records",
+          "set notice_name = ?, notice_detail_url = ?, unified_contract_no = ?,",
+          "contract_detail_url = ?, updated_at = ?",
+          "where id = 1",
+        ].join(" "),
+      )
+      .run(
+        "Maintenance bid notice",
+        "https://www.g2b.go.kr/notice/20260100001",
+        "UN-2026-0001",
+        "https://www.g2b.go.kr/contract/CN-2026-0001",
+        "2026-06-26T00:00:00.000Z",
+      );
+
+    try {
+      const result = await enrichContractRecord(db, 1, {
+        fetchBidNotice: vi.fn(async () => ({
+          noticeNo: "20260100001",
+          noticeOrder: "00",
+          noticeName: "Maintenance bid notice",
+          noticeDetailUrl: null,
+        })),
+        fetchContractInfo: vi.fn(async () => ({
+          contractNo: "CN-2026-0001",
+          unifiedContractNo: "UN-2026-0001",
+          contractName: null,
+          contractDetailUrl: "https://www.g2b.go.kr/contract/CN-2026-0001",
+        })),
+      });
+
+      expect(result).toEqual({ updated: true, message: "Record enrichment checked." });
+
+      const record = sqlite
+        .prepare(
+          [
+            "select notice_name as noticeName, notice_detail_url as noticeDetailUrl,",
+            "unified_contract_no as unifiedContractNo, contract_name as contractName,",
+            "contract_detail_url as contractDetailUrl, source_status as sourceStatus,",
+            "last_enriched_at as lastEnrichedAt, updated_at as updatedAt",
+            "from contract_records where id = 1",
+          ].join(" "),
+        )
+        .get() as {
+        noticeName: string;
+        noticeDetailUrl: string;
+        unifiedContractNo: string;
+        contractName: string;
+        contractDetailUrl: string;
+        sourceStatus: string;
+        lastEnrichedAt: string;
+        updatedAt: string;
+      };
+
+      expect(record).toMatchObject({
+        noticeName: "Maintenance bid notice",
+        noticeDetailUrl: "https://www.g2b.go.kr/notice/20260100001",
+        unifiedContractNo: "UN-2026-0001",
+        contractName: "Existing contract name",
+        contractDetailUrl: "https://www.g2b.go.kr/contract/CN-2026-0001",
+        sourceStatus: "api_enriched",
+      });
+      expect(record.lastEnrichedAt).toEqual(expect.any(String));
+      expect(record.updatedAt).not.toBe("2026-06-26T00:00:00.000Z");
+
+      const log = sqlite
+        .prepare("select response_status as responseStatus, error_message as errorMessage from api_enrichment_logs")
+        .get() as { responseStatus: string; errorMessage: string | null };
+      expect(log).toEqual({ responseStatus: "success", errorMessage: null });
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("writes an error log when enrichment fetches fail", async () => {
     const { sqlite, db } = createTempDb();
     insertContractRecord(sqlite);
