@@ -7,4 +7,10 @@ describe("createSourceRowHash", () => {
     const b = createSourceRowHash({ amount: "1000", contract_no: "A", biz_no: "123" });
     expect(a).toBe(b);
   });
+
+  it("distinguishes delimiter-containing values from separate keys", () => {
+    const a = createSourceRowHash({ a: "x|b=y" });
+    const b = createSourceRowHash({ a: "x", b: "y" });
+    expect(a).not.toBe(b);
+  });
 });
