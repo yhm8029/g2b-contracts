@@ -48,6 +48,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unexpected server error";
 }
 
+function isBusinessNumberError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Business registration number");
+}
+
 export function GET(request: NextRequest) {
   const parsed = querySchema.safeParse(queryFromRequest(request));
 
@@ -73,7 +77,11 @@ export function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    return NextResponse.json({ error: errorMessage(error) }, { status: 400 });
+    if (isBusinessNumberError(error)) {
+      return NextResponse.json({ error: errorMessage(error) }, { status: 400 });
+    }
+
+    return NextResponse.json({ error: "Export failed." }, { status: 500 });
   } finally {
     connection?.sqlite.close();
   }

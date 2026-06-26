@@ -44,10 +44,6 @@ function validationMessage(error: z.ZodError): string {
     .join("; ");
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unexpected server error";
-}
-
 export function GET(request: NextRequest) {
   const parsed = querySchema.safeParse(queryFromRequest(request));
 
@@ -68,7 +64,7 @@ export function GET(request: NextRequest) {
 
     return NextResponse.json({ rows, summary, health });
   } catch (error) {
-    return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
+    return NextResponse.json({ error: "Search failed." }, { status: 500 });
   } finally {
     connection?.sqlite.close();
   }

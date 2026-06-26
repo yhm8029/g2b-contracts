@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   close: vi.fn(),
   searchContractsByBusinessNumber: vi.fn(),
+  getDatabaseHealth: vi.fn(),
 }));
 
 vi.mock("@/lib/db/client", () => ({
@@ -15,44 +16,30 @@ vi.mock("@/lib/db/init", () => ({
 }));
 
 vi.mock("@/lib/contracts/repository", () => ({
+  getDatabaseHealth: mocks.getDatabaseHealth,
   searchContractsByBusinessNumber: mocks.searchContractsByBusinessNumber,
 }));
 
-describe("GET /api/export", () => {
+describe("GET /api/search", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.searchContractsByBusinessNumber.mockReset();
+    mocks.getDatabaseHealth.mockReset();
     mocks.searchContractsByBusinessNumber.mockReturnValue([]);
-  });
-
-  it("returns 400 JSON when repository search rejects the business number", async () => {
-    mocks.searchContractsByBusinessNumber.mockImplementation(() => {
-      throw new Error("Business registration number must contain 10 digits.");
-    });
-
-    const { GET } = await import("@/app/api/export/route");
-    const response = await GET(
-      new NextRequest("http://localhost/api/export?bizNo=1234567890"),
-    );
-
-    await expect(response.json()).resolves.toEqual({
-      error: "Business registration number must contain 10 digits.",
-    });
-    expect(response.status).toBe(400);
-    expect(mocks.close).toHaveBeenCalledOnce();
+    mocks.getDatabaseHealth.mockReturnValue({ contractCount: 0, latestImportAt: null });
   });
 
   it("returns generic 500 JSON when repository search fails unexpectedly", async () => {
     mocks.searchContractsByBusinessNumber.mockImplementation(() => {
-      throw new Error("SQLITE_BUSY: database is locked at C:\\data\\g2b.sqlite");
+      throw new Error("SQLITE_CANTOPEN: unable to open C:\\secret\\g2b.sqlite");
     });
 
-    const { GET } = await import("@/app/api/export/route");
+    const { GET } = await import("@/app/api/search/route");
     const response = await GET(
-      new NextRequest("http://localhost/api/export?bizNo=1234567890"),
+      new NextRequest("http://localhost/api/search?bizNo=1234567890"),
     );
 
-    await expect(response.json()).resolves.toEqual({ error: "Export failed." });
+    await expect(response.json()).resolves.toEqual({ error: "Search failed." });
     expect(response.status).toBe(500);
     expect(mocks.close).toHaveBeenCalledOnce();
   });
