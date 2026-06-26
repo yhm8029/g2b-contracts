@@ -10,8 +10,12 @@ export type ContractSummary = {
 export function summarizeContracts(rows: ContractSearchRow[]): ContractSummary {
   return {
     contractCount: rows.length,
-    totalAmount: rows.reduce((sum, row) => sum + (row.totalContractAmount ?? 0), 0),
-    noticeLinkedCount: rows.filter((row) => row.noticeNo !== null).length,
+    totalAmount: rows.reduce(
+      (sum, row) => sum + (row.totalContractAmount ?? row.currentContractAmount ?? 0),
+      0,
+    ),
+    noticeLinkedCount: rows.filter((row) => row.noticeNo !== null || row.noticeDetailUrl !== null)
+      .length,
     latestContractDate: rows.reduce<string | null>((latest, row) => {
       if (latest === null || row.contractDate > latest) {
         return row.contractDate;
