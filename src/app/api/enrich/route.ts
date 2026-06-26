@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createDb } from "@/lib/db/client";
 import { initializeSqliteSchema } from "@/lib/db/init";
 import { enrichContractRecord } from "@/lib/g2b/enrichment";
+import { redactG2bSecrets } from "@/lib/g2b/http";
 
 export const runtime = "nodejs";
 
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
     initializeSqliteSchema(connection.sqlite);
 
     const result = await enrichContractRecord(connection.db, parsed.data.recordId);
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, message: redactG2bSecrets(result.message) });
   } catch {
     return NextResponse.json({ error: "Enrichment failed." }, { status: 500 });
   } finally {

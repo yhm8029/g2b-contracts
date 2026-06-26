@@ -7,6 +7,18 @@ export function getServiceKey(): string | null {
   return key === undefined || key.length === 0 ? null : key;
 }
 
+export function redactG2bSecrets(message: string): string {
+  let redacted = message.replace(/(serviceKey=)[^&\s]+/gi, "$1[REDACTED]");
+  redacted = redacted.replace(/(serviceKey%3D)[^&\s]+/gi, "$1[REDACTED]");
+
+  const serviceKey = getServiceKey();
+  if (serviceKey !== null) {
+    redacted = redacted.split(serviceKey).join("[REDACTED]");
+  }
+
+  return redacted;
+}
+
 export function buildG2bUrl(baseUrl: string, operation: string, params: G2bParams = {}): URL {
   const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
   const normalizedOperation = operation.replace(/^\/+/, "");

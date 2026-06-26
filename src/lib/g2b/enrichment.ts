@@ -8,6 +8,7 @@ import {
   type ContractInfo,
   type ContractInfoIdentifier,
 } from "@/lib/g2b/contract-info-client";
+import { redactG2bSecrets } from "@/lib/g2b/http";
 import {
   fetchSuccessfulBid,
   type SuccessfulBidInfo,
@@ -65,7 +66,7 @@ type ContractRecordUpdates = Partial<{
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
+    return redactG2bSecrets(error.message);
   }
 
   return "G2B enrichment failed.";
@@ -98,7 +99,7 @@ function insertLog(
       operation: "enrichContractRecord",
       requestParamsJson: JSON.stringify(requestParams),
       responseStatus,
-      errorMessage: message ?? null,
+      errorMessage: message === undefined ? null : redactG2bSecrets(message),
     })
     .run();
 }

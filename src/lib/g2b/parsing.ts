@@ -23,6 +23,13 @@ const responseItemsSchema = z
   .object({
     response: z
       .object({
+        header: z
+          .object({
+            resultCode: optionalApiString.optional(),
+            resultMsg: optionalApiString.optional(),
+          })
+          .passthrough()
+          .optional(),
         body: z
           .object({
             items: z.unknown().optional(),
@@ -38,8 +45,18 @@ export type ApiItemResult = {
   item: unknown;
 };
 
+function assertSuccessfulProviderResponse(response: z.infer<typeof responseItemsSchema>): void {
+  const resultCode = response.response?.header?.resultCode;
+
+  if (resultCode !== undefined && resultCode !== null && resultCode !== "00") {
+    const resultMsg = response.response?.header?.resultMsg ?? "Unknown provider error.";
+    throw new Error(`G2B provider error ${resultCode}: ${resultMsg}`);
+  }
+}
+
 export function firstApiItemResult(response: unknown): ApiItemResult {
   const parsed = responseItemsSchema.parse(response);
+  assertSuccessfulProviderResponse(parsed);
   const items = parsed.response?.body?.items;
 
   if (Array.isArray(items)) {

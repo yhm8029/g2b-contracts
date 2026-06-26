@@ -6,10 +6,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import bidNoticeResponse from "./fixtures/bid-notice-response.json";
 import contractInfoResponse from "./fixtures/contract-info-response.json";
+import providerErrorResponse from "./fixtures/provider-error-response.json";
 
 import {
   fetchContractInfoByContractIdentifier,
   GET_CONTRACT_INFO_OPERATION,
+  parseContractInfoLookupResponse,
   parseContractInfoResponse,
 } from "@/lib/g2b/contract-info-client";
 import { fetchBidNotice, parseBidNoticeResponse } from "@/lib/g2b/bid-notice-client";
@@ -66,6 +68,12 @@ describe("G2B response parsers", () => {
       contractName: "Maintenance service",
       contractDetailUrl: "https://www.g2b.go.kr/contract/CN-2026-0001",
     });
+  });
+
+  it("throws provider errors for non-success Public Data Portal result codes", () => {
+    expect(() => parseContractInfoLookupResponse(providerErrorResponse)).toThrow(
+      "G2B provider error 30: SERVICE KEY IS NOT REGISTERED ERROR.",
+    );
   });
 
   it("normalizes bid notice items from Public Data Portal JSON", () => {
@@ -501,6 +509,119 @@ describe("enrichContractRecord", () => {
         .get() as { responseStatus: string; errorMessage: string | null };
       expect(log).toEqual({ responseStatus: "no_match", errorMessage: null });
     } finally {
+      sqlite.close();
+    }
+  });
+
+  it("keeps successful empty provider responses on the no-match path", async () => {
+    const { sqlite, db } = createTempDb();
+    insertContractRecord(sqlite);
+
+    try {
+      const result = await enrichContractRecord(db, 1, {
+        fetchBidNotice: vi.fn(async () => ({
+          matched: false,
+          noticeNo: null,
+          noticeOrder: null,
+          noticeName: null,
+          noticeDetailUrl: null,
+        })),
+        fetchContractInfo: vi.fn(async () => ({
+          matched: false,
+          contractNo: null,
+          unifiedContractNo: null,
+          contractName: null,
+          contractDetailUrl: null,
+        })),
+      } as Parameters<typeof enrichContractRecord>[2]);
+
+      expect(result).toEqual({ updated: false, message: "No G2B API match found." });
+
+      const log = sqlite
+        .prepare("select response_status as responseStatus from api_enrichment_logs")
+        .get() as { responseStatus: string };
+      expect(log.responseStatus).toBe("no_match");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("logs provider parser failures as errors instead of no-match", async () => {
+    const { sqlite, db } = createTempDb();
+    insertContractRecord(sqlite);
+    sqlite
+      .prepare("update contract_records set notice_no = null, notice_order = null where id = 1")
+      .run();
+
+    try {
+      const result = await enrichContractRecord(db, 1, {
+        fetchBidNotice: vi.fn(async () => ({
+          matched: false,
+          noticeNo: null,
+          noticeOrder: null,
+          noticeName: null,
+          noticeDetailUrl: null,
+        })),
+        fetchContractInfo: vi.fn(async () => parseContractInfoLookupResponse(providerErrorResponse)),
+      } as Parameters<typeof enrichContractRecord>[2]);
+
+      expect(result).toEqual({
+        updated: false,
+        message: "G2B provider error 30: SERVICE KEY IS NOT REGISTERED ERROR.",
+      });
+
+      const log = sqlite
+        .prepare("select response_status as responseStatus, error_message as errorMessage from api_enrichment_logs")
+        .get() as { responseStatus: string; errorMessage: string };
+      expect(log).toEqual({
+        responseStatus: "error",
+        errorMessage: "G2B provider error 30: SERVICE KEY IS NOT REGISTERED ERROR.",
+      });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("redacts service keys from returned enrichment errors and logs", async () => {
+    const { sqlite, db } = createTempDb();
+    const previous = process.env.DATA_GO_KR_SERVICE_KEY;
+    process.env.DATA_GO_KR_SERVICE_KEY = "SECRET_KEY";
+    insertContractRecord(sqlite);
+
+    try {
+      const result = await enrichContractRecord(db, 1, {
+        fetchBidNotice: vi.fn(async () => {
+          throw new Error(
+            "Provider failed at https://example.test/api?serviceKey=SECRET_KEY&x=1 with SECRET_KEY",
+          );
+        }),
+        fetchContractInfo: vi.fn(async () => ({
+          matched: false,
+          contractNo: null,
+          unifiedContractNo: null,
+          contractName: null,
+          contractDetailUrl: null,
+        })),
+      } as Parameters<typeof enrichContractRecord>[2]);
+
+      expect(result.updated).toBe(false);
+      expect(result.message).not.toContain("SECRET_KEY");
+      expect(result.message).not.toContain("serviceKey=SECRET_KEY");
+      expect(result.message).toContain("serviceKey=[REDACTED]");
+
+      const log = sqlite
+        .prepare("select response_status as responseStatus, error_message as errorMessage from api_enrichment_logs")
+        .get() as { responseStatus: string; errorMessage: string };
+      expect(log.responseStatus).toBe("error");
+      expect(log.errorMessage).not.toContain("SECRET_KEY");
+      expect(log.errorMessage).not.toContain("serviceKey=SECRET_KEY");
+      expect(log.errorMessage).toContain("serviceKey=[REDACTED]");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.DATA_GO_KR_SERVICE_KEY;
+      } else {
+        process.env.DATA_GO_KR_SERVICE_KEY = previous;
+      }
       sqlite.close();
     }
   });
