@@ -33,22 +33,33 @@ const responseItemsSchema = z
   })
   .passthrough();
 
-export function firstApiItem(response: unknown): unknown {
+export type ApiItemResult = {
+  matched: boolean;
+  item: unknown;
+};
+
+export function firstApiItemResult(response: unknown): ApiItemResult {
   const parsed = responseItemsSchema.parse(response);
   const items = parsed.response?.body?.items;
 
   if (Array.isArray(items)) {
-    return items[0] ?? {};
+    return items.length > 0 ? { matched: true, item: items[0] } : { matched: false, item: {} };
   }
 
   if (items !== null && typeof items === "object" && "item" in items) {
     const item = (items as { item?: unknown }).item;
     if (Array.isArray(item)) {
-      return item[0] ?? {};
+      return item.length > 0 ? { matched: true, item: item[0] } : { matched: false, item: {} };
     }
 
-    return item ?? {};
+    return item === null || item === undefined
+      ? { matched: false, item: {} }
+      : { matched: true, item };
   }
 
-  return {};
+  return { matched: false, item: {} };
+}
+
+export function firstApiItem(response: unknown): unknown {
+  return firstApiItemResult(response).item;
 }

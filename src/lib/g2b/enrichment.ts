@@ -1,23 +1,39 @@
 import { eq } from "drizzle-orm";
 
-import { fetchBidNotice, type BidNoticeInfo } from "@/lib/g2b/bid-notice-client";
-import { fetchContractInfo, type ContractInfo } from "@/lib/g2b/contract-info-client";
 import type { Db } from "@/lib/db/client";
 import { apiEnrichmentLogs, contractRecords } from "@/lib/db/schema";
+import { fetchBidNotice, type BidNoticeInfo } from "@/lib/g2b/bid-notice-client";
+import { fetchContractInfo, type ContractInfo } from "@/lib/g2b/contract-info-client";
+import {
+  fetchSuccessfulBid,
+  type SuccessfulBidInfo,
+} from "@/lib/g2b/successful-bid-client";
 
 export type EnrichmentResult = {
   updated: boolean;
   message: string;
 };
 
+type ApiLookup<T> = T & {
+  matched?: boolean;
+};
+
 export type EnrichmentClients = {
-  fetchBidNotice: (noticeNo: string, noticeOrder?: string | null) => Promise<BidNoticeInfo>;
-  fetchContractInfo: (contractNo: string) => Promise<ContractInfo>;
+  fetchBidNotice: (
+    noticeNo: string,
+    noticeOrder?: string | null,
+  ) => Promise<ApiLookup<BidNoticeInfo>>;
+  fetchContractInfo: (contractNo: string) => Promise<ApiLookup<ContractInfo>>;
+  fetchSuccessfulBid?: (
+    noticeNo: string,
+    noticeOrder?: string | null,
+  ) => Promise<ApiLookup<SuccessfulBidInfo>>;
 };
 
 const defaultClients: EnrichmentClients = {
   fetchBidNotice,
   fetchContractInfo,
+  fetchSuccessfulBid,
 };
 
 type ContractRecordForEnrichment = {
@@ -67,7 +83,7 @@ function applyValue<K extends keyof ContractRecordUpdates>(
 function insertLog(
   db: Db,
   recordId: number | null,
-  responseStatus: "success" | "error",
+  responseStatus: "success" | "error" | "no_match" | "not_found",
   requestParams: Record<string, string | number | null>,
   message?: string,
 ): void {
@@ -81,6 +97,10 @@ function insertLog(
       errorMessage: message ?? null,
     })
     .run();
+}
+
+function matchedApiItem(result: { matched?: boolean }): boolean {
+  return result.matched !== false;
 }
 
 export async function enrichContractRecord(
@@ -109,29 +129,65 @@ export async function enrichContractRecord(
       .get();
 
     if (record === undefined) {
+      insertLog(db, null, "not_found", requestParams, "Record not found.");
       return { updated: false, message: "Record not found." };
     }
 
     const updates: ContractRecordUpdates = {};
+    let attemptedApiCalls = 0;
+    let matchedApiCalls = 0;
 
     if (record.noticeNo !== null) {
       const notice = await clients.fetchBidNotice(record.noticeNo, record.noticeOrder);
-      applyValue(updates, record, "noticeNo", notice.noticeNo);
-      applyValue(updates, record, "noticeOrder", notice.noticeOrder);
-      applyValue(updates, record, "noticeName", notice.noticeName);
-      applyValue(updates, record, "noticeDetailUrl", notice.noticeDetailUrl);
+      attemptedApiCalls += 1;
+
+      if (matchedApiItem(notice)) {
+        matchedApiCalls += 1;
+        applyValue(updates, record, "noticeNo", notice.noticeNo);
+        applyValue(updates, record, "noticeOrder", notice.noticeOrder);
+        applyValue(updates, record, "noticeName", notice.noticeName);
+        applyValue(updates, record, "noticeDetailUrl", notice.noticeDetailUrl);
+      }
+
+      if (clients.fetchSuccessfulBid !== undefined) {
+        const successfulBid = await clients.fetchSuccessfulBid(record.noticeNo, record.noticeOrder);
+        attemptedApiCalls += 1;
+
+        if (matchedApiItem(successfulBid)) {
+          matchedApiCalls += 1;
+        }
+      }
     }
 
-    if (record.contractNo !== null) {
-      const contract = await clients.fetchContractInfo(record.contractNo);
-      applyValue(updates, record, "contractNo", contract.contractNo);
-      applyValue(updates, record, "unifiedContractNo", contract.unifiedContractNo);
-      applyValue(updates, record, "contractName", contract.contractName);
-      applyValue(updates, record, "contractDetailUrl", contract.contractDetailUrl);
+    const contractIdentifier = record.contractNo ?? record.unifiedContractNo;
+    if (contractIdentifier !== null) {
+      const contract = await clients.fetchContractInfo(contractIdentifier);
+      attemptedApiCalls += 1;
+
+      if (matchedApiItem(contract)) {
+        matchedApiCalls += 1;
+        applyValue(updates, record, "contractNo", contract.contractNo);
+        applyValue(updates, record, "unifiedContractNo", contract.unifiedContractNo);
+        applyValue(updates, record, "contractName", contract.contractName);
+        applyValue(updates, record, "contractDetailUrl", contract.contractDetailUrl);
+      }
     }
 
     const now = new Date().toISOString();
     const fieldsChanged = Object.keys(updates).length > 0;
+
+    if (attemptedApiCalls > 0 && matchedApiCalls === 0) {
+      db.update(contractRecords)
+        .set({
+          lastEnrichedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(contractRecords.id, record.id))
+        .run();
+
+      insertLog(db, record.id, "no_match", requestParams);
+      return { updated: false, message: "No G2B API match found." };
+    }
 
     db.update(contractRecords)
       .set({

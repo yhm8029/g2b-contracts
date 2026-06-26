@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { fetchG2bJson } from "@/lib/g2b/http";
-import { firstApiItem, optionalApiString } from "@/lib/g2b/parsing";
+import { firstApiItem, firstApiItemResult, optionalApiString } from "@/lib/g2b/parsing";
 
 export const SUCCESSFUL_BID_BASE_URL = "https://apis.data.go.kr/1230000/ScsbidInfoService";
 export const GET_SUCCESSFUL_BID_OPERATION = "getScsbidListSttusThng";
@@ -12,6 +12,10 @@ export type SuccessfulBidInfo = {
   noticeName: string | null;
   successfulBidAmount: string | null;
   successfulBidRate: string | null;
+};
+
+export type SuccessfulBidLookup = SuccessfulBidInfo & {
+  matched: boolean;
 };
 
 const successfulBidItemSchema = z
@@ -36,10 +40,24 @@ export function parseSuccessfulBidResponse(response: unknown): SuccessfulBidInfo
   };
 }
 
+export function parseSuccessfulBidLookupResponse(response: unknown): SuccessfulBidLookup {
+  const result = firstApiItemResult(response);
+  const item = successfulBidItemSchema.parse(result.item);
+
+  return {
+    matched: result.matched,
+    noticeNo: item.bidNtceNo,
+    noticeOrder: item.bidNtceOrd,
+    noticeName: item.bidNtceNm,
+    successfulBidAmount: item.sucsfbidAmt,
+    successfulBidRate: item.sucsfbidRate,
+  };
+}
+
 export async function fetchSuccessfulBid(
   noticeNo: string,
   noticeOrder?: string | null,
-): Promise<SuccessfulBidInfo> {
+): Promise<SuccessfulBidLookup> {
   const response = await fetchG2bJson(SUCCESSFUL_BID_BASE_URL, GET_SUCCESSFUL_BID_OPERATION, {
     bidNtceNo: noticeNo,
     bidNtceOrd: noticeOrder,
@@ -47,5 +65,5 @@ export async function fetchSuccessfulBid(
     numOfRows: 10,
   });
 
-  return parseSuccessfulBidResponse(response);
+  return parseSuccessfulBidLookupResponse(response);
 }

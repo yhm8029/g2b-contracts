@@ -153,6 +153,45 @@ describe("POST /api/enrich", () => {
 });
 
 describe("enrichContractRecord", () => {
+  it("logs not-found enrichment attempts", async () => {
+    const { sqlite, db } = createTempDb();
+
+    try {
+      const result = await enrichContractRecord(db, 999);
+
+      expect(result).toEqual({ updated: false, message: "Record not found." });
+
+      const log = sqlite
+        .prepare(
+          [
+            "select contract_record_id as contractRecordId, provider, operation,",
+            "request_params_json as requestParamsJson, response_status as responseStatus,",
+            "error_message as errorMessage",
+            "from api_enrichment_logs",
+          ].join(" "),
+        )
+        .get() as {
+        contractRecordId: number | null;
+        provider: string;
+        operation: string;
+        requestParamsJson: string;
+        responseStatus: string;
+        errorMessage: string;
+      };
+
+      expect(log).toEqual({
+        contractRecordId: null,
+        provider: "data.go.kr",
+        operation: "enrichContractRecord",
+        requestParamsJson: JSON.stringify({ recordId: 999 }),
+        responseStatus: "not_found",
+        errorMessage: "Record not found.",
+      });
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("updates available API fields, preserves null API values, and writes a success log", async () => {
     const { sqlite, db } = createTempDb();
     insertContractRecord(sqlite);
@@ -211,6 +250,204 @@ describe("enrichContractRecord", () => {
         .prepare("select response_status as responseStatus, error_message as errorMessage from api_enrichment_logs")
         .get() as { responseStatus: string; errorMessage: string | null };
       expect(log).toEqual({ responseStatus: "success", errorMessage: null });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("uses unified contract number when contract number is missing", async () => {
+    const { sqlite, db } = createTempDb();
+    insertContractRecord(sqlite);
+    sqlite
+      .prepare("update contract_records set contract_no = null, unified_contract_no = ? where id = 1")
+      .run("UN-ONLY-2026");
+    const fetchContractInfo = vi.fn(async () => ({
+      matched: true,
+      contractNo: null,
+      unifiedContractNo: "UN-ONLY-2026",
+      contractName: null,
+      contractDetailUrl: "https://www.g2b.go.kr/contract/UN-ONLY-2026",
+    }));
+
+    try {
+      const result = await enrichContractRecord(db, 1, {
+        fetchBidNotice: vi.fn(async () => ({
+          matched: true,
+          noticeNo: "20260100001",
+          noticeOrder: "00",
+          noticeName: null,
+          noticeDetailUrl: null,
+        })),
+        fetchContractInfo,
+      } as Parameters<typeof enrichContractRecord>[2]);
+
+      expect(fetchContractInfo).toHaveBeenCalledWith("UN-ONLY-2026");
+      expect(result.updated).toBe(true);
+
+      const record = sqlite
+        .prepare(
+          [
+            "select source_status as sourceStatus, last_enriched_at as lastEnrichedAt,",
+            "contract_detail_url as contractDetailUrl",
+            "from contract_records where id = 1",
+          ].join(" "),
+        )
+        .get() as { sourceStatus: string; lastEnrichedAt: string; contractDetailUrl: string };
+      expect(record).toMatchObject({
+        sourceStatus: "api_enriched",
+        contractDetailUrl: "https://www.g2b.go.kr/contract/UN-ONLY-2026",
+      });
+      expect(record.lastEnrichedAt).toEqual(expect.any(String));
+
+      const log = sqlite
+        .prepare("select response_status as responseStatus from api_enrichment_logs")
+        .get() as { responseStatus: string };
+      expect(log.responseStatus).toBe("success");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("keeps local-only status and logs no-match when attempted APIs return no item", async () => {
+    const { sqlite, db } = createTempDb();
+    insertContractRecord(sqlite);
+
+    try {
+      const result = await enrichContractRecord(db, 1, {
+        fetchBidNotice: vi.fn(async () => ({
+          matched: false,
+          noticeNo: null,
+          noticeOrder: null,
+          noticeName: null,
+          noticeDetailUrl: null,
+        })),
+        fetchContractInfo: vi.fn(async () => ({
+          matched: false,
+          contractNo: null,
+          unifiedContractNo: null,
+          contractName: null,
+          contractDetailUrl: null,
+        })),
+      } as Parameters<typeof enrichContractRecord>[2]);
+
+      expect(result).toEqual({ updated: false, message: "No G2B API match found." });
+
+      const record = sqlite
+        .prepare(
+          [
+            "select source_status as sourceStatus, contract_name as contractName,",
+            "last_enriched_at as lastEnrichedAt, updated_at as updatedAt",
+            "from contract_records where id = 1",
+          ].join(" "),
+        )
+        .get() as {
+        sourceStatus: string;
+        contractName: string;
+        lastEnrichedAt: string | null;
+        updatedAt: string;
+      };
+      expect(record).toMatchObject({
+        sourceStatus: "local_only",
+        contractName: "Existing contract name",
+      });
+      expect(record.lastEnrichedAt).toEqual(expect.any(String));
+      expect(record.updatedAt).not.toBe("2026-06-26T00:00:00.000Z");
+
+      const log = sqlite
+        .prepare("select response_status as responseStatus, error_message as errorMessage from api_enrichment_logs")
+        .get() as { responseStatus: string; errorMessage: string | null };
+      expect(log).toEqual({ responseStatus: "no_match", errorMessage: null });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("treats matched API items with null fields as successful checks", async () => {
+    const { sqlite, db } = createTempDb();
+    insertContractRecord(sqlite);
+
+    try {
+      const result = await enrichContractRecord(db, 1, {
+        fetchBidNotice: vi.fn(async () => ({
+          matched: true,
+          noticeNo: null,
+          noticeOrder: null,
+          noticeName: null,
+          noticeDetailUrl: null,
+        })),
+        fetchContractInfo: vi.fn(async () => ({
+          matched: true,
+          contractNo: null,
+          unifiedContractNo: null,
+          contractName: null,
+          contractDetailUrl: null,
+        })),
+      } as Parameters<typeof enrichContractRecord>[2]);
+
+      expect(result).toEqual({ updated: true, message: "Record enrichment checked." });
+
+      const record = sqlite
+        .prepare(
+          [
+            "select source_status as sourceStatus, notice_order as noticeOrder,",
+            "contract_name as contractName, last_enriched_at as lastEnrichedAt",
+            "from contract_records where id = 1",
+          ].join(" "),
+        )
+        .get() as {
+        sourceStatus: string;
+        noticeOrder: string;
+        contractName: string;
+        lastEnrichedAt: string;
+      };
+      expect(record).toMatchObject({
+        sourceStatus: "api_enriched",
+        noticeOrder: "00",
+        contractName: "Existing contract name",
+      });
+      expect(record.lastEnrichedAt).toEqual(expect.any(String));
+
+      const log = sqlite
+        .prepare("select response_status as responseStatus from api_enrichment_logs")
+        .get() as { responseStatus: string };
+      expect(log.responseStatus).toBe("success");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("invokes successful-bid enrichment for records with a notice number", async () => {
+    const { sqlite, db } = createTempDb();
+    insertContractRecord(sqlite);
+    const fetchSuccessfulBid = vi.fn(async () => ({
+      matched: true,
+      noticeNo: "20260100001",
+      noticeOrder: "00",
+      noticeName: "Maintenance bid notice",
+      successfulBidAmount: "1000000",
+      successfulBidRate: "95.5",
+    }));
+
+    try {
+      await enrichContractRecord(db, 1, {
+        fetchBidNotice: vi.fn(async () => ({
+          matched: true,
+          noticeNo: "20260100001",
+          noticeOrder: "00",
+          noticeName: null,
+          noticeDetailUrl: null,
+        })),
+        fetchContractInfo: vi.fn(async () => ({
+          matched: true,
+          contractNo: "CN-2026-0001",
+          unifiedContractNo: null,
+          contractName: null,
+          contractDetailUrl: null,
+        })),
+        fetchSuccessfulBid,
+      } as Parameters<typeof enrichContractRecord>[2]);
+
+      expect(fetchSuccessfulBid).toHaveBeenCalledWith("20260100001", "00");
     } finally {
       sqlite.close();
     }
