@@ -16,6 +16,15 @@ import type { FormEvent } from "react";
 
 import type { ContractSearchRow, DatabaseHealth } from "@/lib/contracts/types";
 
+const categoryOptions = [
+  { value: "all", label: "All" },
+  { value: "goods", label: "Goods" },
+  { value: "construction", label: "Construction" },
+  { value: "services", label: "Services" },
+  { value: "foreign", label: "Foreign" },
+  { value: "unknown", label: "Unknown" },
+];
+
 type ContractSummary = {
   contractCount: number;
   totalAmount: number;
@@ -47,7 +56,7 @@ function buildQueryString(params: {
   for (const [key, value] of Object.entries(params)) {
     const trimmed = value.trim();
 
-    if (trimmed.length > 0) {
+    if (trimmed.length > 0 && !(key === "businessCategory" && trimmed === "all")) {
       searchParams.set(key, trimmed);
     }
   }
@@ -112,7 +121,7 @@ export function ContractLookupApp() {
   const [bizNo, setBizNo] = useState("123-45-67890");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [businessCategory, setBusinessCategory] = useState("");
+  const [businessCategory, setBusinessCategory] = useState("all");
   const [rows, setRows] = useState<ContractSearchRow[]>([]);
   const [summary, setSummary] = useState<ContractSummary>(emptySummary);
   const [health, setHealth] = useState<DatabaseHealth | null>(null);
@@ -168,9 +177,14 @@ export function ContractLookupApp() {
           <p className="eyebrow">G2B contracts</p>
           <h1>Contract Lookup</h1>
         </div>
-        <div className={`status-pill status-${statusLabel.toLowerCase()}`}>
-          <Database aria-hidden="true" size={16} />
-          <span>{statusLabel}</span>
+        <div className="header-status">
+          <div className={`status-pill status-${statusLabel.toLowerCase()}`}>
+            <Database aria-hidden="true" size={16} />
+            <span>{statusLabel}</span>
+          </div>
+          <span>DB rows {health ? formatNumber(health.contractCount) : "-"}</span>
+          <span>Latest import {formatDateTime(health?.latestImportAt)}</span>
+          <span>API enrichment: manual</span>
         </div>
       </header>
 
@@ -197,11 +211,16 @@ export function ContractLookupApp() {
         </label>
         <label>
           <span>Category</span>
-          <input
+          <select
             value={businessCategory}
             onChange={(event) => setBusinessCategory(event.target.value)}
-            placeholder="Optional"
-          />
+          >
+            {categoryOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </label>
         <div className="search-actions">
           <button className="primary-button" type="submit" disabled={loading}>
@@ -268,33 +287,76 @@ export function ContractLookupApp() {
               <thead>
                 <tr>
                   <th>Contract</th>
+                  <th>Notice</th>
+                  <th>Category</th>
                   <th>Date</th>
                   <th>Amount</th>
-                  <th>Agency</th>
+                  <th>Agencies</th>
                   <th>Method</th>
-                  <th>Source</th>
+                  <th>Links</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr
-                    className={selectedRow?.id === row.id ? "selected" : undefined}
-                    key={row.id}
-                    onClick={() => setSelectedRow(row)}
-                  >
-                    <td>
-                      <button className="row-selector" type="button" onClick={() => setSelectedRow(row)}>
-                        <span>{row.contractName}</span>
-                        <small>{row.unifiedContractNo ?? row.contractNo ?? row.noticeNo ?? "-"}</small>
-                      </button>
-                    </td>
-                    <td>{formatDate(row.contractDate)}</td>
-                    <td>{formatCurrency(row.totalContractAmount ?? row.currentContractAmount)}</td>
-                    <td>{row.demandAgencyName ?? row.contractAgencyName ?? "-"}</td>
-                    <td>{row.contractMethod ?? row.winningMethod ?? "-"}</td>
-                    <td>{row.sourceStatus}</td>
-                  </tr>
-                ))}
+                {rows.map((row) => {
+                  const rowLinks = sourceLinks(row);
+
+                  return (
+                    <tr
+                      className={selectedRow?.id === row.id ? "selected" : undefined}
+                      key={row.id}
+                      onClick={() => setSelectedRow(row)}
+                    >
+                      <td>
+                        <button
+                          className="row-selector"
+                          type="button"
+                          onClick={() => setSelectedRow(row)}
+                        >
+                          <span>{row.contractName}</span>
+                          <small>{row.unifiedContractNo ?? row.contractNo ?? "-"}</small>
+                        </button>
+                      </td>
+                      <td>
+                        <div className="stacked-cell">
+                          <span>{row.noticeName ?? "-"}</span>
+                          <small>{row.noticeNo ?? "-"}</small>
+                        </div>
+                      </td>
+                      <td>{row.businessCategory}</td>
+                      <td>{formatDate(row.contractDate)}</td>
+                      <td>{formatCurrency(row.totalContractAmount ?? row.currentContractAmount)}</td>
+                      <td>
+                        <div className="stacked-cell">
+                          <span>D: {row.demandAgencyName ?? "-"}</span>
+                          <span>C: {row.contractAgencyName ?? "-"}</span>
+                        </div>
+                      </td>
+                      <td>{row.contractMethod ?? row.winningMethod ?? "-"}</td>
+                      <td>
+                        {rowLinks.length > 0 ? (
+                          <div className="row-source-links">
+                            {rowLinks.map((link) => (
+                              <a
+                                href={link.href}
+                                key={link.label}
+                                onClick={(event) => event.stopPropagation()}
+                                rel="noreferrer"
+                                target="_blank"
+                              >
+                                <span>{link.label}</span>
+                                <ExternalLink aria-hidden="true" size={13} />
+                              </a>
+                            ))}
+                          </div>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td>{row.sourceStatus}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 
