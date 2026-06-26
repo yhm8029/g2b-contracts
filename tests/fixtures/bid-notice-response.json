@@ -1,0 +1,21 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": [
+        {
+          "bidNtceNo": "20260100001",
+          "bidNtceOrd": "00",
+          "bidNtceNm": "Maintenance bid notice",
+          "bidNtceDtlUrl": "https://www.g2b.go.kr/notice/20260100001"
+        }
+      ],
+      "numOfRows": 1,
+      "pageNo": 1,
+      "totalCount": 1
+    }
+  }
+}

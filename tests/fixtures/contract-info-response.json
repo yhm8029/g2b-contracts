@@ -1,0 +1,21 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": [
+        {
+          "dcsnCntrctNo": "CN-2026-0001",
+          "untyCntrctNo": "UN-2026-0001",
+          "cntrctNm": "Maintenance service",
+          "cntrctDtlInfoUrl": "https://www.g2b.go.kr/contract/CN-2026-0001"
+        }
+      ],
+      "numOfRows": 1,
+      "pageNo": 1,
+      "totalCount": 1
+    }
+  }
+}
