@@ -238,6 +238,16 @@ select:focus {
   background: var(--panel-subtle);
 }
 
+.disabled-link {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.disabled-link:hover {
+  background: #ffffff;
+}
+
 .error-banner {
   align-items: center;
   background: var(--danger-soft);

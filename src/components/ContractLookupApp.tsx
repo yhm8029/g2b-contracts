@@ -38,6 +38,13 @@ type SearchResponse = {
   health: DatabaseHealth;
 };
 
+type SearchFormParams = {
+  bizNo: string;
+  dateFrom: string;
+  dateTo: string;
+  businessCategory: string;
+};
+
 const emptySummary: ContractSummary = {
   contractCount: 0,
   totalAmount: 0,
@@ -45,12 +52,7 @@ const emptySummary: ContractSummary = {
   latestContractDate: null,
 };
 
-function buildQueryString(params: {
-  bizNo: string;
-  dateFrom: string;
-  dateTo: string;
-  businessCategory: string;
-}) {
+function buildQueryString(params: SearchFormParams) {
   const searchParams = new URLSearchParams();
 
   for (const [key, value] of Object.entries(params)) {
@@ -62,6 +64,16 @@ function buildQueryString(params: {
   }
 
   return searchParams.toString();
+}
+
+export function exportHrefForLastSearch(params: SearchFormParams | null) {
+  if (params === null) {
+    return null;
+  }
+
+  const queryString = buildQueryString(params);
+
+  return `/api/export${queryString.length > 0 ? `?${queryString}` : ""}`;
 }
 
 function formatCurrency(value: number | null | undefined) {
@@ -144,6 +156,7 @@ export function ContractLookupApp() {
   const [summary, setSummary] = useState<ContractSummary>(emptySummary);
   const [health, setHealth] = useState<DatabaseHealth | null>(null);
   const [selectedRow, setSelectedRow] = useState<ContractSearchRow | null>(null);
+  const [lastSearchParams, setLastSearchParams] = useState<SearchFormParams | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
@@ -152,7 +165,7 @@ export function ContractLookupApp() {
     () => buildQueryString({ bizNo, dateFrom, dateTo, businessCategory }),
     [bizNo, dateFrom, dateTo, businessCategory],
   );
-  const exportHref = `/api/export${queryString.length > 0 ? `?${queryString}` : ""}`;
+  const exportHref = exportHrefForLastSearch(lastSearchParams);
   const selectedLinks = selectedRow ? sourceLinks(selectedRow) : [];
   const latestEnrichmentError = selectedRow?.latestEnrichmentError
     ? redactSensitiveText(selectedRow.latestEnrichmentError)
@@ -168,6 +181,7 @@ export function ContractLookupApp() {
     setLoading(true);
     setError(null);
     setHasSearched(true);
+    const submittedParams = { bizNo, dateFrom, dateTo, businessCategory };
 
     try {
       const response = await fetch(`/api/search?${queryString}`, {
@@ -184,6 +198,7 @@ export function ContractLookupApp() {
       setSummary(result.summary);
       setHealth(result.health);
       setSelectedRow(result.rows[0] ?? null);
+      setLastSearchParams(submittedParams);
     } catch (searchError) {
       setRows([]);
       setSummary(emptySummary);
@@ -256,10 +271,17 @@ export function ContractLookupApp() {
             )}
             <span>Search</span>
           </button>
-          <a className="secondary-button" href={exportHref}>
-            <Download aria-hidden="true" size={17} />
-            <span>CSV</span>
-          </a>
+          {exportHref ? (
+            <a className="secondary-button" href={exportHref}>
+              <Download aria-hidden="true" size={17} />
+              <span>CSV</span>
+            </a>
+          ) : (
+            <span aria-disabled="true" className="secondary-button disabled-link">
+              <Download aria-hidden="true" size={17} />
+              <span>CSV</span>
+            </span>
+          )}
         </div>
       </form>
 
