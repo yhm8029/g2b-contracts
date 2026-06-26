@@ -79,6 +79,11 @@ export function parseContractCsv(content: string, sourceFileName: string): Contr
   const errors: string[] = [];
 
   for (const record of records.slice(1)) {
+    if (record.fields.length !== headers.length) {
+      errors.push(`Row ${record.lineNumber}: Expected ${headers.length} columns but found ${record.fields.length}.`);
+      continue;
+    }
+
     const raw = toRawRow(headers, record.fields);
     const parsed = parseRawRow(raw, sourceFileName);
 
@@ -152,6 +157,8 @@ function parseRawRow(
 
   try {
     const bizNoNormalized = parseBusinessNumber(value(raw, "biz_no") ?? "");
+    const currentContractAmount = parseOptionalAmount(raw, "current_contract_amount");
+    const totalContractAmount = parseOptionalAmount(raw, "total_contract_amount");
 
     return {
       success: true,
@@ -171,8 +178,8 @@ function parseRawRow(
         unifiedContractNo: value(raw, "unified_contract_no"),
         contractName: value(raw, "contract_name") ?? "",
         contractDate: value(raw, "contract_date") ?? "",
-        currentContractAmount: parseAmountToWon(value(raw, "current_contract_amount")),
-        totalContractAmount: parseAmountToWon(value(raw, "total_contract_amount")),
+        currentContractAmount,
+        totalContractAmount,
         demandAgencyCode: value(raw, "demand_agency_code"),
         demandAgencyName: value(raw, "demand_agency_name"),
         contractAgencyCode: value(raw, "contract_agency_code"),
@@ -196,4 +203,20 @@ function parseRawRow(
 function value(row: CsvRawRow, key: string): string | null {
   const field = row[key]?.trim() ?? "";
   return field.length > 0 ? field : null;
+}
+
+function parseOptionalAmount(row: CsvRawRow, key: string): number | null {
+  const raw = value(row, key);
+
+  if (raw === null) {
+    return null;
+  }
+
+  const parsed = parseAmountToWon(raw);
+
+  if (parsed === null) {
+    throw new Error(`${key} must be a valid amount.`);
+  }
+
+  return parsed;
 }
