@@ -163,7 +163,7 @@ export function searchContractsByBusinessNumber(
   db: Db,
   params: ContractSearchParams,
 ): ContractSearchRow[] {
-  const bizNoNormalized = parseBusinessNumber(params.businessNumber);
+  const bizNoNormalized = parseBusinessNumber(params.bizNo);
   const filters = [eq(contractRecords.bizNoNormalized, bizNoNormalized)];
 
   if (params.dateFrom !== undefined) {
@@ -226,7 +226,7 @@ export function getDatabaseHealth(db: Db): DatabaseHealth {
   const latestImport = db.select({ timestamp: max(importRuns.finishedAt) }).from(importRuns).get();
 
   return {
-    totalContractCount: contractCount?.count ?? 0,
-    latestImportTimestamp: latestImport?.timestamp ?? null,
+    contractCount: contractCount?.count ?? 0,
+    latestImportAt: latestImport?.timestamp ?? null,
   };
 }

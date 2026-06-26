@@ -41,7 +41,7 @@ describe("contract repository", () => {
       });
 
       const searchRows = searchContractsByBusinessNumber(db, {
-        businessNumber: "123-45-67890",
+        bizNo: "123-45-67890",
       });
 
       expect(searchRows).toHaveLength(2);
@@ -62,20 +62,20 @@ describe("contract repository", () => {
       });
 
       const dateFilteredRows = searchContractsByBusinessNumber(db, {
-        businessNumber: "1234567890",
+        bizNo: "1234567890",
         dateFrom: "2026-02-01",
         dateTo: "2026-12-31",
       });
       expect(dateFilteredRows.map((row) => row.contractName)).toEqual(["Maintenance service"]);
 
       const categoryFilteredRows = searchContractsByBusinessNumber(db, {
-        businessNumber: "1234567890",
+        bizNo: "1234567890",
         businessCategory: "goods",
       });
       expect(categoryFilteredRows.map((row) => row.contractName)).toEqual(["Printer supply"]);
 
       const allCategoryRows = searchContractsByBusinessNumber(db, {
-        businessNumber: "1234567890",
+        bizNo: "1234567890",
         businessCategory: "all",
       });
       expect(allCategoryRows).toHaveLength(2);
@@ -94,8 +94,8 @@ describe("contract repository", () => {
       expect(secondImport.errorCount).toBe(0);
 
       const health = getDatabaseHealth(db);
-      expect(health.totalContractCount).toBe(2);
-      expect(health.latestImportTimestamp).toEqual(expect.any(String));
+      expect(health.contractCount).toBe(2);
+      expect(health.latestImportAt).toEqual(expect.any(String));
 
       const records = sqlite
         .prepare("select count(*) as count from contract_records")

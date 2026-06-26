@@ -1,5 +1,5 @@
 export type ContractSearchParams = {
-  businessNumber: string;
+  bizNo: string;
   dateFrom?: string;
   dateTo?: string;
   businessCategory?: string;
@@ -47,6 +47,6 @@ export type ImportResult = {
 };
 
 export type DatabaseHealth = {
-  totalContractCount: number;
-  latestImportTimestamp: string | null;
+  contractCount: number;
+  latestImportAt: string | null;
 };
