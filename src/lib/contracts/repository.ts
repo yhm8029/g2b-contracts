@@ -29,79 +29,54 @@ export function importParsedRows(
     for (const row of rows) {
       try {
         const now = new Date().toISOString();
+        let existing: { id: number } | undefined;
 
-        tx.insert(businesses)
-          .values({
-            bizNoNormalized: row.bizNoNormalized,
-            bizNoDisplay: row.bizNoDisplay,
-            businessName: row.businessName,
-            representativeName: row.representativeName,
-            address: row.address,
-            updatedAt: now,
-          })
-          .onConflictDoUpdate({
-            target: businesses.bizNoNormalized,
-            set: {
+        tx.transaction((rowTx) => {
+          rowTx
+            .insert(businesses)
+            .values({
+              bizNoNormalized: row.bizNoNormalized,
               bizNoDisplay: row.bizNoDisplay,
               businessName: row.businessName,
               representativeName: row.representativeName,
               address: row.address,
               updatedAt: now,
-            },
-          })
-          .run();
+            })
+            .onConflictDoUpdate({
+              target: businesses.bizNoNormalized,
+              set: {
+                bizNoDisplay: row.bizNoDisplay,
+                businessName: row.businessName,
+                representativeName: row.representativeName,
+                address: row.address,
+                updatedAt: now,
+              },
+            })
+            .run();
 
-        const business = tx
-          .select({ id: businesses.id })
-          .from(businesses)
-          .where(eq(businesses.bizNoNormalized, row.bizNoNormalized))
-          .get();
+          const business = rowTx
+            .select({ id: businesses.id })
+            .from(businesses)
+            .where(eq(businesses.bizNoNormalized, row.bizNoNormalized))
+            .get();
 
-        const existing = tx
-          .select({ id: contractRecords.id })
-          .from(contractRecords)
-          .where(
-            and(
-              eq(contractRecords.sourceDataset, row.sourceDataset),
-              eq(contractRecords.sourceRowHash, row.sourceRowHash),
-            ),
-          )
-          .get();
+          existing = rowTx
+            .select({ id: contractRecords.id })
+            .from(contractRecords)
+            .where(
+              and(
+                eq(contractRecords.sourceDataset, row.sourceDataset),
+                eq(contractRecords.sourceRowHash, row.sourceRowHash),
+              ),
+            )
+            .get();
 
-        tx.insert(contractRecords)
-          .values({
-            businessId: business?.id ?? null,
-            sourceDataset: row.sourceDataset,
-            sourceRowHash: row.sourceRowHash,
-            businessCategory: row.businessCategory ?? "unknown",
-            noticeNo: row.noticeNo,
-            noticeOrder: row.noticeOrder,
-            noticeName: row.noticeName,
-            contractNo: row.contractNo,
-            unifiedContractNo: row.unifiedContractNo,
-            contractName: row.contractName,
-            contractDate: row.contractDate,
-            currentContractAmount: row.currentContractAmount,
-            totalContractAmount: row.totalContractAmount,
-            demandAgencyCode: row.demandAgencyCode,
-            demandAgencyName: row.demandAgencyName,
-            contractAgencyCode: row.contractAgencyCode,
-            contractAgencyName: row.contractAgencyName,
-            contractMethod: row.contractMethod,
-            winningMethod: row.winningMethod,
-            businessNameAtContract: row.businessNameAtContract,
-            bizNoNormalized: row.bizNoNormalized,
-            contractDetailUrl: row.contractDetailUrl,
-            noticeDetailUrl: row.noticeDetailUrl,
-            rawSourceUrl: row.rawSourceUrl,
-            sourceStatus: "local_only",
-            lastImportedAt: now,
-            updatedAt: now,
-          })
-          .onConflictDoUpdate({
-            target: [contractRecords.sourceDataset, contractRecords.sourceRowHash],
-            set: {
+          rowTx
+            .insert(contractRecords)
+            .values({
               businessId: business?.id ?? null,
+              sourceDataset: row.sourceDataset,
+              sourceRowHash: row.sourceRowHash,
               businessCategory: row.businessCategory ?? "unknown",
               noticeNo: row.noticeNo,
               noticeOrder: row.noticeOrder,
@@ -126,9 +101,38 @@ export function importParsedRows(
               sourceStatus: "local_only",
               lastImportedAt: now,
               updatedAt: now,
-            },
-          })
-          .run();
+            })
+            .onConflictDoUpdate({
+              target: [contractRecords.sourceDataset, contractRecords.sourceRowHash],
+              set: {
+                businessId: business?.id ?? null,
+                businessCategory: row.businessCategory ?? "unknown",
+                noticeNo: row.noticeNo,
+                noticeOrder: row.noticeOrder,
+                noticeName: row.noticeName,
+                contractNo: row.contractNo,
+                unifiedContractNo: row.unifiedContractNo,
+                contractName: row.contractName,
+                contractDate: row.contractDate,
+                currentContractAmount: row.currentContractAmount,
+                totalContractAmount: row.totalContractAmount,
+                demandAgencyCode: row.demandAgencyCode,
+                demandAgencyName: row.demandAgencyName,
+                contractAgencyCode: row.contractAgencyCode,
+                contractAgencyName: row.contractAgencyName,
+                contractMethod: row.contractMethod,
+                winningMethod: row.winningMethod,
+                businessNameAtContract: row.businessNameAtContract,
+                bizNoNormalized: row.bizNoNormalized,
+                contractDetailUrl: row.contractDetailUrl,
+                noticeDetailUrl: row.noticeDetailUrl,
+                rawSourceUrl: row.rawSourceUrl,
+                lastImportedAt: now,
+                updatedAt: now,
+              },
+            })
+            .run();
+        });
 
         if (existing === undefined) {
           result.insertedCount += 1;

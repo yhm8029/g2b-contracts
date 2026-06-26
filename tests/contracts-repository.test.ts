@@ -11,7 +11,7 @@ import {
 } from "@/lib/contracts/repository";
 import { createDb } from "@/lib/db/client";
 import { initializeSqliteSchema } from "@/lib/db/init";
-import { parseContractCsv } from "@/lib/import/csv";
+import { parseContractCsv, type ParsedContractCsvRow } from "@/lib/import/csv";
 
 function createTempDb() {
   const dir = mkdtempSync(join(tmpdir(), "g2b-contracts-"));
@@ -106,6 +106,85 @@ describe("contract repository", () => {
         .prepare("select source_name as sourceName from import_runs order by id desc limit 1")
         .get() as { sourceName: string };
       expect(latestImportRun.sourceName).toBe("csv");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("preserves enrichment metadata when CSV rows are re-imported", () => {
+    const { sqlite, db } = createTempDb();
+    const sourceFileName = "sample-contracts.csv";
+    const csv = readFileSync(join(process.cwd(), "data", sourceFileName), "utf8");
+    const parsed = parseContractCsv(csv, sourceFileName);
+    const enrichedAt = "2026-06-26T12:34:56.000Z";
+
+    expect(parsed.errors).toEqual([]);
+
+    try {
+      importParsedRows(db, parsed.validRows, sourceFileName);
+
+      sqlite
+        .prepare(
+          [
+            "update contract_records",
+            "set source_status = ?, last_enriched_at = ?",
+            "where contract_no = ?",
+          ].join(" "),
+        )
+        .run("api_enriched", enrichedAt, "CN-2026-0001");
+
+      const reimport = importParsedRows(db, parsed.validRows, sourceFileName);
+      expect(reimport.updatedCount).toBe(2);
+
+      const enrichedRecord = sqlite
+        .prepare(
+          [
+            "select source_status as sourceStatus, last_enriched_at as lastEnrichedAt",
+            "from contract_records",
+            "where contract_no = ?",
+          ].join(" "),
+        )
+        .get("CN-2026-0001") as { sourceStatus: string; lastEnrichedAt: string | null };
+
+      expect(enrichedRecord).toEqual({
+        sourceStatus: "api_enriched",
+        lastEnrichedAt: enrichedAt,
+      });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("does not leave a business-only partial write when a contract row fails", () => {
+    const { sqlite, db } = createTempDb();
+    const sourceFileName = "sample-contracts.csv";
+    const csv = readFileSync(join(process.cwd(), "data", sourceFileName), "utf8");
+    const parsed = parseContractCsv(csv, sourceFileName);
+    const malformedRow = {
+      ...parsed.validRows[0],
+      sourceRowHash: "malformed-row",
+      bizNoNormalized: "9876543210",
+      bizNoDisplay: "987-65-43210",
+      businessName: "Broken Import Co",
+      contractName: null as unknown as string,
+    } satisfies ParsedContractCsvRow;
+
+    expect(parsed.errors).toEqual([]);
+
+    try {
+      const result = importParsedRows(db, [malformedRow], "malformed.csv");
+
+      expect(result).toMatchObject({
+        rowCount: 1,
+        insertedCount: 0,
+        updatedCount: 0,
+        errorCount: 1,
+      });
+
+      const business = sqlite
+        .prepare("select id from businesses where biz_no_normalized = ?")
+        .get("9876543210");
+      expect(business).toBeUndefined();
     } finally {
       sqlite.close();
     }
