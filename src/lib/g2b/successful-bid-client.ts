@@ -3,7 +3,7 @@ import { z } from "zod";
 import { fetchG2bJson } from "@/lib/g2b/http";
 import { firstApiItem, firstApiItemResult, optionalApiString } from "@/lib/g2b/parsing";
 
-export const SUCCESSFUL_BID_BASE_URL = "https://apis.data.go.kr/1230000/ScsbidInfoService";
+export const SUCCESSFUL_BID_BASE_URL = "https://apis.data.go.kr/1230000/as/ScsbidInfoService";
 export const GET_SUCCESSFUL_BID_OPERATION = "getScsbidListSttusThng";
 
 export type SuccessfulBidInfo = {
@@ -61,6 +61,7 @@ export async function fetchSuccessfulBid(
   const response = await fetchG2bJson(SUCCESSFUL_BID_BASE_URL, GET_SUCCESSFUL_BID_OPERATION, {
     bidNtceNo: noticeNo,
     bidNtceOrd: noticeOrder,
+    inqryDiv: 3,
     pageNo: 1,
     numOfRows: 10,
   });

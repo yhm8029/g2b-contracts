@@ -7,12 +7,17 @@ import { describe, expect, it, vi } from "vitest";
 import bidNoticeResponse from "./fixtures/bid-notice-response.json";
 import contractInfoResponse from "./fixtures/contract-info-response.json";
 
-import { GET_CONTRACT_INFO_OPERATION, parseContractInfoResponse } from "@/lib/g2b/contract-info-client";
-import { parseBidNoticeResponse } from "@/lib/g2b/bid-notice-client";
+import {
+  fetchContractInfoByContractIdentifier,
+  GET_CONTRACT_INFO_OPERATION,
+  parseContractInfoResponse,
+} from "@/lib/g2b/contract-info-client";
+import { fetchBidNotice, parseBidNoticeResponse } from "@/lib/g2b/bid-notice-client";
 import { createDb } from "@/lib/db/client";
 import { initializeSqliteSchema } from "@/lib/db/init";
 import { enrichContractRecord } from "@/lib/g2b/enrichment";
 import { buildG2bUrl, fetchG2bJson, getServiceKey } from "@/lib/g2b/http";
+import { fetchSuccessfulBid } from "@/lib/g2b/successful-bid-client";
 
 function createTempDb() {
   const dir = mkdtempSync(join(tmpdir(), "g2b-enrich-"));
@@ -116,6 +121,80 @@ describe("G2B HTTP helpers", () => {
         }),
       ).rejects.toThrow("DATA_GO_KR_SERVICE_KEY is required for G2B API requests.");
     } finally {
+      if (previous === undefined) {
+        delete process.env.DATA_GO_KR_SERVICE_KEY;
+      } else {
+        process.env.DATA_GO_KR_SERVICE_KEY = previous;
+      }
+    }
+  });
+});
+
+describe("G2B client request URLs", () => {
+  it("uses planned service paths and inquiry divisions", async () => {
+    const previous = process.env.DATA_GO_KR_SERVICE_KEY;
+    const fetchMock = vi.fn(async (_url: URL) => ({
+      ok: true,
+      json: async () => ({ response: { body: { items: [] } } }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.DATA_GO_KR_SERVICE_KEY = "TEST_KEY";
+
+    try {
+      await fetchContractInfoByContractIdentifier({ contractNo: "CN-2026-0001" });
+      await fetchBidNotice("20260100001", "00");
+      await fetchSuccessfulBid("20260100001", "00");
+
+      const urls = fetchMock.mock.calls.map(([url]) => url as URL);
+
+      expect(urls[0].origin + urls[0].pathname).toBe(
+        "https://apis.data.go.kr/1230000/ao/CntrctInfoService/getCntrctInfoListThng",
+      );
+      expect(urls[0].searchParams.get("dcsnCntrctNo")).toBe("CN-2026-0001");
+      expect(urls[0].searchParams.get("untyCntrctNo")).toBeNull();
+      expect(urls[0].searchParams.get("inqryDiv")).toBe("2");
+
+      expect(urls[1].origin + urls[1].pathname).toBe(
+        "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoThng",
+      );
+      expect(urls[1].searchParams.get("bidNtceNo")).toBe("20260100001");
+      expect(urls[1].searchParams.get("bidNtceOrd")).toBe("00");
+      expect(urls[1].searchParams.get("inqryDiv")).toBe("2");
+
+      expect(urls[2].origin + urls[2].pathname).toBe(
+        "https://apis.data.go.kr/1230000/as/ScsbidInfoService/getScsbidListSttusThng",
+      );
+      expect(urls[2].searchParams.get("bidNtceNo")).toBe("20260100001");
+      expect(urls[2].searchParams.get("bidNtceOrd")).toBe("00");
+      expect(urls[2].searchParams.get("inqryDiv")).toBe("3");
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) {
+        delete process.env.DATA_GO_KR_SERVICE_KEY;
+      } else {
+        process.env.DATA_GO_KR_SERVICE_KEY = previous;
+      }
+    }
+  });
+
+  it("uses the unified contract number request parameter for unified-only lookups", async () => {
+    const previous = process.env.DATA_GO_KR_SERVICE_KEY;
+    const fetchMock = vi.fn(async (_url: URL) => ({
+      ok: true,
+      json: async () => ({ response: { body: { items: [] } } }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.DATA_GO_KR_SERVICE_KEY = "TEST_KEY";
+
+    try {
+      await fetchContractInfoByContractIdentifier({ unifiedContractNo: "UN-ONLY-2026" });
+
+      const url = fetchMock.mock.calls[0][0] as URL;
+      expect(url.searchParams.get("untyCntrctNo")).toBe("UN-ONLY-2026");
+      expect(url.searchParams.get("dcsnCntrctNo")).toBeNull();
+      expect(url.searchParams.get("inqryDiv")).toBe("2");
+    } finally {
+      vi.unstubAllGlobals();
       if (previous === undefined) {
         delete process.env.DATA_GO_KR_SERVICE_KEY;
       } else {
@@ -281,7 +360,7 @@ describe("enrichContractRecord", () => {
         fetchContractInfo,
       } as Parameters<typeof enrichContractRecord>[2]);
 
-      expect(fetchContractInfo).toHaveBeenCalledWith("UN-ONLY-2026");
+      expect(fetchContractInfo).toHaveBeenCalledWith({ unifiedContractNo: "UN-ONLY-2026" });
       expect(result.updated).toBe(true);
 
       const record = sqlite
@@ -303,6 +382,70 @@ describe("enrichContractRecord", () => {
         .prepare("select response_status as responseStatus from api_enrichment_logs")
         .get() as { responseStatus: string };
       expect(log.responseStatus).toBe("success");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("logs no identifiers without calling APIs", async () => {
+    const { sqlite, db } = createTempDb();
+    insertContractRecord(sqlite);
+    sqlite
+      .prepare(
+        [
+          "update contract_records",
+          "set notice_no = null, contract_no = null, unified_contract_no = null",
+          "where id = 1",
+        ].join(" "),
+      )
+      .run();
+    const fetchBidNoticeMock = vi.fn(async () => ({
+      matched: true,
+      noticeNo: null,
+      noticeOrder: null,
+      noticeName: null,
+      noticeDetailUrl: null,
+    }));
+    const fetchContractInfoMock = vi.fn(async () => ({
+      matched: true,
+      contractNo: null,
+      unifiedContractNo: null,
+      contractName: null,
+      contractDetailUrl: null,
+    }));
+    const fetchSuccessfulBidMock = vi.fn(async () => ({
+      matched: true,
+      noticeNo: null,
+      noticeOrder: null,
+      noticeName: null,
+      successfulBidAmount: null,
+      successfulBidRate: null,
+    }));
+
+    try {
+      const result = await enrichContractRecord(db, 1, {
+        fetchBidNotice: fetchBidNoticeMock,
+        fetchContractInfo: fetchContractInfoMock,
+        fetchSuccessfulBid: fetchSuccessfulBidMock,
+      } as Parameters<typeof enrichContractRecord>[2]);
+
+      expect(result).toEqual({
+        updated: false,
+        message: "No enrichment identifiers available.",
+      });
+      expect(fetchBidNoticeMock).not.toHaveBeenCalled();
+      expect(fetchContractInfoMock).not.toHaveBeenCalled();
+      expect(fetchSuccessfulBidMock).not.toHaveBeenCalled();
+
+      const record = sqlite
+        .prepare("select source_status as sourceStatus from contract_records where id = 1")
+        .get() as { sourceStatus: string };
+      expect(record.sourceStatus).toBe("local_only");
+
+      const log = sqlite
+        .prepare("select response_status as responseStatus, error_message as errorMessage from api_enrichment_logs")
+        .get() as { responseStatus: string; errorMessage: string | null };
+      expect(log).toEqual({ responseStatus: "no_identifiers", errorMessage: null });
     } finally {
       sqlite.close();
     }

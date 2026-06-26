@@ -57,6 +57,7 @@ export async function fetchBidNotice(
   const response = await fetchG2bJson(BID_NOTICE_BASE_URL, GET_BID_NOTICE_OPERATION, {
     bidNtceNo: noticeNo,
     bidNtceOrd: noticeOrder,
+    inqryDiv: 2,
     pageNo: 1,
     numOfRows: 10,
   });

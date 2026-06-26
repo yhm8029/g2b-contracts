@@ -3,7 +3,11 @@ import { eq } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { apiEnrichmentLogs, contractRecords } from "@/lib/db/schema";
 import { fetchBidNotice, type BidNoticeInfo } from "@/lib/g2b/bid-notice-client";
-import { fetchContractInfo, type ContractInfo } from "@/lib/g2b/contract-info-client";
+import {
+  fetchContractInfoByContractIdentifier,
+  type ContractInfo,
+  type ContractInfoIdentifier,
+} from "@/lib/g2b/contract-info-client";
 import {
   fetchSuccessfulBid,
   type SuccessfulBidInfo,
@@ -23,7 +27,7 @@ export type EnrichmentClients = {
     noticeNo: string,
     noticeOrder?: string | null,
   ) => Promise<ApiLookup<BidNoticeInfo>>;
-  fetchContractInfo: (contractNo: string) => Promise<ApiLookup<ContractInfo>>;
+  fetchContractInfo: (identifier: ContractInfoIdentifier) => Promise<ApiLookup<ContractInfo>>;
   fetchSuccessfulBid?: (
     noticeNo: string,
     noticeOrder?: string | null,
@@ -32,7 +36,7 @@ export type EnrichmentClients = {
 
 const defaultClients: EnrichmentClients = {
   fetchBidNotice,
-  fetchContractInfo,
+  fetchContractInfo: fetchContractInfoByContractIdentifier,
   fetchSuccessfulBid,
 };
 
@@ -83,7 +87,7 @@ function applyValue<K extends keyof ContractRecordUpdates>(
 function insertLog(
   db: Db,
   recordId: number | null,
-  responseStatus: "success" | "error" | "no_match" | "not_found",
+  responseStatus: "success" | "error" | "no_match" | "not_found" | "no_identifiers",
   requestParams: Record<string, string | number | null>,
   message?: string,
 ): void {
@@ -137,6 +141,11 @@ export async function enrichContractRecord(
     let attemptedApiCalls = 0;
     let matchedApiCalls = 0;
 
+    if (record.noticeNo === null && record.contractNo === null && record.unifiedContractNo === null) {
+      insertLog(db, record.id, "no_identifiers", requestParams);
+      return { updated: false, message: "No enrichment identifiers available." };
+    }
+
     if (record.noticeNo !== null) {
       const notice = await clients.fetchBidNotice(record.noticeNo, record.noticeOrder);
       attemptedApiCalls += 1;
@@ -159,7 +168,12 @@ export async function enrichContractRecord(
       }
     }
 
-    const contractIdentifier = record.contractNo ?? record.unifiedContractNo;
+    const contractIdentifier =
+      record.contractNo !== null
+        ? { contractNo: record.contractNo }
+        : record.unifiedContractNo !== null
+          ? { unifiedContractNo: record.unifiedContractNo }
+          : null;
     if (contractIdentifier !== null) {
       const contract = await clients.fetchContractInfo(contractIdentifier);
       attemptedApiCalls += 1;
