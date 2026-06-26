@@ -121,6 +121,20 @@ function redactSensitiveText(value: string) {
   return value.replace(/(serviceKey|DATA_GO_KR_SERVICE_KEY)=([^&\s]+)/gi, "$1=[REDACTED]");
 }
 
+export function apiStatusLabels(health: DatabaseHealth | null) {
+  if (health === null) {
+    return {
+      apiKey: "unknown",
+      enrichment: "unknown",
+    };
+  }
+
+  return {
+    apiKey: health.apiKeyConfigured ? "configured" : "missing",
+    enrichment: health.enrichmentEnabled ? "enabled" : "disabled",
+  };
+}
+
 export function ContractLookupApp() {
   const [bizNo, setBizNo] = useState("123-45-67890");
   const [dateFrom, setDateFrom] = useState("");
@@ -146,6 +160,7 @@ export function ContractLookupApp() {
   const showEnrichmentIssue =
     latestEnrichmentError !== null || selectedRow?.latestEnrichmentStatus === "error";
   const statusLabel = loading ? "Searching" : error ? "Error" : health ? "Connected" : "Ready";
+  const apiLabels = apiStatusLabels(health);
 
   async function handleSearch(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
@@ -193,8 +208,8 @@ export function ContractLookupApp() {
           </div>
           <span>DB rows {health ? formatNumber(health.contractCount) : "-"}</span>
           <span>Latest import {formatDateTime(health?.latestImportAt)}</span>
-          <span>API key: {health?.apiKeyConfigured ? "configured" : "missing"}</span>
-          <span>Enrichment: {health?.enrichmentEnabled ? "enabled" : "disabled"}</span>
+          <span>API key: {apiLabels.apiKey}</span>
+          <span>Enrichment: {apiLabels.enrichment}</span>
         </div>
       </header>
 
