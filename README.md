@@ -1,6 +1,6 @@
 # G2B Contract Lookup
 
-G2B Contract Lookup is a local-first web app for searching imported G2B/Nara Market contract records by business registration number.
+G2B Contract Lookup is a local-first web app for searching G2B/Nara Market contract records by business registration number.
 
 ## Setup
 
@@ -14,11 +14,13 @@ npm run dev
 
 Open `http://localhost:3000` and search for `123-45-67890`.
 
-## Data Model
+## Search And Sync
 
-Business-number lookup is local-index-first. Imported contract rows are stored locally and searched from the local index before any enrichment is considered.
+Search is local-only. It reads contract rows from the SQLite database at `data/g2b-contracts.sqlite` by default and does not call the G2B provider.
 
-Public Data Portal APIs enrich existing rows when a record already has notice or contract identifiers. Enrichment adds details to known records; it does not replace the local business-number index as the source for lookup.
+Use **Sync G2B** to fetch provider data into SQLite first. After the sync stores matching records locally, Search can show them.
+
+G2B sync requires `DATA_GO_KR_SERVICE_KEY` in `.env.local` and Public Data Portal usage approval for the G2B public data open standard contract service. The sync starts with month-sized date chunks, then retries smaller chunks when the provider rejects a date range.
 
 ## Commands
 
