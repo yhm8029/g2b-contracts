@@ -9,9 +9,10 @@ import {
   FileText,
   LinkIcon,
   Loader2,
+  RefreshCw,
   Search,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
 
 import type { ContractSearchRow, DatabaseHealth } from "@/lib/contracts/types";
@@ -36,6 +37,14 @@ type SearchResponse = {
   rows: ContractSearchRow[];
   summary: ContractSummary;
   health: DatabaseHealth;
+};
+
+type SyncResponse = {
+  status: "completed" | "completed_with_errors" | "failed";
+  rowsMatched: number;
+  insertedCount: number;
+  updatedCount: number;
+  errorCount: number;
 };
 
 type SearchFormParams = {
@@ -147,6 +156,31 @@ export function apiStatusLabels(health: DatabaseHealth | null) {
   };
 }
 
+export function syncStatusMessage(result: SyncResponse) {
+  const countSummary = `matched ${formatNumber(result.rowsMatched)}, inserted ${formatNumber(
+    result.insertedCount,
+  )}, updated ${formatNumber(result.updatedCount)}`;
+  const errorSummary = `${formatNumber(result.errorCount)} ${
+    result.errorCount === 1 ? "error" : "errors"
+  }`;
+
+  if (result.status === "failed") {
+    return `G2B sync failed: ${errorSummary}.`;
+  }
+
+  if (result.rowsMatched === 0 && result.insertedCount === 0 && result.updatedCount === 0) {
+    return result.status === "completed_with_errors"
+      ? `G2B sync completed with ${errorSummary}: no matching G2B contracts found.`
+      : "G2B sync completed: no matching G2B contracts found.";
+  }
+
+  if (result.status === "completed_with_errors") {
+    return `G2B sync completed with ${errorSummary}: ${countSummary}.`;
+  }
+
+  return `G2B sync completed: ${countSummary}.`;
+}
+
 export function ContractLookupApp() {
   const [bizNo, setBizNo] = useState("123-45-67890");
   const [dateFrom, setDateFrom] = useState("");
@@ -158,13 +192,11 @@ export function ContractLookupApp() {
   const [selectedRow, setSelectedRow] = useState<ContractSearchRow | null>(null);
   const [lastSearchParams, setLastSearchParams] = useState<SearchFormParams | null>(null);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const queryString = useMemo(
-    () => buildQueryString({ bizNo, dateFrom, dateTo, businessCategory }),
-    [bizNo, dateFrom, dateTo, businessCategory],
-  );
   const exportHref = exportHrefForLastSearch(lastSearchParams, rows.length);
   const selectedLinks = selectedRow ? sourceLinks(selectedRow) : [];
   const latestEnrichmentError = selectedRow?.latestEnrichmentError
@@ -172,33 +204,52 @@ export function ContractLookupApp() {
     : null;
   const showEnrichmentIssue =
     latestEnrichmentError !== null || selectedRow?.latestEnrichmentStatus === "error";
-  const statusLabel = loading ? "Searching" : error ? "Error" : health ? "Connected" : "Ready";
+  const isBusy = loading || syncing;
+  const statusLabel = syncing
+    ? "Syncing"
+    : loading
+      ? "Searching"
+      : error
+        ? "Error"
+        : health
+          ? "Connected"
+          : "Ready";
   const apiLabels = apiStatusLabels(health);
+
+  async function runSearch(submittedParams: SearchFormParams) {
+    const submittedQueryString = buildQueryString(submittedParams);
+    const response = await fetch(`/api/search?${submittedQueryString}`, {
+      headers: { accept: "application/json" },
+    });
+    const payload = (await response.json()) as SearchResponse | { error?: string };
+
+    if (!response.ok) {
+      throw new Error("error" in payload && payload.error ? payload.error : "Search failed.");
+    }
+
+    const result = payload as SearchResponse;
+    setRows(result.rows);
+    setSummary(result.summary);
+    setHealth(result.health);
+    setSelectedRow(result.rows[0] ?? null);
+    setLastSearchParams(submittedParams);
+  }
 
   async function handleSearch(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
 
+    if (isBusy) {
+      return;
+    }
+
     setLoading(true);
     setError(null);
+    setStatusMessage(null);
     setHasSearched(true);
     const submittedParams = { bizNo, dateFrom, dateTo, businessCategory };
 
     try {
-      const response = await fetch(`/api/search?${queryString}`, {
-        headers: { accept: "application/json" },
-      });
-      const payload = (await response.json()) as SearchResponse | { error?: string };
-
-      if (!response.ok) {
-        throw new Error("error" in payload && payload.error ? payload.error : "Search failed.");
-      }
-
-      const result = payload as SearchResponse;
-      setRows(result.rows);
-      setSummary(result.summary);
-      setHealth(result.health);
-      setSelectedRow(result.rows[0] ?? null);
-      setLastSearchParams(submittedParams);
+      await runSearch(submittedParams);
     } catch (searchError) {
       setRows([]);
       setSummary(emptySummary);
@@ -207,6 +258,50 @@ export function ContractLookupApp() {
       setError(searchError instanceof Error ? searchError.message : "Search failed.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSync() {
+    if (isBusy) {
+      return;
+    }
+
+    const submittedParams = { bizNo, dateFrom, dateTo, businessCategory };
+    setSyncing(true);
+    setError(null);
+    setStatusMessage("G2B sync started.");
+
+    try {
+      const response = await fetch("/api/sync", {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(submittedParams),
+      });
+      const payload = (await response.json()) as SyncResponse | { error?: string };
+
+      if (!response.ok) {
+        throw new Error("error" in payload && payload.error ? payload.error : "G2B sync failed.");
+      }
+
+      const syncResult = payload as SyncResponse;
+      const message = syncStatusMessage(syncResult);
+
+      if (syncResult.status === "failed") {
+        setStatusMessage(null);
+        setError(message);
+        return;
+      }
+
+      await runSearch(submittedParams);
+      setHasSearched(true);
+      setStatusMessage(message);
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : "G2B sync failed.");
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -264,13 +359,26 @@ export function ContractLookupApp() {
           </select>
         </label>
         <div className="search-actions">
-          <button className="primary-button" type="submit" disabled={loading}>
+          <button className="primary-button" type="submit" disabled={isBusy}>
             {loading ? (
               <Loader2 aria-hidden="true" className="spin" size={17} />
             ) : (
               <Search aria-hidden="true" size={17} />
             )}
             <span>Search</span>
+          </button>
+          <button
+            className="secondary-button sync-button"
+            type="button"
+            disabled={isBusy}
+            onClick={handleSync}
+          >
+            {syncing ? (
+              <Loader2 aria-hidden="true" className="spin" size={17} />
+            ) : (
+              <RefreshCw aria-hidden="true" size={17} />
+            )}
+            <span>Sync G2B</span>
           </button>
           {exportHref ? (
             <a className="secondary-button" href={exportHref}>
@@ -290,6 +398,13 @@ export function ContractLookupApp() {
         <div className="error-banner" role="alert">
           <AlertCircle aria-hidden="true" size={18} />
           <span>{error}</span>
+        </div>
+      ) : null}
+
+      {statusMessage && !error ? (
+        <div className="info-banner" role="status">
+          <Database aria-hidden="true" size={18} />
+          <span>{statusMessage}</span>
         </div>
       ) : null}
 
