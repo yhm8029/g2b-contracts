@@ -650,7 +650,7 @@ tbody tr.selected {
   .search-actions {
     display: grid;
     grid-column: auto;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     min-width: 0;
   }
 
@@ -660,9 +660,7 @@ tbody tr.selected {
   }
 
   .sync-button {
-    grid-column: 1 / -1;
     min-width: 0;
-    order: 3;
   }
 
   .detail-panel,
@@ -684,15 +682,5 @@ tbody tr.selected {
   .detail-list div,
   .compact div {
     grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 360px) {
-  .search-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .sync-button {
-    grid-column: auto;
   }
 }
