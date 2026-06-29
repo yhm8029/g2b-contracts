@@ -490,6 +490,27 @@ describe("G2B standard contract client", () => {
     }
   });
 
+  it("classifies G2B response error envelopes for oversized date ranges", async () => {
+    const { restore } = mockRawProviderJson({
+      "nkoneps.com.response.ResponseError": {
+        header: {
+          resultCode: "07",
+          resultMsg: "\uc785\ub825\ubc94\uc704\uac12 \ucd08\uacfc \uc5d0\ub7ec",
+        },
+      },
+    });
+
+    try {
+      await expect(fetchStandardContractPage({ dateFrom: "2026-06-01", dateTo: "2026-06-30" }, 1)).rejects.toMatchObject(
+        {
+          code: "date_range_too_large",
+        },
+      );
+    } finally {
+      restore();
+    }
+  });
+
   it("classifies generic provider errors", async () => {
     const { restore } = mockProviderResponse({}, { resultCode: "30", resultMsg: "SERVICE TEMPORARILY UNAVAILABLE" });
 

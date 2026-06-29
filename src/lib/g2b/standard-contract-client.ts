@@ -73,6 +73,11 @@ export async function fetchStandardContractPage(
 
 function successfulResponseBody(response: unknown): Record<string, unknown> {
   if (!isRecord(response) || !isRecord(response.response)) {
+    const responseError = providerResponseError(response);
+    if (responseError !== null) {
+      throw providerErrorFromHeader(responseError.resultCode, responseError.resultMsg);
+    }
+
     throw malformedProviderResponse("missing response envelope");
   }
 
@@ -96,6 +101,10 @@ function successfulResponseBody(response: unknown): Record<string, unknown> {
     return envelope.body;
   }
 
+  throw providerErrorFromHeader(resultCode, resultMsg);
+}
+
+function providerErrorFromHeader(resultCode: string, resultMsg: string | null): G2bStandardContractError {
   if (isUnauthorizedServiceKeyMessage(resultMsg)) {
     throw new G2bStandardContractError(
       "unauthorized_service_key",
@@ -111,6 +120,27 @@ function successfulResponseBody(response: unknown): Record<string, unknown> {
     "provider_error",
     `G2B standard contract provider error ${resultCode}: ${resultMsg ?? "Unknown provider error."}`,
   );
+}
+
+function providerResponseError(response: unknown): { resultCode: string; resultMsg: string | null } | null {
+  if (!isRecord(response)) {
+    return null;
+  }
+
+  const envelope = response["nkoneps.com.response.ResponseError"] ?? response.OpenAPI_ServiceResponse;
+  if (!isRecord(envelope) || !isRecord(envelope.header)) {
+    return null;
+  }
+
+  const resultCode = asString(envelope.header.resultCode ?? envelope.header.returnReasonCode);
+  if (resultCode === null) {
+    return null;
+  }
+
+  return {
+    resultCode,
+    resultMsg: asString(envelope.header.resultMsg ?? envelope.header.returnAuthMsg ?? envelope.header.errMsg),
+  };
 }
 
 function malformedProviderResponse(reason: string): G2bStandardContractError {
@@ -165,6 +195,14 @@ function isUnauthorizedServiceKeyMessage(message: string | null): boolean {
 }
 
 function isDateRangeTooLargeMessage(message: string | null): boolean {
+  if (
+    message !== null &&
+    ((message.includes("\uC785\uB825\uBC94\uC704") && message.includes("\uCD08\uACFC")) ||
+      (message.includes("\uC870\uD68C\uAE30\uAC04") && message.includes("\uCD08\uACFC")))
+  ) {
+    return true;
+  }
+
   return (
     message !== null &&
     (/date\s*range|too\s*large|too\s*long|exceed|over/i.test(message) ||
