@@ -155,6 +155,27 @@ describe("contract repository", () => {
     }
   });
 
+  it("records csv as the default import source name", () => {
+    const { sqlite, db } = createTempDb();
+    const sourceFileName = "sample-contracts.csv";
+    const csv = readFileSync(join(process.cwd(), "data", sourceFileName), "utf8");
+    const parsed = parseContractCsv(csv, sourceFileName);
+
+    expect(parsed.errors).toEqual([]);
+
+    try {
+      importParsedRows(db, [parsed.validRows[0]], sourceFileName);
+
+      const latestImportRun = sqlite
+        .prepare("select source_name as sourceName from import_runs order by id desc limit 1")
+        .get() as { sourceName: string };
+
+      expect(latestImportRun.sourceName).toBe("csv");
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("returns latest enrichment log status and error with search rows", () => {
     const { sqlite, db } = createTempDb();
     const sourceFileName = "sample-contracts.csv";

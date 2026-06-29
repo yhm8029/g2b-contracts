@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { getDatabaseHealth } from "@/lib/contracts/repository";
 import { createDb } from "@/lib/db/client";
 import { initializeSqliteSchema } from "@/lib/db/init";
 import { G2bStandardContractError } from "@/lib/g2b/standard-contract-client";
@@ -78,6 +79,65 @@ describe("syncStandardContractsForBusiness", () => {
         sourceName: "g2b-public-standard-contract",
         sourceFileName: "g2b-public-standard-contract",
       });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("records a completed import run when provider rows do not match the business", async () => {
+    const { sqlite, db } = createTempDb();
+    const client = mockClient(async () => ({
+      items: [providerRow({ bidwinnrBizrno: "999-99-99999", cntrctNo: "NO-MATCH-1" })],
+      totalCount: 1,
+      pageNo: 1,
+      numOfRows: 100,
+    }));
+
+    try {
+      const result = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31" },
+        client,
+      );
+
+      expect(result).toMatchObject({
+        status: "completed",
+        rowsFetched: 1,
+        rowsMatched: 0,
+        insertedCount: 0,
+        skippedCount: 1,
+        errorCount: 0,
+      });
+
+      const latestImportRun = sqlite
+        .prepare(
+          [
+            "select source_name as sourceName, source_file_name as sourceFileName,",
+            "row_count as rowCount, inserted_count as insertedCount, skipped_count as skippedCount,",
+            "error_count as errorCount, status",
+            "from import_runs order by id desc limit 1",
+          ].join(" "),
+        )
+        .get() as {
+        sourceName: string;
+        sourceFileName: string;
+        rowCount: number;
+        insertedCount: number;
+        skippedCount: number;
+        errorCount: number;
+        status: string;
+      };
+
+      expect(latestImportRun).toEqual({
+        sourceName: "g2b-public-standard-contract",
+        sourceFileName: "g2b-public-standard-contract",
+        rowCount: 1,
+        insertedCount: 0,
+        skippedCount: 1,
+        errorCount: 0,
+        status: "completed",
+      });
+      expect(getDatabaseHealth(db).latestImportAt).toEqual(expect.any(String));
     } finally {
       sqlite.close();
     }
@@ -191,6 +251,67 @@ describe("syncStandardContractsForBusiness", () => {
         granularity: "month",
       });
       expect(client.fetchStandardContractPage).toHaveBeenCalledTimes(1);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("records completed_with_errors import history when some chunks succeed and another chunk fails", async () => {
+    const { sqlite, db } = createTempDb();
+    const client = mockClient(async (chunk) => {
+      if (chunk.dateFrom === "2026-02-01") {
+        throw new G2bStandardContractError("provider_error", "provider unavailable");
+      }
+
+      return {
+        items: [providerRow({ cntrctNo: "MIXED-1", cntrctCnclsDate: chunk.dateFrom })],
+        totalCount: 1,
+        pageNo: 1,
+        numOfRows: 100,
+      };
+    });
+
+    try {
+      const result = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-02-28" },
+        client,
+      );
+
+      expect(result).toMatchObject({
+        status: "completed_with_errors",
+        pagesFetched: 1,
+        rowsFetched: 1,
+        insertedCount: 1,
+        skippedCount: 0,
+        errorCount: 1,
+      });
+
+      const importRuns = sqlite
+        .prepare(
+          [
+            "select row_count as rowCount, inserted_count as insertedCount, skipped_count as skippedCount,",
+            "error_count as errorCount, status",
+            "from import_runs order by id",
+          ].join(" "),
+        )
+        .all() as Array<{
+        rowCount: number;
+        insertedCount: number;
+        skippedCount: number;
+        errorCount: number;
+        status: string;
+      }>;
+
+      expect(importRuns).toEqual([
+        {
+          rowCount: 1,
+          insertedCount: 1,
+          skippedCount: 0,
+          errorCount: 1,
+          status: "completed_with_errors",
+        },
+      ]);
     } finally {
       sqlite.close();
     }

@@ -1,4 +1,4 @@
-import { importParsedRows } from "@/lib/contracts/repository";
+import { recordImportRun, upsertParsedRows } from "@/lib/contracts/repository";
 import type { Db } from "@/lib/db/client";
 import { parseBusinessNumber } from "@/lib/domain/business-number";
 import {
@@ -66,6 +66,7 @@ export async function syncStandardContractsForBusiness(
   params: StandardContractSyncParams,
   client = defaultClient,
 ): Promise<StandardContractSyncResult> {
+  const startedAt = new Date().toISOString();
   const normalizedBizNo = parseBusinessNumber(params.bizNo);
   const chunks = splitDateRangeIntoMonths(params.dateFrom, params.dateTo);
   const validRows: ParsedContractCsvRow[] = [];
@@ -88,7 +89,7 @@ export async function syncStandardContractsForBusiness(
   }
 
   if (validRows.length > 0) {
-    const importResult = importParsedRows(db, validRows, SOURCE_NAME, SOURCE_NAME);
+    const importResult = upsertParsedRows(db, validRows);
     result.insertedCount = importResult.insertedCount;
     result.updatedCount = importResult.updatedCount;
     result.skippedCount += importResult.skippedCount;
@@ -96,6 +97,18 @@ export async function syncStandardContractsForBusiness(
   }
 
   result.status = syncStatus(result);
+  recordImportRun(db, {
+    sourceName: SOURCE_NAME,
+    sourceFileName: SOURCE_NAME,
+    rowCount: result.rowsFetched,
+    insertedCount: result.insertedCount,
+    updatedCount: result.updatedCount,
+    skippedCount: result.skippedCount,
+    errorCount: result.errorCount,
+    startedAt,
+    status: result.status,
+  });
+
   return result;
 }
 

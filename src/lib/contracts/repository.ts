@@ -11,6 +11,17 @@ import { apiEnrichmentLogs, businesses, contractRecords, importRuns } from "@/li
 import { parseBusinessNumber } from "@/lib/domain/business-number";
 import type { ParsedContractCsvRow } from "@/lib/import/csv";
 
+type ImportRunStatus = "completed" | "completed_with_errors" | "failed";
+
+export type ImportRunInput = ImportResult & {
+  sourceName: string;
+  sourceFileName: string | null;
+  status: ImportRunStatus;
+  startedAt?: string;
+  finishedAt?: string;
+  notes?: string | null;
+};
+
 export function importParsedRows(
   db: Db,
   rows: ParsedContractCsvRow[],
@@ -18,6 +29,24 @@ export function importParsedRows(
   sourceName = "csv",
 ): ImportResult {
   const startedAt = new Date().toISOString();
+  const result = upsertParsedRows(db, rows);
+
+  recordImportRun(db, {
+    sourceName,
+    sourceFileName,
+    rowCount: result.rowCount,
+    insertedCount: result.insertedCount,
+    updatedCount: result.updatedCount,
+    skippedCount: result.skippedCount,
+    errorCount: result.errorCount,
+    startedAt,
+    status: result.errorCount > 0 ? "completed_with_errors" : "completed",
+  });
+
+  return result;
+}
+
+export function upsertParsedRows(db: Db, rows: ParsedContractCsvRow[]): ImportResult {
   const result: ImportResult = {
     rowCount: rows.length,
     insertedCount: 0,
@@ -144,24 +173,27 @@ export function importParsedRows(
         result.errorCount += 1;
       }
     }
-
-    tx.insert(importRuns)
-      .values({
-        sourceName,
-        sourceFileName,
-        rowCount: result.rowCount,
-        insertedCount: result.insertedCount,
-        updatedCount: result.updatedCount,
-        skippedCount: result.skippedCount,
-        errorCount: result.errorCount,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        status: result.errorCount > 0 ? "completed_with_errors" : "completed",
-      })
-      .run();
   });
 
   return result;
+}
+
+export function recordImportRun(db: Db, input: ImportRunInput): void {
+  db.insert(importRuns)
+    .values({
+      sourceName: input.sourceName,
+      sourceFileName: input.sourceFileName,
+      rowCount: input.rowCount,
+      insertedCount: input.insertedCount,
+      updatedCount: input.updatedCount,
+      skippedCount: input.skippedCount,
+      errorCount: input.errorCount,
+      startedAt: input.startedAt ?? new Date().toISOString(),
+      finishedAt: input.finishedAt ?? new Date().toISOString(),
+      status: input.status,
+      notes: input.notes,
+    })
+    .run();
 }
 
 export function searchContractsByBusinessNumber(
