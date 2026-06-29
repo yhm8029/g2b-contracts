@@ -18,7 +18,8 @@ type DemandAgencyEntry = {
   name: string | null;
 };
 
-const SOURCE_DATASET = "g2b-contract-info-service";
+export const PUBLIC_STANDARD_SOURCE_DATASET = "g2b-public-standard-contract";
+export const CONTRACT_INFO_SOURCE_DATASET = "g2b-contract-info-service";
 
 const businessNumberFields = [
   "bizno",
@@ -27,14 +28,15 @@ const businessNumberFields = [
   "cntrctEntrpsBizno",
   "bidwinnrBizrno",
   "corpBizno",
+  "rprsntCorpBizrno",
 ];
 
-const businessNameFields = ["cntrctCorpNm", "cntrctEntrpsNm", "bidwinnrNm", "corpNm"];
+const businessNameFields = ["cntrctCorpNm", "cntrctEntrpsNm", "bidwinnrNm", "corpNm", "rprsntCorpNm"];
 const contractDateFields = ["cntrctCnclsDate", "cntrctDate", "cntrctDt"];
 const contractNameFields = ["cntrctNm", "prodNm", "prdlstNm"];
 const contractNoFields = ["dcsnCntrctNo", "cntrctNo", "cntrctRefNo"];
 const currentAmountFields = ["thtmCntrctAmt", "cntrctAmt", "cntrctPrce"];
-const totalAmountFields = ["totCntrctAmt", "cntrctAmt", "cntrctPrce"];
+const totalAmountFields = ["totCntrctAmt", "ttalCntrctAmt", "cntrctAmt", "cntrctPrce"];
 const contractDetailUrlFields = [
   "cntrctDtlInfoUrl",
   "cntrctInfoUrl",
@@ -43,7 +45,7 @@ const contractDetailUrlFields = [
   "dtlInfoUrl",
   "detailUrl",
 ];
-const noticeDetailUrlFields = ["bidNtceDtlUrl", "bidNtceDetailUrl", "noticeDetailUrl"];
+const noticeDetailUrlFields = ["bidNtceDtlUrl", "bidNtceDetailUrl", "bidNtceUrl", "noticeDetailUrl"];
 
 export function rowMatchesBusinessNumber(row: StandardContractRow, normalizedBizNo: string): boolean {
   const normalizedInput = parseBusinessNumber(normalizedBizNo);
@@ -61,7 +63,11 @@ export function rowMatchesBusinessNumber(row: StandardContractRow, normalizedBiz
   return matchedCorpListEntry(row, normalizedInput) !== null;
 }
 
-export function mapStandardContractRow(row: StandardContractRow, normalizedBizNo: string): MappingResult {
+export function mapStandardContractRow(
+  row: StandardContractRow,
+  normalizedBizNo: string,
+  sourceDataset = PUBLIC_STANDARD_SOURCE_DATASET,
+): MappingResult {
   let bizNoNormalized: string;
 
   try {
@@ -79,7 +85,7 @@ export function mapStandardContractRow(row: StandardContractRow, normalizedBizNo
   const demandAgency = firstDemandAgencyEntry(row);
   const businessName = pickString(row, businessNameFields, ["\uC5C5\uCCB4\uBA85"]) ?? corpEntry?.businessName ?? null;
   const representativeName =
-    pickString(row, [], ["\uB300\uD45C\uC790\uBA85"]) ?? corpEntry?.representativeName ?? null;
+    pickString(row, ["rprsntCorpCeoNm"], ["\uB300\uD45C\uC790\uBA85"]) ?? corpEntry?.representativeName ?? null;
   const contractDate = normalizeProviderDate(
     pickString(row, contractDateFields, ["\uACC4\uC57D\uCCB4\uACB0\uC77C\uC790", "\uACC4\uC57D\uC77C\uC790"]),
   );
@@ -107,13 +113,13 @@ export function mapStandardContractRow(row: StandardContractRow, normalizedBizNo
   return {
     success: true,
     row: {
-      sourceDataset: SOURCE_DATASET,
+      sourceDataset,
       sourceRowHash: createSourceRowHash(hashableRow(row, bizNoNormalized)),
       bizNoNormalized,
       bizNoDisplay: formatBusinessNumber(bizNoNormalized),
       businessName: mappedBusinessName,
       representativeName,
-      address: pickString(row, ["addr", "adres", "corpAddr"], ["\uC8FC\uC18C"]),
+      address: pickString(row, ["addr", "adres", "corpAddr", "rprsntCorpAdrs"], ["\uC8FC\uC18C"]),
       businessCategory: normalizeBusinessCategory(pickString(row, ["bsnsDivNm", "businessCategory"])),
       noticeNo: pickString(row, ["ntceNo", "bidNtceNo"]),
       noticeOrder: pickString(row, ["bidNtceOrd"]),
@@ -124,8 +130,8 @@ export function mapStandardContractRow(row: StandardContractRow, normalizedBizNo
       contractDate: mappedContractDate,
       currentContractAmount: currentAmount,
       totalContractAmount: totalAmount,
-      demandAgencyCode: pickString(row, ["dminsttCd"]) ?? demandAgency?.code ?? null,
-      demandAgencyName: pickString(row, ["dminsttNm"]) ?? demandAgency?.name ?? null,
+      demandAgencyCode: pickString(row, ["dminsttCd", "dmndInsttCd"]) ?? demandAgency?.code ?? null,
+      demandAgencyName: pickString(row, ["dminsttNm", "dmndInsttNm"]) ?? demandAgency?.name ?? null,
       contractAgencyCode: pickString(row, ["cntrctInsttCd"]),
       contractAgencyName: pickString(row, ["cntrctInsttNm"]),
       contractMethod: pickString(row, ["cntrctMthdNm", "cntrctCnclsMthdNm"]),

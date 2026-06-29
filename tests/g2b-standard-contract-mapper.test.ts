@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { fetchStandardContractPage, G2bStandardContractError } from "@/lib/g2b/standard-contract-client";
 import {
+  CONTRACT_INFO_SOURCE_DATASET,
+  PUBLIC_STANDARD_SOURCE_DATASET,
   mapStandardContractRow,
   rowMatchesBusinessNumber,
   type StandardContractRow,
@@ -101,6 +103,7 @@ describe("G2B standard contract mapper", () => {
         cntrctCnclsMthdNm: "수의계약",
       },
       BIZ_NO,
+      CONTRACT_INFO_SOURCE_DATASET,
     );
 
     expect(row.success).toBe(true);
@@ -145,7 +148,7 @@ describe("G2B standard contract mapper", () => {
     });
 
     expect(row).toMatchObject({
-      sourceDataset: "g2b-contract-info-service",
+      sourceDataset: PUBLIC_STANDARD_SOURCE_DATASET,
       bizNoNormalized: BIZ_NO,
       bizNoDisplay: "113-81-90302",
       businessName: BUSINESS_NAME,
@@ -166,6 +169,63 @@ describe("G2B standard contract mapper", () => {
       rawSourceUrl: "https://www.g2b.go.kr/contract/detail",
     });
     expect(row.sourceRowHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("maps public standard contract rows with representative corporation fields", () => {
+    const result = mapStandardContractRow(
+      {
+        rprsntCorpBizrno: "113-81-90302",
+        rprsntCorpNm: BUSINESS_NAME,
+        rprsntCorpCeoNm: REPRESENTATIVE_NAME,
+        rprsntCorpAdrs: "Seoul",
+        cntrctNo: "R26TA0199137800",
+        untyCntrctNo: "R26TE15385756",
+        cntrctNm: CONTRACT_NAME,
+        bsnsDivNm: "goods",
+        cntrctCnclsDate: "20260626",
+        cntrctAmt: "180,529,000",
+        ttalCntrctAmt: "283,000,000",
+        cntrctInfoUrl: "https://www.g2b.go.kr/contract/info",
+        bidNtceNo: "R26BK01575853",
+        bidNtceOrd: "000",
+        bidNtceNm: CONTRACT_NAME,
+        bidNtceUrl: "https://www.g2b.go.kr/bid/info",
+        dmndInsttCd: "D001",
+        dmndInsttNm: "Demand Agency",
+        cntrctInsttCd: "C001",
+        cntrctInsttNm: "Contract Agency",
+      },
+      BIZ_NO,
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error(result.reason);
+    }
+    expect(result.row).toMatchObject({
+      sourceDataset: PUBLIC_STANDARD_SOURCE_DATASET,
+      bizNoNormalized: BIZ_NO,
+      businessName: BUSINESS_NAME,
+      representativeName: REPRESENTATIVE_NAME,
+      address: "Seoul",
+      businessCategory: "goods",
+      noticeNo: "R26BK01575853",
+      noticeOrder: "000",
+      noticeName: CONTRACT_NAME,
+      contractNo: "R26TA0199137800",
+      unifiedContractNo: "R26TE15385756",
+      contractName: CONTRACT_NAME,
+      contractDate: "2026-06-26",
+      currentContractAmount: 180529000,
+      totalContractAmount: 283000000,
+      demandAgencyCode: "D001",
+      demandAgencyName: "Demand Agency",
+      contractAgencyCode: "C001",
+      contractAgencyName: "Contract Agency",
+      contractDetailUrl: "https://www.g2b.go.kr/contract/info",
+      noticeDetailUrl: "https://www.g2b.go.kr/bid/info",
+      rawSourceUrl: "https://www.g2b.go.kr/contract/info",
+    });
   });
 
   it("does not match rows for a different business", () => {
@@ -308,11 +368,10 @@ describe("G2B standard contract client", () => {
 
       const url = fetchMock.mock.calls[0][0] as URL;
       expect(url.origin + url.pathname).toBe(
-        "https://apis.data.go.kr/1230000/ao/CntrctInfoService/getCntrctInfoListThng",
+        "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService/getDataSetOpnStdCntrctInfo",
       );
-      expect(url.searchParams.get("inqryDiv")).toBe("1");
-      expect(url.searchParams.get("inqryBgnDt")).toBe("202606010000");
-      expect(url.searchParams.get("inqryEndDt")).toBe("202606302359");
+      expect(url.searchParams.get("cntrctCnclsBgnDate")).toBe("20260601");
+      expect(url.searchParams.get("cntrctCnclsEndDate")).toBe("20260630");
       expect(url.searchParams.get("pageNo")).toBe("1");
       expect(url.searchParams.get("numOfRows")).toBe("100");
     } finally {

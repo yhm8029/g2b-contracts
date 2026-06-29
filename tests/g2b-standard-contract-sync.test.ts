@@ -29,6 +29,7 @@ function providerRow(overrides: StandardContractRow = {}): StandardContractRow {
     cntrctCnclsDate: "2026-01-15",
     cntrctNm: "Synced contract",
     cntrctNo: "SYNC-1",
+    bsnsDivNm: "goods",
     ...overrides,
   };
 }
@@ -76,8 +77,8 @@ describe("syncStandardContractsForBusiness", () => {
         .prepare("select source_name as sourceName, source_file_name as sourceFileName from import_runs order by id desc limit 1")
         .get() as { sourceName: string; sourceFileName: string };
       expect(latestImportRun).toEqual({
-        sourceName: "g2b-contract-info-service",
-        sourceFileName: "g2b-contract-info-service",
+        sourceName: "g2b-public-standard-contract",
+        sourceFileName: "g2b-public-standard-contract",
       });
     } finally {
       sqlite.close();
@@ -129,8 +130,8 @@ describe("syncStandardContractsForBusiness", () => {
       };
 
       expect(latestImportRun).toEqual({
-        sourceName: "g2b-contract-info-service",
-        sourceFileName: "g2b-contract-info-service",
+        sourceName: "g2b-public-standard-contract",
+        sourceFileName: "g2b-public-standard-contract",
         rowCount: 1,
         insertedCount: 0,
         skippedCount: 1,
@@ -160,33 +161,67 @@ describe("syncStandardContractsForBusiness", () => {
       );
 
       expect(result.status).toBe("completed");
-      expect(result.chunksAttempted).toBe(4);
-      expect(result.pagesFetched).toBe(4);
-      expect(result.rowsMatched).toBe(4);
+      expect(result.chunksAttempted).toBe(1);
+      expect(result.pagesFetched).toBe(1);
+      expect(result.rowsMatched).toBe(1);
       expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
+        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
+        1,
+        100,
+      );
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("falls back to approved contract information divisions when public standard service is unauthorized", async () => {
+    const { sqlite, db } = createTempDb();
+    const fetchStandardContractPage = vi.fn(async () => {
+      throw new G2bStandardContractError("unauthorized_service_key", "standard service rejected");
+    });
+    const fetchContractInfoPage = vi.fn(async (_chunk, pageNo, numOfRows, category) => ({
+      items: category === "goods" ? [providerRow({ cntrctNo: "FALLBACK-GOODS" })] : [],
+      totalCount: category === "goods" ? 1 : 0,
+      pageNo,
+      numOfRows,
+    }));
+    const client: StandardContractSyncClient = {
+      fetchStandardContractPage,
+      fetchContractInfoPage,
+    };
+
+    try {
+      const result = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "all" },
+        client,
+      );
+
+      expect(result).toMatchObject({
+        status: "completed",
+        chunksAttempted: 4,
+        pagesFetched: 4,
+        rowsFetched: 1,
+        rowsMatched: 1,
+        insertedCount: 1,
+        errorCount: 0,
+      });
+      expect(fetchStandardContractPage).toHaveBeenCalledOnce();
+      expect(fetchContractInfoPage).toHaveBeenCalledTimes(4);
+      expect(fetchContractInfoPage).toHaveBeenCalledWith(
         { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
         1,
         100,
         "goods",
       );
-      expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
-        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
-        1,
-        100,
-        "services",
-      );
-      expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
-        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
-        1,
-        100,
-        "construction",
-      );
-      expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
-        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
-        1,
-        100,
-        "foreign",
-      );
+
+      const latestImportRun = sqlite
+        .prepare("select source_name as sourceName, source_file_name as sourceFileName from import_runs order by id desc limit 1")
+        .get() as { sourceName: string; sourceFileName: string };
+      expect(latestImportRun).toEqual({
+        sourceName: "g2b-contract-info-service",
+        sourceFileName: "g2b-contract-info-service",
+      });
     } finally {
       sqlite.close();
     }
@@ -223,13 +258,11 @@ describe("syncStandardContractsForBusiness", () => {
         { dateFrom: "2026-01-01", dateTo: "2026-01-14", granularity: "month" },
         1,
         100,
-        "goods",
       );
       expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
         { dateFrom: "2026-01-01", dateTo: "2026-01-07", granularity: "week" },
         1,
         100,
-        "goods",
       );
     } finally {
       sqlite.close();
@@ -266,7 +299,6 @@ describe("syncStandardContractsForBusiness", () => {
         { dateFrom: "2026-01-01", dateTo: "2026-01-01", granularity: "day" },
         1,
         100,
-        "goods",
       );
     } finally {
       sqlite.close();
@@ -397,7 +429,6 @@ describe("syncStandardContractsForBusiness", () => {
         { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
         2,
         100,
-        "goods",
       );
     } finally {
       sqlite.close();

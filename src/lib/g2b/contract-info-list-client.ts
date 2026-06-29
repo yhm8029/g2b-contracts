@@ -1,47 +1,32 @@
 import { fetchG2bJson, redactG2bSecrets } from "@/lib/g2b/http";
+import {
+  G2bStandardContractError,
+  type G2bContractBusinessCategory,
+  type StandardContractChunk,
+  type StandardContractPage,
+} from "@/lib/g2b/standard-contract-client";
 import type { StandardContractRow } from "@/lib/g2b/standard-contract-mapper";
 
-export const PUBLIC_STANDARD_CONTRACT_BASE_URL = "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService";
-export const GET_PUBLIC_STANDARD_CONTRACT_OPERATION = "getDataSetOpnStdCntrctInfo";
+export const CONTRACT_INFO_LIST_BASE_URL = "https://apis.data.go.kr/1230000/ao/CntrctInfoService";
 
-export type G2bContractBusinessCategory = "goods" | "services" | "construction" | "foreign";
-
-export type StandardContractChunk = {
-  dateFrom: string;
-  dateTo: string;
+const CONTRACT_INFO_OPERATIONS: Record<G2bContractBusinessCategory, string> = {
+  goods: "getCntrctInfoListThng",
+  services: "getCntrctInfoListServc",
+  construction: "getCntrctInfoListCnstwk",
+  foreign: "getCntrctInfoListFrgcpt",
 };
 
-export type StandardContractPage = {
-  items: StandardContractRow[];
-  totalCount: number;
-  pageNo: number;
-  numOfRows: number;
-};
-
-export type G2bStandardContractErrorCode =
-  | "unauthorized_service_key"
-  | "date_range_too_large"
-  | "provider_error";
-
-export class G2bStandardContractError extends Error {
-  constructor(
-    public readonly code: G2bStandardContractErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "G2bStandardContractError";
-  }
-}
-
-export async function fetchStandardContractPage(
+export async function fetchContractInfoPage(
   chunk: StandardContractChunk,
   pageNo: number,
   numOfRows = 100,
+  businessCategory: G2bContractBusinessCategory = "goods",
 ): Promise<StandardContractPage> {
   try {
-    const response = await fetchG2bJson(PUBLIC_STANDARD_CONTRACT_BASE_URL, GET_PUBLIC_STANDARD_CONTRACT_OPERATION, {
-      cntrctCnclsBgnDate: toProviderDate(chunk.dateFrom),
-      cntrctCnclsEndDate: toProviderDate(chunk.dateTo),
+    const response = await fetchG2bJson(CONTRACT_INFO_LIST_BASE_URL, CONTRACT_INFO_OPERATIONS[businessCategory], {
+      inqryDiv: 1,
+      inqryBgnDt: toProviderDateTime(chunk.dateFrom, "0000"),
+      inqryEndDt: toProviderDateTime(chunk.dateTo, "2359"),
       pageNo,
       numOfRows,
     });
@@ -63,7 +48,7 @@ export async function fetchStandardContractPage(
     if (message.includes("403")) {
       throw new G2bStandardContractError(
         "unauthorized_service_key",
-        "G2B public data open standard contract service request was rejected with status 403.",
+        "G2B contract information service request was rejected with status 403.",
       );
     }
 
@@ -99,7 +84,7 @@ function successfulResponseBody(response: unknown): Record<string, unknown> {
   if (isUnauthorizedServiceKeyMessage(resultMsg)) {
     throw new G2bStandardContractError(
       "unauthorized_service_key",
-      resultMsg ?? "G2B standard contract service key is unauthorized.",
+      resultMsg ?? "G2B contract information service key is unauthorized.",
     );
   }
 
@@ -109,12 +94,15 @@ function successfulResponseBody(response: unknown): Record<string, unknown> {
 
   throw new G2bStandardContractError(
     "provider_error",
-    `G2B standard contract provider error ${resultCode}: ${resultMsg ?? "Unknown provider error."}`,
+    `G2B contract information provider error ${resultCode}: ${resultMsg ?? "Unknown provider error."}`,
   );
 }
 
 function malformedProviderResponse(reason: string): G2bStandardContractError {
-  return new G2bStandardContractError("provider_error", `Malformed G2B standard contract service response: ${reason}.`);
+  return new G2bStandardContractError(
+    "provider_error",
+    `Malformed G2B contract information service response: ${reason}.`,
+  );
 }
 
 function normalizeItems(value: unknown): StandardContractRow[] {
@@ -137,11 +125,15 @@ function toProviderDate(value: string): string {
   return value.replace(/-/g, "");
 }
 
+function toProviderDateTime(value: string, hhmm: string): string {
+  return `${toProviderDate(value)}${hhmm}`;
+}
+
 function parseCount(value: unknown): number {
   const text = asString(value);
 
   if (text === null || !/^\d+$/.test(text)) {
-    throw new G2bStandardContractError("provider_error", "Malformed G2B standard contract response: invalid totalCount.");
+    throw new G2bStandardContractError("provider_error", "Malformed G2B contract information response: invalid totalCount.");
   }
 
   return Number(text);
@@ -161,13 +153,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isUnauthorizedServiceKeyMessage(message: string | null): boolean {
-  return message !== null && /service\s*key|unauthorized|forbidden|인증키|서비스키/i.test(message);
+  return message !== null && /service\s*key|unauthorized|forbidden|인증|서비스키/i.test(message);
 }
 
 function isDateRangeTooLargeMessage(message: string | null): boolean {
-  return (
-    message !== null &&
-    (/date\s*range|too\s*large|too\s*long|exceed|over/i.test(message) ||
-      (message.includes("기간") && /초과|이상|크|넓|길/.test(message)))
-  );
+  return message !== null && (/date\s*range|too\s*large|too\s*long|exceed|over|조회기간|초과/i.test(message));
 }

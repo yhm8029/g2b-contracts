@@ -13,7 +13,7 @@ import {
 export const runtime = "nodejs";
 
 const SERVICE_APPROVAL_MESSAGE =
-  "Public Data Portal service usage approval is required for the G2B contract information service.";
+  "Public Data Portal service usage approval is required for the G2B public data open standard service.";
 
 const dateSchema = z
   .string()
