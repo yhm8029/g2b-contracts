@@ -44,8 +44,7 @@ export async function fetchStandardContractPage(
       numOfRows,
     });
 
-    assertSuccessfulResponse(response);
-    const body = responseBody(response);
+    const body = successfulResponseBody(response);
 
     return {
       items: normalizeItems(body?.items ?? body?.item),
@@ -70,13 +69,29 @@ export async function fetchStandardContractPage(
   }
 }
 
-function assertSuccessfulResponse(response: unknown): void {
-  const header = responseHeader(response);
-  const resultCode = asString(header?.resultCode);
-  const resultMsg = asString(header?.resultMsg);
+function successfulResponseBody(response: unknown): Record<string, unknown> {
+  if (!isRecord(response) || !isRecord(response.response)) {
+    throw malformedProviderResponse("missing response envelope");
+  }
 
-  if (resultCode === null || resultCode === "00") {
-    return;
+  const envelope = response.response;
+  if (!isRecord(envelope.header)) {
+    throw malformedProviderResponse("missing response header");
+  }
+
+  const resultCode = asString(envelope.header.resultCode);
+  const resultMsg = asString(envelope.header.resultMsg);
+
+  if (resultCode === null) {
+    throw malformedProviderResponse("missing resultCode");
+  }
+
+  if (resultCode === "00") {
+    if (!isRecord(envelope.body)) {
+      throw malformedProviderResponse("missing response body");
+    }
+
+    return envelope.body;
   }
 
   if (isUnauthorizedServiceKeyMessage(resultMsg)) {
@@ -96,30 +111,8 @@ function assertSuccessfulResponse(response: unknown): void {
   );
 }
 
-function responseHeader(response: unknown): Record<string, unknown> | null {
-  if (!isRecord(response)) {
-    return null;
-  }
-
-  const envelope = response.response;
-  if (!isRecord(envelope) || !isRecord(envelope.header)) {
-    return null;
-  }
-
-  return envelope.header;
-}
-
-function responseBody(response: unknown): Record<string, unknown> | null {
-  if (!isRecord(response)) {
-    return null;
-  }
-
-  const envelope = response.response;
-  if (!isRecord(envelope) || !isRecord(envelope.body)) {
-    return null;
-  }
-
-  return envelope.body;
+function malformedProviderResponse(reason: string): G2bStandardContractError {
+  return new G2bStandardContractError("provider_error", `Malformed G2B standard contract response: ${reason}.`);
 }
 
 function normalizeItems(value: unknown): StandardContractRow[] {
@@ -143,8 +136,13 @@ function toProviderDate(value: string): string {
 }
 
 function parseCount(value: unknown): number {
-  const parsed = Number(asString(value) ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
+  const text = asString(value);
+
+  if (text === null || !/^\d+$/.test(text)) {
+    throw new G2bStandardContractError("provider_error", "Malformed G2B standard contract response: invalid totalCount.");
+  }
+
+  return Number(text);
 }
 
 function asString(value: unknown): string | null {

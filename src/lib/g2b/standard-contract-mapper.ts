@@ -178,8 +178,14 @@ function parseProviderAmount(value: string | null): number | null {
     return null;
   }
 
-  const numericText = value.replace(/[^\d.-]/g, "");
-  return parseAmountToWon(numericText);
+  const trimmed = value.trim();
+  const amountMatch = trimmed.match(/^(\d+|\d{1,3}(?:,\d{3})+)\s*(?:\uC6D0)?$/u);
+
+  if (amountMatch === null) {
+    return null;
+  }
+
+  return parseAmountToWon(amountMatch[1]);
 }
 
 function hashableRow(row: StandardContractRow, normalizedBizNo: string): Record<string, string | number | null> {

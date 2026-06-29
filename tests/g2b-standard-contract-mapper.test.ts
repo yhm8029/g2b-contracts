@@ -36,15 +36,19 @@ function expectMapped(overrides: StandardContractRow = {}) {
 }
 
 function mockProviderResponse(body: Record<string, unknown>, header: Record<string, unknown> = { resultCode: "00" }) {
+  return mockRawProviderJson({
+    response: {
+      header,
+      body,
+    },
+  });
+}
+
+function mockRawProviderJson(responseJson: unknown) {
   const previous = process.env.DATA_GO_KR_SERVICE_KEY;
   const fetchMock = vi.fn(async (_url: URL) => ({
     ok: true,
-    json: async () => ({
-      response: {
-        header,
-        body,
-      },
-    }),
+    json: async () => responseJson,
   }));
   vi.stubGlobal("fetch", fetchMock);
   process.env.DATA_GO_KR_SERVICE_KEY = "TEST_KEY";
@@ -151,6 +155,9 @@ describe("G2B standard contract mapper", () => {
     ["blank amount", "", null],
     ["null amount", null, null],
     ["non-numeric amount", "not available", null],
+    ["letter-substituted amount", "18O,529,000\uc6d0", null],
+    ["text with trailing zero", "not available 0", null],
+    ["Korean approximate eok amount", "\uc57d 1\uc5b5\uc6d0", null],
   ])("maps %s to a nullable amount", (_variant, value, expected) => {
     const row = expectMapped({ cntrctAmt: value });
 
@@ -319,6 +326,38 @@ describe("G2B standard contract client", () => {
       await expect(fetchStandardContractPage({ dateFrom: "2026-01-01", dateTo: "2026-12-31" }, 1)).rejects.toMatchObject(
         {
           code: "date_range_too_large",
+        },
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it.each([
+    ["missing response envelope", {}],
+    ["missing response header", { response: { body: { totalCount: "0", items: [] } } }],
+    ["missing response body", { response: { header: { resultCode: "00" } } }],
+  ])("classifies malformed provider envelope: %s", async (_caseName, responseJson) => {
+    const { restore } = mockRawProviderJson(responseJson);
+
+    try {
+      await expect(fetchStandardContractPage({ dateFrom: "2026-06-01", dateTo: "2026-06-01" }, 1)).rejects.toMatchObject(
+        {
+          code: "provider_error",
+        },
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("classifies invalid provider totalCount as provider_error", async () => {
+    const { restore } = mockProviderResponse({ totalCount: "not-a-number", items: [] });
+
+    try {
+      await expect(fetchStandardContractPage({ dateFrom: "2026-06-01", dateTo: "2026-06-01" }, 1)).rejects.toMatchObject(
+        {
+          code: "provider_error",
         },
       );
     } finally {
