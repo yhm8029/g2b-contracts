@@ -54,7 +54,7 @@ describe("syncStandardContractsForBusiness", () => {
     try {
       const result = await syncStandardContractsForBusiness(
         db,
-        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31" },
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "goods" },
         client,
       );
 
@@ -76,8 +76,8 @@ describe("syncStandardContractsForBusiness", () => {
         .prepare("select source_name as sourceName, source_file_name as sourceFileName from import_runs order by id desc limit 1")
         .get() as { sourceName: string; sourceFileName: string };
       expect(latestImportRun).toEqual({
-        sourceName: "g2b-public-standard-contract",
-        sourceFileName: "g2b-public-standard-contract",
+        sourceName: "g2b-contract-info-service",
+        sourceFileName: "g2b-contract-info-service",
       });
     } finally {
       sqlite.close();
@@ -96,7 +96,7 @@ describe("syncStandardContractsForBusiness", () => {
     try {
       const result = await syncStandardContractsForBusiness(
         db,
-        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31" },
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "goods" },
         client,
       );
 
@@ -129,8 +129,8 @@ describe("syncStandardContractsForBusiness", () => {
       };
 
       expect(latestImportRun).toEqual({
-        sourceName: "g2b-public-standard-contract",
-        sourceFileName: "g2b-public-standard-contract",
+        sourceName: "g2b-contract-info-service",
+        sourceFileName: "g2b-contract-info-service",
         rowCount: 1,
         insertedCount: 0,
         skippedCount: 1,
@@ -138,6 +138,55 @@ describe("syncStandardContractsForBusiness", () => {
         status: "completed",
       });
       expect(getDatabaseHealth(db).latestImportAt).toEqual(expect.any(String));
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("queries every approved contract info business division when category is all", async () => {
+    const { sqlite, db } = createTempDb();
+    const client = mockClient(async (chunk, pageNo, numOfRows, category) => ({
+      items: [providerRow({ bsnsDivNm: category === "services" ? "용역" : "물품", cntrctNo: `SYNC-${category}` })],
+      totalCount: 1,
+      pageNo,
+      numOfRows,
+    }));
+
+    try {
+      const result = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "all" },
+        client,
+      );
+
+      expect(result.status).toBe("completed");
+      expect(result.chunksAttempted).toBe(4);
+      expect(result.pagesFetched).toBe(4);
+      expect(result.rowsMatched).toBe(4);
+      expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
+        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
+        1,
+        100,
+        "goods",
+      );
+      expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
+        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
+        1,
+        100,
+        "services",
+      );
+      expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
+        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
+        1,
+        100,
+        "construction",
+      );
+      expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
+        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
+        1,
+        100,
+        "foreign",
+      );
     } finally {
       sqlite.close();
     }
@@ -161,7 +210,7 @@ describe("syncStandardContractsForBusiness", () => {
     try {
       const result = await syncStandardContractsForBusiness(
         db,
-        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-14" },
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-14", businessCategory: "goods" },
         client,
       );
 
@@ -174,11 +223,13 @@ describe("syncStandardContractsForBusiness", () => {
         { dateFrom: "2026-01-01", dateTo: "2026-01-14", granularity: "month" },
         1,
         100,
+        "goods",
       );
       expect(client.fetchStandardContractPage).toHaveBeenCalledWith(
         { dateFrom: "2026-01-01", dateTo: "2026-01-07", granularity: "week" },
         1,
         100,
+        "goods",
       );
     } finally {
       sqlite.close();
@@ -203,7 +254,7 @@ describe("syncStandardContractsForBusiness", () => {
     try {
       const result = await syncStandardContractsForBusiness(
         db,
-        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-03" },
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-03", businessCategory: "goods" },
         client,
       );
 
@@ -215,6 +266,7 @@ describe("syncStandardContractsForBusiness", () => {
         { dateFrom: "2026-01-01", dateTo: "2026-01-01", granularity: "day" },
         1,
         100,
+        "goods",
       );
     } finally {
       sqlite.close();
@@ -230,7 +282,7 @@ describe("syncStandardContractsForBusiness", () => {
     try {
       const result = await syncStandardContractsForBusiness(
         db,
-        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31" },
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "goods" },
         client,
       );
 
@@ -274,7 +326,7 @@ describe("syncStandardContractsForBusiness", () => {
     try {
       const result = await syncStandardContractsForBusiness(
         db,
-        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-02-28" },
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-02-28", businessCategory: "goods" },
         client,
       );
 
@@ -332,7 +384,7 @@ describe("syncStandardContractsForBusiness", () => {
     try {
       const result = await syncStandardContractsForBusiness(
         db,
-        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31" },
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "goods" },
         client,
       );
 
@@ -345,6 +397,7 @@ describe("syncStandardContractsForBusiness", () => {
         { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
         2,
         100,
+        "goods",
       );
     } finally {
       sqlite.close();

@@ -7,7 +7,18 @@ export type StandardContractRow = Record<string, unknown>;
 
 type MappingResult = { success: true; row: ParsedContractCsvRow } | { success: false; reason: string };
 
-const SOURCE_DATASET = "g2b-public-standard-contract";
+type CorpListEntry = {
+  businessName: string | null;
+  representativeName: string | null;
+  businessNumber: string | null;
+};
+
+type DemandAgencyEntry = {
+  code: string | null;
+  name: string | null;
+};
+
+const SOURCE_DATASET = "g2b-contract-info-service";
 
 const businessNumberFields = [
   "bizno",
@@ -19,13 +30,14 @@ const businessNumberFields = [
 ];
 
 const businessNameFields = ["cntrctCorpNm", "cntrctEntrpsNm", "bidwinnrNm", "corpNm"];
-const contractDateFields = ["cntrctCnclsDate", "cntrctDt"];
+const contractDateFields = ["cntrctCnclsDate", "cntrctDate", "cntrctDt"];
 const contractNameFields = ["cntrctNm", "prodNm", "prdlstNm"];
-const contractNoFields = ["cntrctNo", "dcsnCntrctNo", "cntrctRefNo"];
-const currentAmountFields = ["cntrctAmt", "cntrctPrce"];
+const contractNoFields = ["dcsnCntrctNo", "cntrctNo", "cntrctRefNo"];
+const currentAmountFields = ["thtmCntrctAmt", "cntrctAmt", "cntrctPrce"];
 const totalAmountFields = ["totCntrctAmt", "cntrctAmt", "cntrctPrce"];
 const contractDetailUrlFields = [
   "cntrctDtlInfoUrl",
+  "cntrctInfoUrl",
   "cntrctDetailUrl",
   "contractDetailUrl",
   "dtlInfoUrl",
@@ -46,7 +58,7 @@ export function rowMatchesBusinessNumber(row: StandardContractRow, normalizedBiz
     }
   }
 
-  return false;
+  return matchedCorpListEntry(row, normalizedInput) !== null;
 }
 
 export function mapStandardContractRow(row: StandardContractRow, normalizedBizNo: string): MappingResult {
@@ -58,14 +70,20 @@ export function mapStandardContractRow(row: StandardContractRow, normalizedBizNo
     return { success: false, reason: error instanceof Error ? error.message : "Invalid biz_no." };
   }
 
+  const corpEntry = matchedCorpListEntry(row, bizNoNormalized);
+
   if (!rowMatchesBusinessNumber(row, bizNoNormalized)) {
     return { success: false, reason: "biz_no does not match provider row." };
   }
 
-  const businessName = pickString(row, businessNameFields, ["업체명"]);
-  const representativeName = pickString(row, [], ["대표자명"]);
-  const contractDate = normalizeProviderDate(pickString(row, contractDateFields, ["계약체결일자", "계약일자"]));
-  const contractName = pickString(row, contractNameFields, ["계약명", "품명"]);
+  const demandAgency = firstDemandAgencyEntry(row);
+  const businessName = pickString(row, businessNameFields, ["\uC5C5\uCCB4\uBA85"]) ?? corpEntry?.businessName ?? null;
+  const representativeName =
+    pickString(row, [], ["\uB300\uD45C\uC790\uBA85"]) ?? corpEntry?.representativeName ?? null;
+  const contractDate = normalizeProviderDate(
+    pickString(row, contractDateFields, ["\uACC4\uC57D\uCCB4\uACB0\uC77C\uC790", "\uACC4\uC57D\uC77C\uC790"]),
+  );
+  const contractName = pickString(row, contractNameFields, ["\uACC4\uC57D\uBA85", "\uD488\uBA85"]);
 
   const missingFields: string[] = [];
   if (businessName === null) missingFields.push("business_name");
@@ -79,8 +97,12 @@ export function mapStandardContractRow(row: StandardContractRow, normalizedBizNo
   const mappedBusinessName = businessName!;
   const mappedContractDate = contractDate!;
   const mappedContractName = contractName!;
-  const contractDetailUrl = pickString(row, contractDetailUrlFields, ["상세"]);
-  const noticeDetailUrl = pickString(row, noticeDetailUrlFields, ["공고", "상세"]);
+  const contractDetailUrl = pickString(row, contractDetailUrlFields, ["\uC0C1\uC138"]);
+  const noticeDetailUrl = pickString(row, noticeDetailUrlFields, ["\uACF5\uACE0", "\uC0C1\uC138"]);
+  const totalAmount = parseProviderAmount(
+    pickString(row, totalAmountFields, ["\uCD1D\uACC4\uC57D\uAE08\uC561", "\uACC4\uC57D\uAE08\uC561", "\uAE08\uC561"]),
+  );
+  const currentAmount = parseProviderAmount(pickString(row, currentAmountFields, ["\uAE08\uC561"]));
 
   return {
     success: true,
@@ -91,19 +113,19 @@ export function mapStandardContractRow(row: StandardContractRow, normalizedBizNo
       bizNoDisplay: formatBusinessNumber(bizNoNormalized),
       businessName: mappedBusinessName,
       representativeName,
-      address: pickString(row, ["addr", "adres", "corpAddr"], ["주소"]),
-      businessCategory: pickString(row, ["indstrytyNm", "bizcndNm"], ["업종"]),
-      noticeNo: pickString(row, ["bidNtceNo"]),
+      address: pickString(row, ["addr", "adres", "corpAddr"], ["\uC8FC\uC18C"]),
+      businessCategory: normalizeBusinessCategory(pickString(row, ["bsnsDivNm", "businessCategory"])),
+      noticeNo: pickString(row, ["ntceNo", "bidNtceNo"]),
       noticeOrder: pickString(row, ["bidNtceOrd"]),
       noticeName: pickString(row, ["bidNtceNm"]),
       contractNo: pickString(row, contractNoFields),
       unifiedContractNo: pickString(row, ["untyCntrctNo"]),
       contractName: mappedContractName,
       contractDate: mappedContractDate,
-      currentContractAmount: parseProviderAmount(pickString(row, currentAmountFields, ["금액"])),
-      totalContractAmount: parseProviderAmount(pickString(row, totalAmountFields, ["총계약금액", "계약금액", "금액"])),
-      demandAgencyCode: pickString(row, ["dminsttCd"]),
-      demandAgencyName: pickString(row, ["dminsttNm"]),
+      currentContractAmount: currentAmount,
+      totalContractAmount: totalAmount,
+      demandAgencyCode: pickString(row, ["dminsttCd"]) ?? demandAgency?.code ?? null,
+      demandAgencyName: pickString(row, ["dminsttNm"]) ?? demandAgency?.name ?? null,
       contractAgencyCode: pickString(row, ["cntrctInsttCd"]),
       contractAgencyName: pickString(row, ["cntrctInsttNm"]),
       contractMethod: pickString(row, ["cntrctMthdNm", "cntrctCnclsMthdNm"]),
@@ -117,7 +139,7 @@ export function mapStandardContractRow(row: StandardContractRow, normalizedBizNo
 }
 
 function isBusinessNumberKey(key: string): boolean {
-  return businessNumberFields.includes(key) || key.includes("사업자등록번호");
+  return businessNumberFields.includes(key) || key.includes("\uC0AC\uC5C5\uC790\uB4F1\uB85D\uBC88\uD638");
 }
 
 function pickString(row: StandardContractRow, exactKeys: string[], keyIncludes: string[] = []): string | null {
@@ -153,6 +175,55 @@ function normalizeDigits(value: unknown): string {
   return asNonBlankString(value)?.replace(/\D/g, "") ?? "";
 }
 
+function matchedCorpListEntry(row: StandardContractRow, normalizedBizNo: string): CorpListEntry | null {
+  return parseCorpList(row.corpList).find((entry) => entry.businessNumber === normalizedBizNo) ?? null;
+}
+
+function parseCorpList(value: unknown): CorpListEntry[] {
+  const text = asNonBlankString(value);
+  if (text === null) {
+    return [];
+  }
+
+  const bracketedEntries = [...text.matchAll(/\[([^\]]+)\]/g)].map((match) => match[1]);
+  const entries = bracketedEntries.length > 0 ? bracketedEntries : [text];
+
+  return entries
+    .map((entry) => entry.split("^").map((part) => part.trim()))
+    .map((parts) => ({
+      businessName: asNonBlankString(parts[3]),
+      representativeName: asNonBlankString(parts[4]),
+      businessNumber: normalizeCorpListBusinessNumber(parts),
+    }))
+    .filter((entry) => entry.businessNumber !== null);
+}
+
+function normalizeCorpListBusinessNumber(parts: string[]): string | null {
+  for (const part of parts.slice().reverse()) {
+    const digits = part.replace(/\D/g, "");
+    if (/^\d{10}$/.test(digits)) {
+      return digits;
+    }
+  }
+
+  return null;
+}
+
+function firstDemandAgencyEntry(row: StandardContractRow): DemandAgencyEntry | null {
+  const text = asNonBlankString(row.dminsttList);
+  if (text === null) {
+    return null;
+  }
+
+  const match = text.match(/\[([^\]]+)\]/);
+  const parts = (match?.[1] ?? text).split("^").map((part) => part.trim());
+
+  return {
+    code: asNonBlankString(parts[1]),
+    name: asNonBlankString(parts[2]),
+  };
+}
+
 function normalizeProviderDate(value: string | null): string | null {
   if (value === null) {
     return null;
@@ -186,6 +257,27 @@ function parseProviderAmount(value: string | null): number | null {
   }
 
   return parseAmountToWon(amountMatch[1]);
+}
+
+function normalizeBusinessCategory(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  const categoryMap: Record<string, string> = {
+    goods: "goods",
+    "\uBB3C\uD488": "goods",
+    construction: "construction",
+    "\uACF5\uC0AC": "construction",
+    services: "services",
+    service: "services",
+    "\uC6A9\uC5ED": "services",
+    foreign: "foreign",
+    "\uC678\uC790": "foreign",
+  };
+
+  return categoryMap[normalized] ?? "unknown";
 }
 
 function hashableRow(row: StandardContractRow, normalizedBizNo: string): Record<string, string | number | null> {

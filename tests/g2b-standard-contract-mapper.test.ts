@@ -74,9 +74,60 @@ describe("G2B standard contract mapper", () => {
     ["cntrctEntrpsBizno", "113/81/90302"],
     ["bidwinnrBizrno", "113-81-90302"],
     ["corpBizno", "113_81_90302"],
+    ["corpList", "[1^주계약업체^단독^주식회사 우리젠^고상원^대한민국^100^주식회사 우리젠^^1138190302]"],
     [`\uc0ac\uc5c5\uc790\ub4f1\ub85d\ubc88\ud638(\uc218\uc815)`, "113-81 90302"],
   ])("matches business number candidate field %s", (fieldName, value) => {
     expect(rowMatchesBusinessNumber({ [fieldName]: value }, BIZ_NO)).toBe(true);
+  });
+
+  it("maps approved contract info service rows that carry businesses in corpList", () => {
+    const row = mapStandardContractRow(
+      {
+        untyCntrctNo: "R26TE15385756",
+        bsnsDivNm: "물품",
+        dcsnCntrctNo: "",
+        cntrctRefNo: "R26TA0191846500",
+        cntrctNm: "488nm 레이저 시스템 구매",
+        cntrctCnclsDate: "",
+        cntrctDate: "2026-06-01",
+        totCntrctAmt: "0",
+        thtmCntrctAmt: "14,840,100",
+        ntceNo: "R26BK01601178",
+        cntrctInsttCd: "Z031485",
+        cntrctInsttNm: "연세대학교 미래산학협력단",
+        dminsttList: "[1^Z031485^연세대학교 미래산학협력단^기타기관^^김훈직^0337605237]",
+        corpList: "[1^주계약업체^단독^주식회사 우리젠^고상원^대한민국^100^주식회사 우리젠^^1138190302]",
+        cntrctDtlInfoUrl: "https://www.g2b.go.kr/link/FIUA027_01/single/?ctrtNo=R26TA01918465",
+        cntrctCnclsMthdNm: "수의계약",
+      },
+      BIZ_NO,
+    );
+
+    expect(row.success).toBe(true);
+    if (!row.success) {
+      throw new Error(row.reason);
+    }
+    expect(row.row).toMatchObject({
+      sourceDataset: "g2b-contract-info-service",
+      bizNoNormalized: BIZ_NO,
+      businessName: "주식회사 우리젠",
+      representativeName: "고상원",
+      businessCategory: "goods",
+      noticeNo: "R26BK01601178",
+      contractNo: "R26TA0191846500",
+      unifiedContractNo: "R26TE15385756",
+      contractName: "488nm 레이저 시스템 구매",
+      contractDate: "2026-06-01",
+      currentContractAmount: 14840100,
+      totalContractAmount: 0,
+      demandAgencyCode: "Z031485",
+      demandAgencyName: "연세대학교 미래산학협력단",
+      contractAgencyCode: "Z031485",
+      contractAgencyName: "연세대학교 미래산학협력단",
+      contractMethod: "수의계약",
+      businessNameAtContract: "주식회사 우리젠",
+      rawSourceUrl: "https://www.g2b.go.kr/link/FIUA027_01/single/?ctrtNo=R26TA01918465",
+    });
   });
 
   it("maps standard contract rows into parsed contract rows", () => {
@@ -94,7 +145,7 @@ describe("G2B standard contract mapper", () => {
     });
 
     expect(row).toMatchObject({
-      sourceDataset: "g2b-public-standard-contract",
+      sourceDataset: "g2b-contract-info-service",
       bizNoNormalized: BIZ_NO,
       bizNoDisplay: "113-81-90302",
       businessName: BUSINESS_NAME,
@@ -229,7 +280,7 @@ describe("G2B standard contract mapper", () => {
       contractName: "localized contract",
       totalContractAmount: 300000,
       address: "localized address",
-      businessCategory: "localized category",
+      businessCategory: null,
     });
   });
 });
@@ -257,10 +308,11 @@ describe("G2B standard contract client", () => {
 
       const url = fetchMock.mock.calls[0][0] as URL;
       expect(url.origin + url.pathname).toBe(
-        "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService/getDataSetOpnStdCntrctInfo",
+        "https://apis.data.go.kr/1230000/ao/CntrctInfoService/getCntrctInfoListThng",
       );
-      expect(url.searchParams.get("cntrctCnclsBgnDate")).toBe("20260601");
-      expect(url.searchParams.get("cntrctCnclsEndDate")).toBe("20260630");
+      expect(url.searchParams.get("inqryDiv")).toBe("1");
+      expect(url.searchParams.get("inqryBgnDt")).toBe("202606010000");
+      expect(url.searchParams.get("inqryEndDt")).toBe("202606302359");
       expect(url.searchParams.get("pageNo")).toBe("1");
       expect(url.searchParams.get("numOfRows")).toBe("100");
     } finally {

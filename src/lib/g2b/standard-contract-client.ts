@@ -1,8 +1,16 @@
 import { fetchG2bJson, redactG2bSecrets } from "@/lib/g2b/http";
 import type { StandardContractRow } from "@/lib/g2b/standard-contract-mapper";
 
-export const STANDARD_CONTRACT_BASE_URL = "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService";
-export const GET_STANDARD_CONTRACT_OPERATION = "getDataSetOpnStdCntrctInfo";
+export const CONTRACT_INFO_BASE_URL = "https://apis.data.go.kr/1230000/ao/CntrctInfoService";
+
+export type G2bContractBusinessCategory = "goods" | "services" | "construction" | "foreign";
+
+const CONTRACT_INFO_OPERATIONS: Record<G2bContractBusinessCategory, string> = {
+  goods: "getCntrctInfoListThng",
+  services: "getCntrctInfoListServc",
+  construction: "getCntrctInfoListCnstwk",
+  foreign: "getCntrctInfoListFrgcpt",
+};
 
 export type StandardContractChunk = {
   dateFrom: string;
@@ -35,11 +43,13 @@ export async function fetchStandardContractPage(
   chunk: StandardContractChunk,
   pageNo: number,
   numOfRows = 100,
+  businessCategory: G2bContractBusinessCategory = "goods",
 ): Promise<StandardContractPage> {
   try {
-    const response = await fetchG2bJson(STANDARD_CONTRACT_BASE_URL, GET_STANDARD_CONTRACT_OPERATION, {
-      cntrctCnclsBgnDate: toProviderDate(chunk.dateFrom),
-      cntrctCnclsEndDate: toProviderDate(chunk.dateTo),
+    const response = await fetchG2bJson(CONTRACT_INFO_BASE_URL, CONTRACT_INFO_OPERATIONS[businessCategory], {
+      inqryDiv: 1,
+      inqryBgnDt: toProviderDateTime(chunk.dateFrom, "0000"),
+      inqryEndDt: toProviderDateTime(chunk.dateTo, "2359"),
       pageNo,
       numOfRows,
     });
@@ -61,7 +71,7 @@ export async function fetchStandardContractPage(
     if (message.includes("403")) {
       throw new G2bStandardContractError(
         "unauthorized_service_key",
-        "G2B standard contract request was rejected with status 403.",
+        "G2B contract info service request was rejected with status 403.",
       );
     }
 
@@ -112,7 +122,7 @@ function successfulResponseBody(response: unknown): Record<string, unknown> {
 }
 
 function malformedProviderResponse(reason: string): G2bStandardContractError {
-  return new G2bStandardContractError("provider_error", `Malformed G2B standard contract response: ${reason}.`);
+  return new G2bStandardContractError("provider_error", `Malformed G2B contract info service response: ${reason}.`);
 }
 
 function normalizeItems(value: unknown): StandardContractRow[] {
@@ -133,6 +143,10 @@ function normalizeItems(value: unknown): StandardContractRow[] {
 
 function toProviderDate(value: string): string {
   return value.replace(/-/g, "");
+}
+
+function toProviderDateTime(value: string, hhmm: string): string {
+  return `${toProviderDate(value)}${hhmm}`;
 }
 
 function parseCount(value: unknown): number {

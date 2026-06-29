@@ -95,7 +95,7 @@ describe("POST /api/sync", () => {
 
     expect(response.status).toBe(403);
     expect(json.error).toBe(
-      "Public Data Portal service usage approval is required for the G2B public data open standard service.",
+      "Public Data Portal service usage approval is required for the G2B contract information service.",
     );
     expect(JSON.stringify(json)).not.toContain("SECRET_SERVICE_KEY");
     expect(mocks.close).toHaveBeenCalledOnce();

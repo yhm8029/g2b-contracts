@@ -20,7 +20,7 @@ Search is local-only. It reads contract rows from the SQLite database at `data/g
 
 Use **Sync G2B** to fetch provider data into SQLite first. After the sync stores matching records locally, Search can show them.
 
-G2B sync requires `DATA_GO_KR_SERVICE_KEY` in `.env.local` and Public Data Portal usage approval for the G2B public data open standard contract service. The sync starts with month-sized date chunks, then retries smaller chunks when the provider rejects a date range.
+G2B sync requires `DATA_GO_KR_SERVICE_KEY` in `.env.local` and Public Data Portal usage approval for **조달청_나라장터 계약정보서비스**. The sync queries goods, services, construction, and foreign contract divisions by month-sized date chunks, then retries smaller chunks when the provider rejects a date range.
 
 ## Commands
 

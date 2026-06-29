@@ -10,6 +10,7 @@ import {
 import {
   fetchStandardContractPage,
   G2bStandardContractError,
+  type G2bContractBusinessCategory,
   type StandardContractPage,
 } from "@/lib/g2b/standard-contract-client";
 import { redactG2bSecrets } from "@/lib/g2b/http";
@@ -18,7 +19,8 @@ import type { ParsedContractCsvRow } from "@/lib/import/csv";
 
 const PAGE_SIZE = 100;
 const MAX_PAGES_PER_CHUNK = 1000;
-const SOURCE_NAME = "g2b-public-standard-contract";
+const SOURCE_NAME = "g2b-contract-info-service";
+const ALL_CONTRACT_CATEGORIES: G2bContractBusinessCategory[] = ["goods", "services", "construction", "foreign"];
 
 export type StandardContractSyncParams = {
   bizNo: string;
@@ -54,6 +56,7 @@ export type StandardContractSyncClient = {
     chunk: DateChunk,
     pageNo: number,
     numOfRows: number,
+    businessCategory: G2bContractBusinessCategory,
   ): Promise<StandardContractPage>;
 };
 
@@ -69,6 +72,7 @@ export async function syncStandardContractsForBusiness(
   const startedAt = new Date().toISOString();
   const normalizedBizNo = parseBusinessNumber(params.bizNo);
   const chunks = splitDateRangeIntoMonths(params.dateFrom, params.dateTo);
+  const categories = categoriesForSync(params.businessCategory);
   const validRows: ParsedContractCsvRow[] = [];
   const result: StandardContractSyncResult = {
     status: "completed",
@@ -84,8 +88,10 @@ export async function syncStandardContractsForBusiness(
     errors: [],
   };
 
-  for (const chunk of chunks) {
-    await fetchChunkRows(chunk, normalizedBizNo, client, result, validRows);
+  for (const category of categories) {
+    for (const chunk of chunks) {
+      await fetchChunkRows(chunk, normalizedBizNo, category, client, result, validRows);
+    }
   }
 
   if (validRows.length > 0) {
@@ -115,6 +121,7 @@ export async function syncStandardContractsForBusiness(
 async function fetchChunkRows(
   chunk: DateChunk,
   normalizedBizNo: string,
+  businessCategory: G2bContractBusinessCategory,
   client: StandardContractSyncClient,
   result: StandardContractSyncResult,
   validRows: ParsedContractCsvRow[],
@@ -122,7 +129,7 @@ async function fetchChunkRows(
   result.chunksAttempted += 1;
 
   try {
-    await fetchAllPagesForChunk(chunk, normalizedBizNo, client, result, validRows);
+    await fetchAllPagesForChunk(chunk, normalizedBizNo, businessCategory, client, result, validRows);
   } catch (error) {
     if (error instanceof G2bStandardContractError && error.code === "date_range_too_large") {
       const expandedChunks = expandRangeLimitedChunk(chunk);
@@ -130,7 +137,7 @@ async function fetchChunkRows(
       if (expandedChunks.length > 0) {
         result.chunksExpanded += 1;
         for (const expandedChunk of expandedChunks) {
-          await fetchChunkRows(expandedChunk, normalizedBizNo, client, result, validRows);
+          await fetchChunkRows(expandedChunk, normalizedBizNo, businessCategory, client, result, validRows);
         }
         return;
       }
@@ -143,6 +150,7 @@ async function fetchChunkRows(
 async function fetchAllPagesForChunk(
   chunk: DateChunk,
   normalizedBizNo: string,
+  businessCategory: G2bContractBusinessCategory,
   client: StandardContractSyncClient,
   result: StandardContractSyncResult,
   validRows: ParsedContractCsvRow[],
@@ -151,7 +159,7 @@ async function fetchAllPagesForChunk(
   let fetchedItemCount = 0;
 
   while (pageNo <= MAX_PAGES_PER_CHUNK) {
-    const page = await client.fetchStandardContractPage(chunk, pageNo, PAGE_SIZE);
+    const page = await client.fetchStandardContractPage(chunk, pageNo, PAGE_SIZE, businessCategory);
     result.pagesFetched += 1;
     result.rowsFetched += page.items.length;
     fetchedItemCount += page.items.length;
@@ -178,6 +186,18 @@ async function fetchAllPagesForChunk(
     "provider_error",
     `G2B standard contract page cap exceeded for ${chunk.dateFrom} to ${chunk.dateTo}.`,
   );
+}
+
+function categoriesForSync(category: string | undefined): G2bContractBusinessCategory[] {
+  if (category === undefined || category === "all") {
+    return ALL_CONTRACT_CATEGORIES;
+  }
+
+  return isG2bContractBusinessCategory(category) ? [category] : [];
+}
+
+function isG2bContractBusinessCategory(value: string): value is G2bContractBusinessCategory {
+  return (ALL_CONTRACT_CATEGORIES as string[]).includes(value);
 }
 
 function expandRangeLimitedChunk(chunk: DateChunk): DateChunk[] {
