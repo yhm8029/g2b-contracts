@@ -15,6 +15,7 @@ export function importParsedRows(
   db: Db,
   rows: ParsedContractCsvRow[],
   sourceFileName: string,
+  sourceName = "csv",
 ): ImportResult {
   const startedAt = new Date().toISOString();
   const result: ImportResult = {
@@ -146,7 +147,7 @@ export function importParsedRows(
 
     tx.insert(importRuns)
       .values({
-        sourceName: "csv",
+        sourceName,
         sourceFileName,
         rowCount: result.rowCount,
         insertedCount: result.insertedCount,
