@@ -295,6 +295,65 @@ select:focus {
   overflow-wrap: anywhere;
 }
 
+.sync-progress-panel {
+  background: #ffffff;
+  border: 1px solid #bed7ef;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 10px;
+  margin: 0 auto 14px;
+  max-width: 1440px;
+  padding: 12px 14px;
+}
+
+.sync-progress-panel > div:first-child {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sync-progress-panel strong {
+  color: var(--accent-strong);
+}
+
+.sync-progress-panel span {
+  color: var(--muted);
+}
+
+.sync-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sync-progress-meta span {
+  background: var(--accent-soft);
+  border: 1px solid #d3e6f7;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.sync-progress-bar {
+  background: var(--accent-soft);
+  border-radius: 999px;
+  height: 7px;
+  overflow: hidden;
+}
+
+.sync-progress-bar span {
+  animation: progress-slide 1.25s ease-in-out infinite;
+  background: var(--accent);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  width: 38%;
+}
+
 .summary-grid {
   display: grid;
   gap: 12px;
@@ -629,6 +688,16 @@ tbody tr.selected {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  100% {
+    transform: translateX(280%);
   }
 }
 

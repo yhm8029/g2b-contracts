@@ -14,6 +14,8 @@ export const runtime = "nodejs";
 
 const SERVICE_APPROVAL_MESSAGE =
   "Public Data Portal service usage approval is required for the G2B public data open standard service.";
+const SHOPPING_MALL_SERVICE_APPROVAL_MESSAGE =
+  "Public Data Portal service usage approval is required for the G2B shopping mall product service.";
 
 const dateSchema = z
   .string()
@@ -78,8 +80,8 @@ export async function POST(request: NextRequest) {
       await syncStandardContractsForBusiness(connection.db, parsed.data),
     );
 
-    if (hasUnauthorizedServiceKeyError(result)) {
-      return NextResponse.json({ error: SERVICE_APPROVAL_MESSAGE }, { status: 403 });
+    if (hasBlockingUnauthorizedServiceKeyError(result)) {
+      return NextResponse.json({ error: serviceApprovalMessage(result) }, { status: 403 });
     }
 
     return NextResponse.json(result);
@@ -100,8 +102,18 @@ function sanitizeSyncResult(result: StandardContractSyncResult): StandardContrac
   };
 }
 
-function hasUnauthorizedServiceKeyError(result: StandardContractSyncResult): boolean {
-  return result.errors.some((error) => error.code === "unauthorized_service_key");
+function hasBlockingUnauthorizedServiceKeyError(result: StandardContractSyncResult): boolean {
+  return result.status === "failed" && result.errors.some((error) => error.code === "unauthorized_service_key");
+}
+
+function serviceApprovalMessage(result: StandardContractSyncResult): string {
+  const unauthorizedMessages = result.errors
+    .filter((error) => error.code === "unauthorized_service_key")
+    .map((error) => error.message.toLowerCase());
+
+  return unauthorizedMessages.some((message) => message.includes("shopping mall"))
+    ? SHOPPING_MALL_SERVICE_APPROVAL_MESSAGE
+    : SERVICE_APPROVAL_MESSAGE;
 }
 
 function isValidIsoDate(value: string): boolean {

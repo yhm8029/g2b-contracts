@@ -159,7 +159,8 @@ describe("syncStandardContractsForBusiness", () => {
 
   it("queries every approved contract info business division when category is all", async () => {
     const { sqlite, db } = createTempDb();
-    const client = mockClient(async (chunk, pageNo, numOfRows, category) => ({
+    const category: string = "goods";
+    const client = mockClient(async (_chunk, pageNo, numOfRows) => ({
       items: [providerRow({ bsnsDivNm: category === "services" ? "용역" : "물품", cntrctNo: `SYNC-${category}` })],
       totalCount: 1,
       pageNo,
@@ -524,6 +525,107 @@ describe("syncStandardContractsForBusiness", () => {
       expect(result.insertedCount).toBe(3);
     } finally {
       releasePageTwo.resolve();
+      sqlite.close();
+    }
+  });
+
+  it("also imports matching third-party unit-price shopping mall rows when category is all", async () => {
+    const { sqlite, db } = createTempDb();
+    const client: StandardContractSyncClient = {
+      fetchStandardContractPage: vi.fn(async () => ({
+        items: [],
+        totalCount: 0,
+        pageNo: 1,
+        numOfRows: 100,
+      })),
+      fetchShoppingMallThirdPartyProductPage: vi.fn(async (pageNo, numOfRows) => ({
+        items: [
+          {
+            cntrctCorpNo: BIZ_NO,
+            cntrctCorpNm: "Sample Shopping Co",
+            cntrctMthdNm: "3자단가계약",
+            prdctSpecNm: "Shopping product",
+            cntrctPrceAmt: "2200000",
+            shopngCntrctNo: "SHOP-1",
+            shopngCntrctSno: "1",
+            cntrctDate: "20260115",
+          },
+        ],
+        totalCount: 1,
+        pageNo,
+        numOfRows,
+      })),
+    };
+
+    try {
+      const result = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "all" },
+        client,
+      );
+
+      expect(result).toMatchObject({
+        status: "completed",
+        pagesFetched: 2,
+        rowsFetched: 1,
+        rowsMatched: 1,
+        insertedCount: 1,
+      });
+
+      expect(client.fetchShoppingMallThirdPartyProductPage).toHaveBeenCalledWith(1, 500);
+
+      const saved = sqlite
+        .prepare(
+          "select source_dataset as sourceDataset, business_category as businessCategory, contract_name as contractName from contract_records",
+        )
+        .get() as { sourceDataset: string; businessCategory: string; contractName: string };
+      expect(saved).toEqual({
+        sourceDataset: "g2b-shopping-mall-third-party-unit",
+        businessCategory: "shopping_third_party",
+        contractName: "Shopping product",
+      });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("runs only the third-party shopping mall source when that category is selected", async () => {
+    const { sqlite, db } = createTempDb();
+    const client: StandardContractSyncClient = {
+      fetchStandardContractPage: vi.fn(async () => {
+        throw new Error("standard source should not run");
+      }),
+      fetchShoppingMallThirdPartyProductPage: vi.fn(async (pageNo, numOfRows) => ({
+        items: [
+          {
+            cntrctCorpNo: BIZ_NO,
+            cntrctCorpNm: "Sample Shopping Co",
+            cntrctMthdNm: "3자단가계약",
+            prdctSpecNm: "Shopping product",
+            cntrctPrceAmt: "2200000",
+            shopngCntrctNo: "SHOP-1",
+            shopngCntrctSno: "1",
+            cntrctDate: "20260115",
+          },
+        ],
+        totalCount: 1,
+        pageNo,
+        numOfRows,
+      })),
+    };
+
+    try {
+      const result = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "shopping_third_party" },
+        client,
+      );
+
+      expect(result.status).toBe("completed");
+      expect(result.insertedCount).toBe(1);
+      expect(client.fetchStandardContractPage).not.toHaveBeenCalled();
+      expect(client.fetchShoppingMallThirdPartyProductPage).toHaveBeenCalledOnce();
+    } finally {
       sqlite.close();
     }
   });

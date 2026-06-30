@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   apiStatusLabels,
+  buildSyncProgressView,
   compactDateToIsoDate,
   exportHrefForLastSearch,
   localizeClientError,
@@ -91,6 +92,37 @@ describe("localizeClientError", () => {
 
   it("keeps unknown provider errors but adds Korean context", () => {
     expect(localizeClientError("Provider timeout", "sync")).toBe("나라장터 동기화 실패: Provider timeout");
+  });
+});
+
+describe("buildSyncProgressView", () => {
+  it("estimates combined standard and third-party work for all categories", () => {
+    expect(
+      buildSyncProgressView({
+        bizNo: "2048145651",
+        dateFrom: "20250101",
+        dateTo: "20250331",
+        businessCategory: "all",
+        elapsedSeconds: 71,
+      }),
+    ).toEqual({
+      title: "동기화 진행 중",
+      elapsedLabel: "1분 11초",
+      scopeLabel: "3개월 범위 계약정보 + 3자단가 품목 전체 스캔",
+      phaseLabel: "사업자번호로 결과 필터링 중",
+    });
+  });
+
+  it("describes third-party-only syncs separately", () => {
+    expect(
+      buildSyncProgressView({
+        bizNo: "2048145651",
+        dateFrom: "20250101",
+        dateTo: "20251231",
+        businessCategory: "shopping_third_party",
+        elapsedSeconds: 4,
+      }).scopeLabel,
+    ).toBe("3자단가 품목 전체 스캔");
   });
 });
 

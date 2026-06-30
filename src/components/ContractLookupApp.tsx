@@ -12,7 +12,7 @@ import {
   RefreshCw,
   Search,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 import type { ContractSearchRow, DatabaseHealth } from "@/lib/contracts/types";
@@ -23,6 +23,7 @@ const categoryOptions = [
   { value: "construction", label: "공사" },
   { value: "services", label: "용역" },
   { value: "foreign", label: "외자" },
+  { value: "shopping_third_party", label: "3자단가" },
   { value: "unknown", label: "미분류" },
 ];
 
@@ -62,9 +63,13 @@ type SearchResponse = {
 
 type SyncResponse = {
   status: "completed" | "completed_with_errors" | "failed";
+  chunksAttempted?: number;
+  pagesFetched?: number;
+  rowsFetched?: number;
   rowsMatched: number;
   insertedCount: number;
   updatedCount: number;
+  skippedCount?: number;
   errorCount: number;
 };
 
@@ -73,6 +78,10 @@ type SearchFormParams = {
   dateFrom: string;
   dateTo: string;
   businessCategory: string;
+};
+
+type SyncProgressParams = SearchFormParams & {
+  elapsedSeconds: number;
 };
 
 const emptySummary: ContractSummary = {
@@ -131,6 +140,48 @@ function requestParamsFromForm(params: SearchFormParams): SearchFormParams {
     ...params,
     dateFrom: compactDateToIsoDate(params.dateFrom),
     dateTo: compactDateToIsoDate(params.dateTo),
+  };
+}
+
+function countMonths(dateFrom: string, dateTo: string) {
+  const from = compactDateToIsoDate(dateFrom);
+  const to = compactDateToIsoDate(dateTo);
+  const fromMatch = from.match(/^(\d{4})-(\d{2})-\d{2}$/);
+  const toMatch = to.match(/^(\d{4})-(\d{2})-\d{2}$/);
+
+  if (!fromMatch || !toMatch) {
+    return null;
+  }
+
+  const fromIndex = Number(fromMatch[1]) * 12 + Number(fromMatch[2]);
+  const toIndex = Number(toMatch[1]) * 12 + Number(toMatch[2]);
+  return Math.max(1, toIndex - fromIndex + 1);
+}
+
+function formatElapsed(seconds: number) {
+  if (seconds < 60) {
+    return `${seconds}초`;
+  }
+
+  return `${Math.floor(seconds / 60)}분 ${seconds % 60}초`;
+}
+
+export function buildSyncProgressView(params: SyncProgressParams) {
+  const months = countMonths(params.dateFrom, params.dateTo);
+  const includesShopping =
+    params.businessCategory === "all" ||
+    params.businessCategory === "" ||
+    params.businessCategory === "shopping_third_party";
+  const scopeLabel =
+    params.businessCategory === "shopping_third_party"
+      ? "3자단가 품목 전체 스캔"
+      : `${months ?? "선택"}개월 범위 계약정보${includesShopping ? " + 3자단가 품목 전체 스캔" : ""}`;
+
+  return {
+    title: "동기화 진행 중",
+    elapsedLabel: formatElapsed(params.elapsedSeconds),
+    scopeLabel,
+    phaseLabel: "사업자번호로 결과 필터링 중",
   };
 }
 
@@ -217,6 +268,8 @@ export function localizeClientError(message: string, context: "search" | "sync")
       "나라장터 동기화를 위해 공공데이터포털 API 키가 필요합니다.",
     "Public Data Portal service usage approval is required for the G2B public data open standard service.":
       "나라장터 공공데이터개방표준서비스 활용 승인이 필요합니다.",
+    "Public Data Portal service usage approval is required for the G2B shopping mall product service.":
+      "나라장터 종합쇼핑몰 품목정보 서비스 활용 승인이 필요합니다.",
     "Invalid request body.": "요청 형식이 올바르지 않습니다.",
   };
   const translated = knownMessages[message];
@@ -248,6 +301,10 @@ export function syncStatusMessage(result: SyncResponse) {
   const countSummary = `매칭 ${formatNumber(result.rowsMatched)}건, 신규 ${formatNumber(
     result.insertedCount,
   )}건, 갱신 ${formatNumber(result.updatedCount)}건`;
+  const sourceSummary =
+    result.pagesFetched !== undefined || result.rowsFetched !== undefined
+      ? `조회 ${formatNumber(result.pagesFetched ?? 0)}페이지, 수집 ${formatNumber(result.rowsFetched ?? 0)}건`
+      : null;
   const errorSummary = `오류 ${formatNumber(result.errorCount)}건`;
 
   if (result.status === "failed") {
@@ -261,10 +318,10 @@ export function syncStatusMessage(result: SyncResponse) {
   }
 
   if (result.status === "completed_with_errors") {
-    return `나라장터 동기화 일부 완료(${errorSummary}): ${countSummary}.`;
+    return `나라장터 동기화 일부 완료(${errorSummary}): ${sourceSummary ? `${sourceSummary}, ` : ""}${countSummary}.`;
   }
 
-  return `나라장터 동기화 완료: ${countSummary}.`;
+  return `나라장터 동기화 완료: ${sourceSummary ? `${sourceSummary}, ` : ""}${countSummary}.`;
 }
 
 export function ContractLookupApp() {
@@ -279,6 +336,8 @@ export function ContractLookupApp() {
   const [lastSearchParams, setLastSearchParams] = useState<SearchFormParams | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncElapsedSeconds, setSyncElapsedSeconds] = useState(0);
+  const [syncProgressParams, setSyncProgressParams] = useState<SearchFormParams | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
@@ -302,6 +361,23 @@ export function ContractLookupApp() {
           : "ready";
   const statusLabel = statusDisplayLabels[statusKey];
   const apiLabels = apiStatusLabels(health);
+  const syncProgress =
+    syncing && syncProgressParams
+      ? buildSyncProgressView({ ...syncProgressParams, elapsedSeconds: syncElapsedSeconds })
+      : null;
+
+  useEffect(() => {
+    if (!syncing) {
+      setSyncElapsedSeconds(0);
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setSyncElapsedSeconds((current) => current + 1);
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [syncing]);
 
   async function runSearch(submittedParams: SearchFormParams) {
     const submittedQueryString = buildQueryString(submittedParams);
@@ -362,6 +438,8 @@ export function ContractLookupApp() {
 
     const submittedParams = requestParamsFromForm({ bizNo, dateFrom, dateTo, businessCategory });
     setSyncing(true);
+    setSyncElapsedSeconds(0);
+    setSyncProgressParams({ bizNo, dateFrom, dateTo, businessCategory });
     setError(null);
     setStatusMessage("나라장터 동기화 시작.");
 
@@ -517,6 +595,22 @@ export function ContractLookupApp() {
           <Database aria-hidden="true" size={18} />
           <span>{statusMessage}</span>
         </div>
+      ) : null}
+
+      {syncProgress ? (
+        <section className="sync-progress-panel" aria-label="동기화 진행 상태">
+          <div>
+            <strong>{syncProgress.title}</strong>
+            <span>{syncProgress.phaseLabel}</span>
+          </div>
+          <div className="sync-progress-meta">
+            <span>{syncProgress.scopeLabel}</span>
+            <span>경과 {syncProgress.elapsedLabel}</span>
+          </div>
+          <div className="sync-progress-bar" aria-hidden="true">
+            <span />
+          </div>
+        </section>
       ) : null}
 
       <section className="summary-grid" aria-label="검색 요약">
