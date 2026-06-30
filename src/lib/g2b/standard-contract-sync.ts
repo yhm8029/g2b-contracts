@@ -15,11 +15,14 @@ import {
 } from "@/lib/g2b/standard-contract-client";
 import { fetchContractInfoPage } from "@/lib/g2b/contract-info-list-client";
 import { redactG2bSecrets } from "@/lib/g2b/http";
-import { fetchShoppingMallThirdPartyProductPage } from "@/lib/g2b/shopping-mall-client";
+import {
+  fetchShoppingMallDeliveryRequestDetailPage,
+  fetchShoppingMallDeliveryRequestInfoPage,
+} from "@/lib/g2b/shopping-mall-client";
 import {
   SHOPPING_THIRD_PARTY_CATEGORY,
   SHOPPING_THIRD_PARTY_SOURCE_DATASET,
-  mapShoppingMallThirdPartyProductRow,
+  mapShoppingMallThirdPartyDeliveryRow,
 } from "@/lib/g2b/shopping-mall-mapper";
 import {
   CONTRACT_INFO_SOURCE_DATASET,
@@ -29,9 +32,10 @@ import {
 import type { ParsedContractCsvRow } from "@/lib/import/csv";
 
 const PAGE_SIZE = 100;
-const SHOPPING_PAGE_SIZE = 500;
+const SHOPPING_PAGE_SIZE = 999;
 const MAX_PAGES_PER_CHUNK = 1000;
 const SYNC_CONCURRENCY = 4;
+const SHOPPING_SYNC_CONCURRENCY = 8;
 const ALL_CONTRACT_CATEGORIES: G2bContractBusinessCategory[] = ["goods", "services", "construction", "foreign"];
 
 export type StandardContractSyncParams = {
@@ -75,13 +79,24 @@ export type StandardContractSyncClient = {
     numOfRows: number,
     businessCategory: G2bContractBusinessCategory,
   ): Promise<StandardContractPage>;
-  fetchShoppingMallThirdPartyProductPage?(pageNo: number, numOfRows: number): Promise<StandardContractPage>;
+  fetchShoppingMallDeliveryRequestInfoPage?(
+    chunk: DateChunk,
+    pageNo: number,
+    numOfRows: number,
+  ): Promise<StandardContractPage>;
+  fetchShoppingMallDeliveryRequestDetailPage?(
+    chunk: DateChunk,
+    deliveryRequestNo: string,
+    pageNo: number,
+    numOfRows: number,
+  ): Promise<StandardContractPage>;
 };
 
 const defaultClient: StandardContractSyncClient = {
   fetchStandardContractPage,
   fetchContractInfoPage,
-  fetchShoppingMallThirdPartyProductPage,
+  fetchShoppingMallDeliveryRequestInfoPage,
+  fetchShoppingMallDeliveryRequestDetailPage,
 };
 
 export async function syncStandardContractsForBusiness(
@@ -124,13 +139,17 @@ export async function syncStandardContractsForBusiness(
     }
   }
 
-  if (shouldSyncShoppingThirdParty(params.businessCategory) && client.fetchShoppingMallThirdPartyProductPage !== undefined) {
+  if (
+    shouldSyncShoppingThirdParty(params.businessCategory) &&
+    client.fetchShoppingMallDeliveryRequestInfoPage !== undefined &&
+    client.fetchShoppingMallDeliveryRequestDetailPage !== undefined
+  ) {
     const shoppingResult = await collectShoppingMallThirdPartyRows(
       db,
+      chunks,
       normalizedBizNo,
-      params.dateFrom,
-      params.dateTo,
-      client.fetchShoppingMallThirdPartyProductPage,
+      client.fetchShoppingMallDeliveryRequestInfoPage,
+      client.fetchShoppingMallDeliveryRequestDetailPage,
     );
 
     persistSyncResult(db, startedAt, SHOPPING_THIRD_PARTY_SOURCE_DATASET, shoppingResult);
@@ -217,43 +236,120 @@ async function collectRowsForContractInfoFallback(
 
 async function collectShoppingMallThirdPartyRows(
   db: Db,
+  chunks: DateChunk[],
   normalizedBizNo: string,
-  dateFrom: string,
-  dateTo: string,
-  fetchPage: NonNullable<StandardContractSyncClient["fetchShoppingMallThirdPartyProductPage"]>,
+  fetchInfoPage: NonNullable<StandardContractSyncClient["fetchShoppingMallDeliveryRequestInfoPage"]>,
+  fetchDetailPage: NonNullable<StandardContractSyncClient["fetchShoppingMallDeliveryRequestDetailPage"]>,
 ): Promise<StandardContractSyncResult> {
   const validRows: ParsedContractCsvRow[] = [];
   const result = createEmptyResult();
-  result.chunksAttempted = 1;
 
-  try {
-    const firstPage = await fetchPage(1, SHOPPING_PAGE_SIZE);
-    processShoppingMallPage(firstPage, normalizedBizNo, dateFrom, dateTo, result, validRows);
-
-    if (firstPage.items.length > 0 && firstPage.items.length < firstPage.totalCount) {
-      const pageSize = Math.max(1, firstPage.items.length);
-      const totalPages = Math.ceil(firstPage.totalCount / pageSize);
-
-      if (totalPages > MAX_PAGES_PER_CHUNK) {
-        throw new G2bStandardContractError("provider_error", "G2B shopping mall product page cap exceeded.");
-      }
-
-      const remainingPages = Array.from({ length: totalPages - 1 }, (_, index) => index + 2);
-      await mapWithConcurrency(remainingPages, SYNC_CONCURRENCY, async (pageNo) => {
-        const page = await fetchPage(pageNo, SHOPPING_PAGE_SIZE);
-        processShoppingMallPage(page, normalizedBizNo, dateFrom, dateTo, result, validRows);
-      });
-    }
-  } catch (error) {
-    result.errorCount += 1;
-    result.errors.push({
-      code: error instanceof G2bStandardContractError ? error.code : "provider_error",
-      message: redactG2bSecrets(error instanceof Error ? error.message : String(error)),
-    });
-  }
+  await mapWithConcurrency(chunks, SYNC_CONCURRENCY, (chunk) =>
+    fetchShoppingMallChunkRows(chunk, normalizedBizNo, fetchInfoPage, fetchDetailPage, result, validRows),
+  );
 
   finalizeCollectedRows(db, result, validRows);
   return result;
+}
+
+async function fetchShoppingMallChunkRows(
+  chunk: DateChunk,
+  normalizedBizNo: string,
+  fetchInfoPage: NonNullable<StandardContractSyncClient["fetchShoppingMallDeliveryRequestInfoPage"]>,
+  fetchDetailPage: NonNullable<StandardContractSyncClient["fetchShoppingMallDeliveryRequestDetailPage"]>,
+  result: StandardContractSyncResult,
+  validRows: ParsedContractCsvRow[],
+): Promise<void> {
+  result.chunksAttempted += 1;
+
+  try {
+    const deliveryRequestNos = await fetchMatchingDeliveryRequestNosForChunk(
+      chunk,
+      normalizedBizNo,
+      fetchInfoPage,
+      result,
+    );
+
+    await mapWithConcurrency(deliveryRequestNos, SHOPPING_SYNC_CONCURRENCY, (deliveryRequestNo) =>
+      fetchAllShoppingMallDetailPagesForRequest(
+        chunk,
+        deliveryRequestNo,
+        normalizedBizNo,
+        fetchDetailPage,
+        result,
+        validRows,
+      ),
+    );
+  } catch (error) {
+    recordChunkError(result, chunk, error);
+  }
+}
+
+async function fetchMatchingDeliveryRequestNosForChunk(
+  chunk: DateChunk,
+  normalizedBizNo: string,
+  fetchInfoPage: NonNullable<StandardContractSyncClient["fetchShoppingMallDeliveryRequestInfoPage"]>,
+  result: StandardContractSyncResult,
+): Promise<string[]> {
+  const deliveryRequestNos = new Set<string>();
+  const firstPage = await fetchInfoPage(chunk, 1, SHOPPING_PAGE_SIZE);
+  processShoppingMallInfoPage(firstPage, normalizedBizNo, result, deliveryRequestNos);
+
+  if (firstPage.items.length === 0 || firstPage.items.length >= firstPage.totalCount) {
+    return [...deliveryRequestNos];
+  }
+
+  const pageSize = Math.max(1, firstPage.items.length);
+  const totalPages = Math.ceil(firstPage.totalCount / pageSize);
+
+  if (totalPages > MAX_PAGES_PER_CHUNK) {
+    throw new G2bStandardContractError(
+      "provider_error",
+      `G2B shopping mall delivery request info page cap exceeded for ${chunk.dateFrom} to ${chunk.dateTo}.`,
+    );
+  }
+
+  const remainingPages = Array.from({ length: totalPages - 1 }, (_, index) => index + 2);
+
+  await mapWithConcurrency(remainingPages, SHOPPING_SYNC_CONCURRENCY, async (pageNo) => {
+    const page = await fetchInfoPage(chunk, pageNo, SHOPPING_PAGE_SIZE);
+    processShoppingMallInfoPage(page, normalizedBizNo, result, deliveryRequestNos);
+  });
+
+  return [...deliveryRequestNos];
+}
+
+async function fetchAllShoppingMallDetailPagesForRequest(
+  chunk: DateChunk,
+  deliveryRequestNo: string,
+  normalizedBizNo: string,
+  fetchDetailPage: NonNullable<StandardContractSyncClient["fetchShoppingMallDeliveryRequestDetailPage"]>,
+  result: StandardContractSyncResult,
+  validRows: ParsedContractCsvRow[],
+): Promise<void> {
+  const firstPage = await fetchDetailPage(chunk, deliveryRequestNo, 1, SHOPPING_PAGE_SIZE);
+  processShoppingMallPage(firstPage, normalizedBizNo, chunk.dateFrom, chunk.dateTo, result, validRows);
+
+  if (firstPage.items.length === 0 || firstPage.items.length >= firstPage.totalCount) {
+    return;
+  }
+
+  const pageSize = Math.max(1, firstPage.items.length);
+  const totalPages = Math.ceil(firstPage.totalCount / pageSize);
+
+  if (totalPages > MAX_PAGES_PER_CHUNK) {
+    throw new G2bStandardContractError(
+      "provider_error",
+      `G2B shopping mall delivery request detail page cap exceeded for ${deliveryRequestNo}.`,
+    );
+  }
+
+  const remainingPages = Array.from({ length: totalPages - 1 }, (_, index) => index + 2);
+
+  await mapWithConcurrency(remainingPages, SHOPPING_SYNC_CONCURRENCY, async (pageNo) => {
+    const page = await fetchDetailPage(chunk, deliveryRequestNo, pageNo, SHOPPING_PAGE_SIZE);
+    processShoppingMallPage(page, normalizedBizNo, chunk.dateFrom, chunk.dateTo, result, validRows);
+  });
 }
 
 async function fetchChunkRows(
@@ -335,6 +431,26 @@ function processPage(
   }
 }
 
+function processShoppingMallInfoPage(
+  page: StandardContractPage,
+  normalizedBizNo: string,
+  result: StandardContractSyncResult,
+  deliveryRequestNos: Set<string>,
+): void {
+  result.pagesFetched += 1;
+  result.rowsFetched += page.items.length;
+
+  for (const item of page.items) {
+    const deliveryRequestNo = asNonBlankString(item.dlvrReqNo);
+
+    if (deliveryRequestNo !== null && shoppingMallInfoRowMatchesBusiness(item, normalizedBizNo)) {
+      deliveryRequestNos.add(deliveryRequestNo);
+    } else {
+      result.skippedCount += 1;
+    }
+  }
+}
+
 function processShoppingMallPage(
   page: StandardContractPage,
   normalizedBizNo: string,
@@ -347,7 +463,7 @@ function processShoppingMallPage(
   result.rowsFetched += page.items.length;
 
   for (const item of page.items) {
-    const mapped = mapShoppingMallThirdPartyProductRow(item, normalizedBizNo);
+    const mapped = mapShoppingMallThirdPartyDeliveryRow(item, normalizedBizNo);
 
     if (mapped.success && rowMatchesDateRange(mapped.row, dateFrom, dateTo)) {
       result.rowsMatched += 1;
@@ -356,6 +472,26 @@ function processShoppingMallPage(
       result.skippedCount += 1;
     }
   }
+}
+
+function shoppingMallInfoRowMatchesBusiness(row: Record<string, unknown>, normalizedBizNo: string): boolean {
+  const providerBizNo = asNonBlankString(row.corpBizno)?.replace(/\D/g, "") ?? "";
+  const contractMethod = asNonBlankString(row.cntrctCnclsStleNm);
+
+  return (
+    providerBizNo === normalizedBizNo &&
+    contractMethod !== null &&
+    contractMethod.includes("제3자단가")
+  );
+}
+
+function asNonBlankString(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
 }
 
 function createEmptyResult(): StandardContractSyncResult {

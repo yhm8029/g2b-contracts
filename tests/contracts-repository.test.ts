@@ -176,6 +176,70 @@ describe("contract repository", () => {
     }
   });
 
+  it("excludes legacy third-party catalog rows from search results", () => {
+    const { sqlite, db } = createTempDb();
+    const baseRow: ParsedContractCsvRow = {
+      sourceDataset: "g2b-shopping-mall-third-party-delivery",
+      sourceRowHash: "delivery-row",
+      bizNoNormalized: "1234567890",
+      bizNoDisplay: "123-45-67890",
+      businessName: "Sample Shopping Co",
+      representativeName: null,
+      address: null,
+      businessCategory: "shopping_third_party",
+      noticeNo: null,
+      noticeOrder: null,
+      noticeName: "Delivery request",
+      contractNo: "DLVR-1",
+      unifiedContractNo: "DLVR-1-00-1",
+      contractName: "Delivered product",
+      contractDate: "2026-01-15",
+      currentContractAmount: 1_000,
+      totalContractAmount: 1_000,
+      demandAgencyCode: null,
+      demandAgencyName: "Demand Office",
+      contractAgencyCode: null,
+      contractAgencyName: "Procurement Office",
+      contractMethod: "제3자단가계약",
+      winningMethod: null,
+      businessNameAtContract: "Sample Shopping Co",
+      contractDetailUrl: null,
+      noticeDetailUrl: null,
+      rawSourceUrl: null,
+    };
+
+    try {
+      importParsedRows(
+        db,
+        [
+          baseRow,
+          {
+            ...baseRow,
+            sourceDataset: "g2b-shopping-mall-third-party-unit",
+            sourceRowHash: "legacy-catalog-row",
+            contractName: "Legacy catalog registration",
+          },
+        ],
+        "shopping.csv",
+      );
+
+      const allRows = searchContractsByBusinessNumber(db, {
+        bizNo: "123-45-67890",
+      });
+
+      expect(allRows.map((row) => row.contractName)).toEqual(["Delivered product"]);
+
+      const rows = searchContractsByBusinessNumber(db, {
+        bizNo: "123-45-67890",
+        businessCategory: "shopping_third_party",
+      });
+
+      expect(rows.map((row) => row.contractName)).toEqual(["Delivered product"]);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("returns latest enrichment log status and error with search rows", () => {
     const { sqlite, db } = createTempDb();
     const sourceFileName = "sample-contracts.csv";

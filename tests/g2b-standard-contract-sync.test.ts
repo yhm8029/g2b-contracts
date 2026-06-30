@@ -529,7 +529,7 @@ describe("syncStandardContractsForBusiness", () => {
     }
   });
 
-  it("also imports matching third-party unit-price shopping mall rows when category is all", async () => {
+  it("also imports matching third-party unit-price delivery sales rows when category is all", async () => {
     const { sqlite, db } = createTempDb();
     const client: StandardContractSyncClient = {
       fetchStandardContractPage: vi.fn(async () => ({
@@ -538,17 +538,56 @@ describe("syncStandardContractsForBusiness", () => {
         pageNo: 1,
         numOfRows: 100,
       })),
-      fetchShoppingMallThirdPartyProductPage: vi.fn(async (pageNo, numOfRows) => ({
+      fetchShoppingMallDeliveryRequestInfoPage: vi.fn(async (_chunk, pageNo, numOfRows) => ({
         items: [
           {
-            cntrctCorpNo: BIZ_NO,
-            cntrctCorpNm: "Sample Shopping Co",
-            cntrctMthdNm: "3자단가계약",
-            prdctSpecNm: "Shopping product",
-            cntrctPrceAmt: "2200000",
-            shopngCntrctNo: "SHOP-1",
-            shopngCntrctSno: "1",
-            cntrctDate: "20260115",
+            dlvrReqNo: "DLVR-1",
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            corpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            dlvrReqNm: "Delivery request",
+          },
+          {
+            dlvrReqNo: "DLVR-OTHER",
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            corpBizno: "9999999999",
+            corpNm: "Other Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            dlvrReqNm: "Other request",
+          },
+        ],
+        totalCount: 2,
+        pageNo,
+        numOfRows,
+      })),
+      fetchShoppingMallDeliveryRequestDetailPage: vi.fn(async (_chunk, deliveryRequestNo, pageNo, numOfRows) => ({
+        items: [
+          {
+            dlvrReqNo: deliveryRequestNo,
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2025-12-31",
+            prdctSno: "0",
+            cntrctCorpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            prdctIdntNoNm: "Out-of-range delivered product",
+            prdctAmt: "1100000",
+            dlvrReqNm: "Delivery request",
+          },
+          {
+            dlvrReqNo: deliveryRequestNo,
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            prdctSno: "1",
+            cntrctCorpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "제3자단가계약",
+            prdctIdntNoNm: "Delivered product",
+            prdctAmt: "2200000",
+            dlvrReqNm: "Delivery request",
           },
         ],
         totalCount: 1,
@@ -566,13 +605,24 @@ describe("syncStandardContractsForBusiness", () => {
 
       expect(result).toMatchObject({
         status: "completed",
-        pagesFetched: 2,
-        rowsFetched: 1,
+        pagesFetched: 3,
+        rowsFetched: 4,
         rowsMatched: 1,
         insertedCount: 1,
       });
 
-      expect(client.fetchShoppingMallThirdPartyProductPage).toHaveBeenCalledWith(1, 500);
+      expect(client.fetchShoppingMallDeliveryRequestInfoPage).toHaveBeenCalledWith(
+        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
+        1,
+        999,
+      );
+      expect(client.fetchShoppingMallDeliveryRequestDetailPage).toHaveBeenCalledOnce();
+      expect(client.fetchShoppingMallDeliveryRequestDetailPage).toHaveBeenCalledWith(
+        { dateFrom: "2026-01-01", dateTo: "2026-01-31", granularity: "month" },
+        "DLVR-1",
+        1,
+        999,
+      );
 
       const saved = sqlite
         .prepare(
@@ -580,9 +630,9 @@ describe("syncStandardContractsForBusiness", () => {
         )
         .get() as { sourceDataset: string; businessCategory: string; contractName: string };
       expect(saved).toEqual({
-        sourceDataset: "g2b-shopping-mall-third-party-unit",
+        sourceDataset: "g2b-shopping-mall-third-party-delivery",
         businessCategory: "shopping_third_party",
-        contractName: "Shopping product",
+        contractName: "Delivered product",
       });
     } finally {
       sqlite.close();
@@ -595,17 +645,35 @@ describe("syncStandardContractsForBusiness", () => {
       fetchStandardContractPage: vi.fn(async () => {
         throw new Error("standard source should not run");
       }),
-      fetchShoppingMallThirdPartyProductPage: vi.fn(async (pageNo, numOfRows) => ({
+      fetchShoppingMallDeliveryRequestInfoPage: vi.fn(async (_chunk, pageNo, numOfRows) => ({
         items: [
           {
-            cntrctCorpNo: BIZ_NO,
-            cntrctCorpNm: "Sample Shopping Co",
-            cntrctMthdNm: "3자단가계약",
-            prdctSpecNm: "Shopping product",
-            cntrctPrceAmt: "2200000",
-            shopngCntrctNo: "SHOP-1",
-            shopngCntrctSno: "1",
-            cntrctDate: "20260115",
+            dlvrReqNo: "DLVR-1",
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            corpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            dlvrReqNm: "Delivery request",
+          },
+        ],
+        totalCount: 1,
+        pageNo,
+        numOfRows,
+      })),
+      fetchShoppingMallDeliveryRequestDetailPage: vi.fn(async (_chunk, deliveryRequestNo, pageNo, numOfRows) => ({
+        items: [
+          {
+            dlvrReqNo: deliveryRequestNo,
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            prdctSno: "1",
+            cntrctCorpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "제3자단가계약",
+            prdctIdntNoNm: "Delivered product",
+            prdctAmt: "2200000",
+            dlvrReqNm: "Delivery request",
           },
         ],
         totalCount: 1,
@@ -624,7 +692,8 @@ describe("syncStandardContractsForBusiness", () => {
       expect(result.status).toBe("completed");
       expect(result.insertedCount).toBe(1);
       expect(client.fetchStandardContractPage).not.toHaveBeenCalled();
-      expect(client.fetchShoppingMallThirdPartyProductPage).toHaveBeenCalledOnce();
+      expect(client.fetchShoppingMallDeliveryRequestInfoPage).toHaveBeenCalledOnce();
+      expect(client.fetchShoppingMallDeliveryRequestDetailPage).toHaveBeenCalledOnce();
     } finally {
       sqlite.close();
     }

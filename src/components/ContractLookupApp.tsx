@@ -23,7 +23,7 @@ const categoryOptions = [
   { value: "construction", label: "공사" },
   { value: "services", label: "용역" },
   { value: "foreign", label: "외자" },
-  { value: "shopping_third_party", label: "3자단가" },
+  { value: "shopping_third_party", label: "3자단가 판매" },
   { value: "unknown", label: "미분류" },
 ];
 
@@ -174,15 +174,36 @@ export function buildSyncProgressView(params: SyncProgressParams) {
     params.businessCategory === "shopping_third_party";
   const scopeLabel =
     params.businessCategory === "shopping_third_party"
-      ? "3자단가 품목 전체 스캔"
-      : `${months ?? "선택"}개월 범위 계약정보${includesShopping ? " + 3자단가 품목 전체 스캔" : ""}`;
+      ? "3자단가 납품요구 판매 실적 조회"
+      : `${months ?? "선택"}개월 범위 계약정보${includesShopping ? " + 3자단가 납품요구 판매 실적 조회" : ""}`;
+  const phaseLabel = buildSyncPhaseLabel(params.elapsedSeconds, includesShopping);
 
   return {
     title: "동기화 진행 중",
     elapsedLabel: formatElapsed(params.elapsedSeconds),
     scopeLabel,
-    phaseLabel: "사업자번호로 결과 필터링 중",
+    phaseLabel,
   };
+}
+
+function buildSyncPhaseLabel(elapsedSeconds: number, includesShopping: boolean) {
+  if (elapsedSeconds < 5) {
+    return "요청 준비 중";
+  }
+
+  if (!includesShopping) {
+    return "계약정보 페이지를 병렬로 조회 중";
+  }
+
+  if (elapsedSeconds < 30) {
+    return "납품요구 목록을 병렬로 조회하고 사업자번호를 대조 중";
+  }
+
+  if (elapsedSeconds < 90) {
+    return "응답량이 많아 계속 수집 중, 완료되면 자동으로 결과를 갱신합니다";
+  }
+
+  return "대량 조회를 계속 처리 중, 창을 닫지 않으면 완료 후 결과가 표시됩니다";
 }
 
 function formatCurrency(value: number | null | undefined) {
@@ -262,14 +283,14 @@ export function localizeClientError(message: string, context: "search" | "sync")
   const knownMessages: Record<string, string> = {
     "Business registration number must contain 10 digits.":
       "사업자등록번호는 숫자 10자리여야 합니다.",
-    "Search failed.": "검색 실패.",
-    "G2B sync failed.": "나라장터 동기화 실패.",
+    "Search failed.": "검색에 실패했습니다.",
+    "G2B sync failed.": "나라장터 동기화에 실패했습니다.",
     "DATA_GO_KR_SERVICE_KEY is required for G2B sync.":
       "나라장터 동기화를 위해 공공데이터포털 API 키가 필요합니다.",
     "Public Data Portal service usage approval is required for the G2B public data open standard service.":
       "나라장터 공공데이터개방표준서비스 활용 승인이 필요합니다.",
-    "Public Data Portal service usage approval is required for the G2B shopping mall product service.":
-      "나라장터 종합쇼핑몰 품목정보 서비스 활용 승인이 필요합니다.",
+    "Public Data Portal service usage approval is required for the G2B shopping mall delivery request service.":
+      "나라장터 종합쇼핑몰 납품요구 서비스 활용 승인이 필요합니다.",
     "Invalid request body.": "요청 형식이 올바르지 않습니다.",
   };
   const translated = knownMessages[message];
@@ -279,10 +300,8 @@ export function localizeClientError(message: string, context: "search" | "sync")
   }
 
   const prefix = context === "search" ? "검색 실패" : "나라장터 동기화 실패";
-
-  return `${prefix}: ${message}`;
+  return `${prefix}: ${redactSensitiveText(message)}`;
 }
-
 export function apiStatusLabels(health: DatabaseHealth | null) {
   if (health === null) {
     return {
@@ -590,7 +609,7 @@ export function ContractLookupApp() {
         </div>
       ) : null}
 
-      {statusMessage && !error ? (
+      {statusMessage && !error && !syncing ? (
         <div className="info-banner" role="status">
           <Database aria-hidden="true" size={18} />
           <span>{statusMessage}</span>

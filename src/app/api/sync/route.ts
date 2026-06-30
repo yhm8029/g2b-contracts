@@ -15,7 +15,7 @@ export const runtime = "nodejs";
 const SERVICE_APPROVAL_MESSAGE =
   "Public Data Portal service usage approval is required for the G2B public data open standard service.";
 const SHOPPING_MALL_SERVICE_APPROVAL_MESSAGE =
-  "Public Data Portal service usage approval is required for the G2B shopping mall product service.";
+  "Public Data Portal service usage approval is required for the G2B shopping mall delivery request service.";
 
 const dateSchema = z
   .string()

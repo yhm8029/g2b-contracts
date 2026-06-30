@@ -117,7 +117,7 @@ describe("POST /api/sync", () => {
       errors: [
         {
           code: "unauthorized_service_key",
-          message: "G2B shopping mall product service request was rejected with status 403.",
+          message: "G2B shopping mall delivery request service request was rejected with status 403.",
         },
       ],
     });
@@ -134,7 +134,7 @@ describe("POST /api/sync", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
-      error: "Public Data Portal service usage approval is required for the G2B shopping mall product service.",
+      error: "Public Data Portal service usage approval is required for the G2B shopping mall delivery request service.",
     });
   });
 

@@ -80,18 +80,18 @@ describe("date input helpers", () => {
 describe("localizeClientError", () => {
   it("translates known search validation errors", () => {
     expect(localizeClientError("Business registration number must contain 10 digits.", "search")).toBe(
-      "사업자등록번호는 숫자 10자리여야 합니다.",
+      "\uC0AC\uC5C5\uC790\uB4F1\uB85D\uBC88\uD638\uB294 \uC22B\uC790 10\uC790\uB9AC\uC5EC\uC57C \uD569\uB2C8\uB2E4.",
     );
   });
 
   it("translates known sync setup errors", () => {
     expect(localizeClientError("DATA_GO_KR_SERVICE_KEY is required for G2B sync.", "sync")).toBe(
-      "나라장터 동기화를 위해 공공데이터포털 API 키가 필요합니다.",
+      "\uB098\uB77C\uC7A5\uD130 \uB3D9\uAE30\uD654\uB97C \uC704\uD574 \uACF5\uACF5\uB370\uC774\uD130\uD3EC\uD138 API \uD0A4\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4.",
     );
   });
 
   it("keeps unknown provider errors but adds Korean context", () => {
-    expect(localizeClientError("Provider timeout", "sync")).toBe("나라장터 동기화 실패: Provider timeout");
+    expect(localizeClientError("Provider timeout", "sync")).toBe("\uB098\uB77C\uC7A5\uD130 \uB3D9\uAE30\uD654 \uC2E4\uD328: Provider timeout");
   });
 });
 
@@ -108,8 +108,8 @@ describe("buildSyncProgressView", () => {
     ).toEqual({
       title: "동기화 진행 중",
       elapsedLabel: "1분 11초",
-      scopeLabel: "3개월 범위 계약정보 + 3자단가 품목 전체 스캔",
-      phaseLabel: "사업자번호로 결과 필터링 중",
+      scopeLabel: "3개월 범위 계약정보 + 3자단가 납품요구 판매 실적 조회",
+      phaseLabel: "응답량이 많아 계속 수집 중, 완료되면 자동으로 결과를 갱신합니다",
     });
   });
 
@@ -122,7 +122,7 @@ describe("buildSyncProgressView", () => {
         businessCategory: "shopping_third_party",
         elapsedSeconds: 4,
       }).scopeLabel,
-    ).toBe("3자단가 품목 전체 스캔");
+    ).toBe("3자단가 납품요구 판매 실적 조회");
   });
 });
 

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, max, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, max, ne, sql } from "drizzle-orm";
 
 import type {
   ContractSearchParams,
@@ -10,6 +10,8 @@ import type { Db } from "@/lib/db/client";
 import { apiEnrichmentLogs, businesses, contractRecords, importRuns } from "@/lib/db/schema";
 import { parseBusinessNumber } from "@/lib/domain/business-number";
 import type { ParsedContractCsvRow } from "@/lib/import/csv";
+
+const LEGACY_SHOPPING_THIRD_PARTY_SOURCE_DATASET = "g2b-shopping-mall-third-party-unit";
 
 type ImportRunStatus = "completed" | "completed_with_errors" | "failed";
 
@@ -201,7 +203,10 @@ export function searchContractsByBusinessNumber(
   params: ContractSearchParams,
 ): ContractSearchRow[] {
   const bizNoNormalized = parseBusinessNumber(params.bizNo);
-  const filters = [eq(contractRecords.bizNoNormalized, bizNoNormalized)];
+  const filters = [
+    eq(contractRecords.bizNoNormalized, bizNoNormalized),
+    ne(contractRecords.sourceDataset, LEGACY_SHOPPING_THIRD_PARTY_SOURCE_DATASET),
+  ];
 
   if (params.dateFrom !== undefined) {
     filters.push(gte(contractRecords.contractDate, params.dateFrom));
