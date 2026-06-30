@@ -18,13 +18,34 @@ import type { FormEvent } from "react";
 import type { ContractSearchRow, DatabaseHealth } from "@/lib/contracts/types";
 
 const categoryOptions = [
-  { value: "all", label: "All" },
-  { value: "goods", label: "Goods" },
-  { value: "construction", label: "Construction" },
-  { value: "services", label: "Services" },
-  { value: "foreign", label: "Foreign" },
-  { value: "unknown", label: "Unknown" },
+  { value: "all", label: "전체" },
+  { value: "goods", label: "물품" },
+  { value: "construction", label: "공사" },
+  { value: "services", label: "용역" },
+  { value: "foreign", label: "외자" },
+  { value: "unknown", label: "미분류" },
 ];
+
+const categoryLabels = new Map(categoryOptions.map((option) => [option.value, option.label]));
+
+const sourceStatusLabels: Record<string, string> = {
+  local_only: "로컬 저장",
+  api_enriched: "API 보강 완료",
+};
+
+const enrichmentStatusLabels: Record<string, string> = {
+  success: "성공",
+  error: "오류",
+  skipped: "건너뜀",
+};
+
+const statusDisplayLabels = {
+  syncing: "동기화 중",
+  searching: "검색 중",
+  error: "오류",
+  connected: "연결됨",
+  ready: "준비됨",
+} as const;
 
 type ContractSummary = {
   contractCount: number;
@@ -97,6 +118,14 @@ export function compactDateToIsoDate(value: string) {
   return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
 }
 
+function categoryLabel(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+
+  return categoryLabels.get(value) ?? value;
+}
+
 function requestParamsFromForm(params: SearchFormParams): SearchFormParams {
   return {
     ...params,
@@ -144,10 +173,26 @@ function formatDateTime(value: string | null | undefined) {
 
 function sourceLinks(row: ContractSearchRow) {
   return [
-    { label: "Contract", href: row.contractDetailUrl },
-    { label: "Notice", href: row.noticeDetailUrl },
-    { label: "Raw", href: row.rawSourceUrl },
+    { label: "계약", href: row.contractDetailUrl },
+    { label: "공고", href: row.noticeDetailUrl },
+    { label: "원문", href: row.rawSourceUrl },
   ].filter((link): link is { label: string; href: string } => Boolean(link.href));
+}
+
+function sourceStatusLabel(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+
+  return sourceStatusLabels[value] ?? value;
+}
+
+function enrichmentStatusLabel(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+
+  return enrichmentStatusLabels[value] ?? value;
 }
 
 function detailValue(value: string | number | null | undefined) {
@@ -162,43 +207,64 @@ function redactSensitiveText(value: string) {
   return value.replace(/(serviceKey|DATA_GO_KR_SERVICE_KEY)=([^&\s]+)/gi, "$1=[REDACTED]");
 }
 
+export function localizeClientError(message: string, context: "search" | "sync") {
+  const knownMessages: Record<string, string> = {
+    "Business registration number must contain 10 digits.":
+      "사업자등록번호는 숫자 10자리여야 합니다.",
+    "Search failed.": "검색 실패.",
+    "G2B sync failed.": "나라장터 동기화 실패.",
+    "DATA_GO_KR_SERVICE_KEY is required for G2B sync.":
+      "나라장터 동기화를 위해 공공데이터포털 API 키가 필요합니다.",
+    "Public Data Portal service usage approval is required for the G2B public data open standard service.":
+      "나라장터 공공데이터개방표준서비스 활용 승인이 필요합니다.",
+    "Invalid request body.": "요청 형식이 올바르지 않습니다.",
+  };
+  const translated = knownMessages[message];
+
+  if (translated) {
+    return translated;
+  }
+
+  const prefix = context === "search" ? "검색 실패" : "나라장터 동기화 실패";
+
+  return `${prefix}: ${message}`;
+}
+
 export function apiStatusLabels(health: DatabaseHealth | null) {
   if (health === null) {
     return {
-      apiKey: "unknown",
-      enrichment: "unknown",
+      apiKey: "확인 전",
+      enrichment: "확인 전",
     };
   }
 
   return {
-    apiKey: health.apiKeyConfigured ? "configured" : "missing",
-    enrichment: health.enrichmentEnabled ? "enabled" : "disabled",
+    apiKey: health.apiKeyConfigured ? "설정됨" : "미설정",
+    enrichment: health.enrichmentEnabled ? "활성" : "비활성",
   };
 }
 
 export function syncStatusMessage(result: SyncResponse) {
-  const countSummary = `matched ${formatNumber(result.rowsMatched)}, inserted ${formatNumber(
+  const countSummary = `매칭 ${formatNumber(result.rowsMatched)}건, 신규 ${formatNumber(
     result.insertedCount,
-  )}, updated ${formatNumber(result.updatedCount)}`;
-  const errorSummary = `${formatNumber(result.errorCount)} ${
-    result.errorCount === 1 ? "error" : "errors"
-  }`;
+  )}건, 갱신 ${formatNumber(result.updatedCount)}건`;
+  const errorSummary = `오류 ${formatNumber(result.errorCount)}건`;
 
   if (result.status === "failed") {
-    return `G2B sync failed: ${errorSummary}.`;
+    return `나라장터 동기화 실패: ${errorSummary}.`;
   }
 
   if (result.rowsMatched === 0 && result.insertedCount === 0 && result.updatedCount === 0) {
     return result.status === "completed_with_errors"
-      ? `G2B sync completed with ${errorSummary}: no matching G2B contracts found.`
-      : "G2B sync completed: no matching G2B contracts found.";
+      ? `나라장터 동기화 일부 완료(${errorSummary}): 매칭 계약 없음.`
+      : "나라장터 동기화 완료: 매칭 계약 없음.";
   }
 
   if (result.status === "completed_with_errors") {
-    return `G2B sync completed with ${errorSummary}: ${countSummary}.`;
+    return `나라장터 동기화 일부 완료(${errorSummary}): ${countSummary}.`;
   }
 
-  return `G2B sync completed: ${countSummary}.`;
+  return `나라장터 동기화 완료: ${countSummary}.`;
 }
 
 export function ContractLookupApp() {
@@ -225,15 +291,16 @@ export function ContractLookupApp() {
   const showEnrichmentIssue =
     latestEnrichmentError !== null || selectedRow?.latestEnrichmentStatus === "error";
   const isBusy = loading || syncing;
-  const statusLabel = syncing
-    ? "Syncing"
+  const statusKey = syncing
+    ? "syncing"
     : loading
-      ? "Searching"
+      ? "searching"
       : error
-        ? "Error"
+        ? "error"
         : health
-          ? "Connected"
-          : "Ready";
+          ? "connected"
+          : "ready";
+  const statusLabel = statusDisplayLabels[statusKey];
   const apiLabels = apiStatusLabels(health);
 
   async function runSearch(submittedParams: SearchFormParams) {
@@ -244,7 +311,12 @@ export function ContractLookupApp() {
     const payload = (await response.json()) as SearchResponse | { error?: string };
 
     if (!response.ok) {
-      throw new Error("error" in payload && payload.error ? payload.error : "Search failed.");
+      throw new Error(
+        localizeClientError(
+          "error" in payload && payload.error ? payload.error : "Search failed.",
+          "search",
+        ),
+      );
     }
 
     const result = payload as SearchResponse;
@@ -275,7 +347,9 @@ export function ContractLookupApp() {
       setSummary(emptySummary);
       setSelectedRow(null);
       setLastSearchParams(null);
-      setError(searchError instanceof Error ? searchError.message : "Search failed.");
+      setError(
+        searchError instanceof Error ? searchError.message : localizeClientError("Search failed.", "search"),
+      );
     } finally {
       setLoading(false);
     }
@@ -289,7 +363,7 @@ export function ContractLookupApp() {
     const submittedParams = requestParamsFromForm({ bizNo, dateFrom, dateTo, businessCategory });
     setSyncing(true);
     setError(null);
-    setStatusMessage("G2B sync started.");
+    setStatusMessage("나라장터 동기화 시작.");
 
     try {
       const response = await fetch("/api/sync", {
@@ -303,7 +377,12 @@ export function ContractLookupApp() {
       const payload = (await response.json()) as SyncResponse | { error?: string };
 
       if (!response.ok) {
-        throw new Error("error" in payload && payload.error ? payload.error : "G2B sync failed.");
+        throw new Error(
+          localizeClientError(
+            "error" in payload && payload.error ? payload.error : "G2B sync failed.",
+            "sync",
+          ),
+        );
       }
 
       const syncResult = payload as SyncResponse;
@@ -319,7 +398,9 @@ export function ContractLookupApp() {
       setHasSearched(true);
       setStatusMessage(message);
     } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : "G2B sync failed.");
+      setError(
+        syncError instanceof Error ? syncError.message : localizeClientError("G2B sync failed.", "sync"),
+      );
     } finally {
       setSyncing(false);
     }
@@ -329,24 +410,24 @@ export function ContractLookupApp() {
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <p className="eyebrow">G2B contracts</p>
-          <h1>Contract Lookup</h1>
+          <p className="eyebrow">나라장터 계약</p>
+          <h1>계약 조회</h1>
         </div>
         <div className="header-status">
-          <div className={`status-pill status-${statusLabel.toLowerCase()}`}>
+          <div className={`status-pill status-${statusKey}`}>
             <Database aria-hidden="true" size={16} />
             <span>{statusLabel}</span>
           </div>
-          <span>DB rows {health ? formatNumber(health.contractCount) : "-"}</span>
-          <span>Latest import {formatDateTime(health?.latestImportAt)}</span>
-          <span>API key: {apiLabels.apiKey}</span>
-          <span>Enrichment: {apiLabels.enrichment}</span>
+          <span>DB 행 {health ? formatNumber(health.contractCount) : "-"}</span>
+          <span>최근 가져오기 {formatDateTime(health?.latestImportAt)}</span>
+          <span>API 키: {apiLabels.apiKey}</span>
+          <span>상세 보강: {apiLabels.enrichment}</span>
         </div>
       </header>
 
       <form className="search-panel" onSubmit={handleSearch}>
         <label>
-          <span>Business registration no.</span>
+          <span>사업자등록번호</span>
           <input
             value={bizNo}
             onChange={(event) => setBizNo(event.target.value)}
@@ -354,7 +435,7 @@ export function ContractLookupApp() {
           />
         </label>
         <label>
-          <span>From</span>
+          <span>시작일</span>
           <input
             inputMode="numeric"
             maxLength={8}
@@ -365,7 +446,7 @@ export function ContractLookupApp() {
           />
         </label>
         <label>
-          <span>To</span>
+          <span>종료일</span>
           <input
             inputMode="numeric"
             maxLength={8}
@@ -376,7 +457,7 @@ export function ContractLookupApp() {
           />
         </label>
         <label>
-          <span>Category</span>
+          <span>업무 구분</span>
           <select
             value={businessCategory}
             onChange={(event) => setBusinessCategory(event.target.value)}
@@ -395,7 +476,7 @@ export function ContractLookupApp() {
             ) : (
               <Search aria-hidden="true" size={17} />
             )}
-            <span>Search</span>
+            <span>검색</span>
           </button>
           <button
             className="secondary-button sync-button"
@@ -408,17 +489,17 @@ export function ContractLookupApp() {
             ) : (
               <RefreshCw aria-hidden="true" size={17} />
             )}
-            <span>Sync G2B</span>
+            <span>나라장터 동기화</span>
           </button>
           {exportHref ? (
             <a className="secondary-button" href={exportHref}>
               <Download aria-hidden="true" size={17} />
-              <span>CSV</span>
+              <span>CSV 다운로드</span>
             </a>
           ) : (
             <span aria-disabled="true" className="secondary-button disabled-link">
               <Download aria-hidden="true" size={17} />
-              <span>CSV</span>
+              <span>CSV 다운로드</span>
             </span>
           )}
         </div>
@@ -438,40 +519,40 @@ export function ContractLookupApp() {
         </div>
       ) : null}
 
-      <section className="summary-grid" aria-label="Search summary">
+      <section className="summary-grid" aria-label="검색 요약">
         <article>
-          <span>Contracts</span>
+          <span>계약 건수</span>
           <strong>{formatNumber(summary.contractCount)}</strong>
         </article>
         <article>
-          <span>Total amount</span>
+          <span>총 계약금액</span>
           <strong>{formatCurrency(summary.totalAmount)}</strong>
         </article>
         <article>
-          <span>Linked notices</span>
+          <span>연결 공고</span>
           <strong>{formatNumber(summary.noticeLinkedCount)}</strong>
         </article>
         <article>
-          <span>Latest contract</span>
+          <span>최근 계약일</span>
           <strong>{formatDate(summary.latestContractDate)}</strong>
         </article>
       </section>
 
       <section className="workspace-grid">
-        <section className="results-panel" aria-label="Search results">
+        <section className="results-panel" aria-label="검색 결과">
           <div className="panel-header">
             <div>
-              <h2>Results</h2>
+              <h2>검색 결과</h2>
               <p>
                 {loading
-                  ? "Loading records"
+                  ? "계약 불러오는 중"
                   : hasSearched
-                    ? `${formatNumber(rows.length)} matching records`
-                    : "Run a search to load records"}
+                    ? `${formatNumber(rows.length)}건 일치`
+                    : "검색하면 계약 목록을 불러옵니다"}
               </p>
             </div>
             {health ? (
-              <span className="health-note">DB rows {formatNumber(health.contractCount)}</span>
+              <span className="health-note">DB 행 {formatNumber(health.contractCount)}</span>
             ) : null}
           </div>
 
@@ -479,15 +560,15 @@ export function ContractLookupApp() {
             <table>
               <thead>
                 <tr>
-                  <th>Contract</th>
-                  <th>Notice</th>
-                  <th>Category</th>
-                  <th>Date</th>
-                  <th>Amount</th>
-                  <th>Agencies</th>
-                  <th>Method</th>
-                  <th>Links</th>
-                  <th>Status</th>
+                  <th>계약</th>
+                  <th>공고</th>
+                  <th>업무 구분</th>
+                  <th>계약일</th>
+                  <th>금액</th>
+                  <th>기관</th>
+                  <th>계약방법</th>
+                  <th>링크</th>
+                  <th>상태</th>
                 </tr>
               </thead>
               <tbody>
@@ -516,13 +597,13 @@ export function ContractLookupApp() {
                           <small>{row.noticeNo ?? "-"}</small>
                         </div>
                       </td>
-                      <td>{row.businessCategory}</td>
+                      <td>{categoryLabel(row.businessCategory)}</td>
                       <td>{formatDate(row.contractDate)}</td>
                       <td>{formatCurrency(row.totalContractAmount ?? row.currentContractAmount)}</td>
                       <td>
                         <div className="stacked-cell">
-                          <span>D: {row.demandAgencyName ?? "-"}</span>
-                          <span>C: {row.contractAgencyName ?? "-"}</span>
+                          <span>수요: {row.demandAgencyName ?? "-"}</span>
+                          <span>계약: {row.contractAgencyName ?? "-"}</span>
                         </div>
                       </td>
                       <td>{row.contractMethod ?? row.winningMethod ?? "-"}</td>
@@ -546,7 +627,7 @@ export function ContractLookupApp() {
                           "-"
                         )}
                       </td>
-                      <td>{row.sourceStatus}</td>
+                      <td>{sourceStatusLabel(row.sourceStatus)}</td>
                     </tr>
                   );
                 })}
@@ -556,24 +637,24 @@ export function ContractLookupApp() {
             {loading ? (
               <div className="table-state">
                 <Loader2 aria-hidden="true" className="spin" size={20} />
-                <span>Searching imported contracts</span>
+                <span>가져온 계약 검색 중</span>
               </div>
             ) : null}
 
             {!loading && hasSearched && rows.length === 0 && !error ? (
               <div className="table-state">
                 <FileText aria-hidden="true" size={20} />
-                <span>No contracts matched the current filters.</span>
+                <span>현재 조건과 일치하는 계약이 없습니다.</span>
               </div>
             ) : null}
           </div>
         </section>
 
-        <aside className="detail-panel" aria-label="Selected contract details">
+        <aside className="detail-panel" aria-label="선택한 계약 상세">
           <div className="panel-header">
             <div>
-              <h2>Detail</h2>
-              <p>{selectedRow ? selectedRow.businessName ?? selectedRow.bizNoDisplay : "No row selected"}</p>
+              <h2>상세</h2>
+              <p>{selectedRow ? selectedRow.businessName ?? selectedRow.bizNoDisplay : "선택한 행 없음"}</p>
             </div>
           </div>
 
@@ -583,49 +664,49 @@ export function ContractLookupApp() {
                 <FileText aria-hidden="true" size={20} />
                 <div>
                   <h3>{selectedRow.contractName}</h3>
-                  <p>{selectedRow.businessCategory}</p>
+                  <p>{categoryLabel(selectedRow.businessCategory)}</p>
                 </div>
               </div>
 
               <dl className="detail-list">
                 <div>
-                  <dt>Contract no.</dt>
+                  <dt>계약번호</dt>
                   <dd>{detailValue(selectedRow.unifiedContractNo ?? selectedRow.contractNo)}</dd>
                 </div>
                 <div>
-                  <dt>Notice no.</dt>
+                  <dt>공고번호</dt>
                   <dd>{detailValue(selectedRow.noticeNo)}</dd>
                 </div>
                 <div>
-                  <dt>Contract date</dt>
+                  <dt>계약일</dt>
                   <dd>{formatDate(selectedRow.contractDate)}</dd>
                 </div>
                 <div>
-                  <dt>Current amount</dt>
+                  <dt>현재 계약금액</dt>
                   <dd>{formatCurrency(selectedRow.currentContractAmount)}</dd>
                 </div>
                 <div>
-                  <dt>Total amount</dt>
+                  <dt>총 계약금액</dt>
                   <dd>{formatCurrency(selectedRow.totalContractAmount)}</dd>
                 </div>
                 <div>
-                  <dt>Demand agency</dt>
+                  <dt>수요기관</dt>
                   <dd>{detailValue(selectedRow.demandAgencyName)}</dd>
                 </div>
                 <div>
-                  <dt>Contract agency</dt>
+                  <dt>계약기관</dt>
                   <dd>{detailValue(selectedRow.contractAgencyName)}</dd>
                 </div>
                 <div>
-                  <dt>Business at contract</dt>
+                  <dt>계약 당시 업체명</dt>
                   <dd>{detailValue(selectedRow.businessNameAtContract)}</dd>
                 </div>
                 {showEnrichmentIssue ? (
                   <div className="api-error-row">
-                    <dt>API error</dt>
+                    <dt>API 오류</dt>
                     <dd>
                       {latestEnrichmentError ??
-                        `Latest enrichment status: ${selectedRow.latestEnrichmentStatus}`}
+                        `최근 보강 상태: ${enrichmentStatusLabel(selectedRow.latestEnrichmentStatus)}`}
                     </dd>
                   </div>
                 ) : null}
@@ -634,7 +715,7 @@ export function ContractLookupApp() {
               <section className="source-section">
                 <h3>
                   <LinkIcon aria-hidden="true" size={17} />
-                  Sources
+                  원문 링크
                 </h3>
                 {selectedLinks.length > 0 ? (
                   <div className="source-links">
@@ -646,38 +727,38 @@ export function ContractLookupApp() {
                     ))}
                   </div>
                 ) : (
-                  <p className="muted">No source links available.</p>
+                  <p className="muted">사용 가능한 원문 링크가 없습니다.</p>
                 )}
               </section>
 
               <section className="freshness-section">
                 <h3>
                   <CalendarDays aria-hidden="true" size={17} />
-                  Freshness
+                  데이터 상태
                 </h3>
                 <dl className="detail-list compact">
                   <div>
-                    <dt>Dataset</dt>
+                    <dt>데이터셋</dt>
                     <dd>{selectedRow.sourceDataset}</dd>
                   </div>
                   <div>
-                    <dt>Status</dt>
-                    <dd>{selectedRow.sourceStatus}</dd>
+                    <dt>상태</dt>
+                    <dd>{sourceStatusLabel(selectedRow.sourceStatus)}</dd>
                   </div>
                   <div>
-                    <dt>Imported</dt>
+                    <dt>가져온 시각</dt>
                     <dd>{formatDateTime(selectedRow.lastImportedAt)}</dd>
                   </div>
                   <div>
-                    <dt>Enriched</dt>
+                    <dt>보강 시각</dt>
                     <dd>{formatDateTime(selectedRow.lastEnrichedAt)}</dd>
                   </div>
                   <div>
-                    <dt>Latest import</dt>
+                    <dt>최근 가져오기</dt>
                     <dd>{formatDateTime(health?.latestImportAt)}</dd>
                   </div>
                   <div>
-                    <dt>Source hash</dt>
+                    <dt>원본 해시</dt>
                     <dd className="hash-text">{selectedRow.sourceRowHash}</dd>
                   </div>
                 </dl>
@@ -686,7 +767,7 @@ export function ContractLookupApp() {
           ) : (
             <div className="detail-empty">
               <FileText aria-hidden="true" size={22} />
-              <span>Select a result row to inspect contract source and freshness.</span>
+              <span>결과 행을 선택하면 계약 원문과 데이터 상태를 확인할 수 있습니다.</span>
             </div>
           )}
         </aside>

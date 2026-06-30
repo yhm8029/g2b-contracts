@@ -4,6 +4,7 @@ import {
   apiStatusLabels,
   compactDateToIsoDate,
   exportHrefForLastSearch,
+  localizeClientError,
   normalizeCompactDateInput,
   syncStatusMessage,
 } from "@/components/ContractLookupApp";
@@ -11,8 +12,8 @@ import {
 describe("apiStatusLabels", () => {
   it("uses neutral labels before server health is available", () => {
     expect(apiStatusLabels(null)).toEqual({
-      apiKey: "unknown",
-      enrichment: "unknown",
+      apiKey: "확인 전",
+      enrichment: "확인 전",
     });
   });
 
@@ -25,8 +26,8 @@ describe("apiStatusLabels", () => {
         enrichmentEnabled: false,
       }),
     ).toEqual({
-      apiKey: "configured",
-      enrichment: "disabled",
+      apiKey: "설정됨",
+      enrichment: "비활성",
     });
   });
 });
@@ -75,6 +76,24 @@ describe("date input helpers", () => {
   });
 });
 
+describe("localizeClientError", () => {
+  it("translates known search validation errors", () => {
+    expect(localizeClientError("Business registration number must contain 10 digits.", "search")).toBe(
+      "사업자등록번호는 숫자 10자리여야 합니다.",
+    );
+  });
+
+  it("translates known sync setup errors", () => {
+    expect(localizeClientError("DATA_GO_KR_SERVICE_KEY is required for G2B sync.", "sync")).toBe(
+      "나라장터 동기화를 위해 공공데이터포털 API 키가 필요합니다.",
+    );
+  });
+
+  it("keeps unknown provider errors but adds Korean context", () => {
+    expect(localizeClientError("Provider timeout", "sync")).toBe("나라장터 동기화 실패: Provider timeout");
+  });
+});
+
 describe("syncStatusMessage", () => {
   it("summarizes successful sync counts", () => {
     expect(
@@ -85,7 +104,7 @@ describe("syncStatusMessage", () => {
         updatedCount: 1,
         errorCount: 0,
       }),
-    ).toBe("G2B sync completed: matched 12, inserted 11, updated 1.");
+    ).toBe("나라장터 동기화 완료: 매칭 12건, 신규 11건, 갱신 1건.");
   });
 
   it("includes error count for completed syncs with errors", () => {
@@ -97,7 +116,7 @@ describe("syncStatusMessage", () => {
         updatedCount: 1,
         errorCount: 2,
       }),
-    ).toBe("G2B sync completed with 2 errors: matched 12, inserted 11, updated 1.");
+    ).toBe("나라장터 동기화 일부 완료(오류 2건): 매칭 12건, 신규 11건, 갱신 1건.");
   });
 
   it("uses a zero-match label for completed syncs without matched rows", () => {
@@ -109,7 +128,7 @@ describe("syncStatusMessage", () => {
         updatedCount: 0,
         errorCount: 0,
       }),
-    ).toBe("G2B sync completed: no matching G2B contracts found.");
+    ).toBe("나라장터 동기화 완료: 매칭 계약 없음.");
   });
 
   it("uses a failed label with error count", () => {
@@ -121,6 +140,6 @@ describe("syncStatusMessage", () => {
         updatedCount: 0,
         errorCount: 1,
       }),
-    ).toBe("G2B sync failed: 1 error.");
+    ).toBe("나라장터 동기화 실패: 오류 1건.");
   });
 });

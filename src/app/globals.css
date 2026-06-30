@@ -125,6 +125,12 @@ a {
   color: var(--success);
 }
 
+.status-ready {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--muted);
+}
+
 .status-error {
   background: var(--danger-soft);
   border-color: #ffc9c1;
