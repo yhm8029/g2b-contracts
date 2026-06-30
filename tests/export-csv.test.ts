@@ -42,12 +42,18 @@ function contractRow(overrides: Partial<ContractSearchRow> = {}): ContractSearch
 }
 
 describe("contractsToCsv", () => {
+  it("starts with a UTF-8 BOM so Windows Excel opens Korean text correctly", () => {
+    const csv = contractsToCsv([contractRow({ contractName: "빌딩자동제어장치" })]);
+
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+  });
+
   it("exports contract search rows with the expected header and values", () => {
     const csv = contractsToCsv([contractRow()]);
 
     expect(csv).toBe(
       [
-        "contract_date,contract_name,notice_name,contract_amount,demand_agency,contract_agency,contract_method,business_category,notice_no,contract_no,contract_detail_url,notice_detail_url,source_status",
+        "\ufeffcontract_date,contract_name,notice_name,contract_amount,demand_agency,contract_agency,contract_method,business_category,notice_no,contract_no,contract_detail_url,notice_detail_url,source_status",
         "2026-01-15,Sample contract,Sample notice,1000,Demand Agency,Contract Agency,Open bid,goods,20260123456,C-2026-001,https://example.test/contracts/1,https://example.test/notices/1,local_only",
         "",
       ].join("\n"),

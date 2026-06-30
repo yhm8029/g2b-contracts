@@ -1,5 +1,7 @@
 import type { ContractSearchRow } from "@/lib/contracts/types";
 
+const utf8Bom = "\ufeff";
+
 const header = [
   "contract_date",
   "contract_name",
@@ -50,5 +52,5 @@ export function contractsToCsv(rows: ContractSearchRow[]): string {
       .join(","),
   );
 
-  return [header.join(","), ...csvRows, ""].join("\n");
+  return `${utf8Bom}${[header.join(","), ...csvRows, ""].join("\n")}`;
 }
