@@ -698,4 +698,262 @@ describe("syncStandardContractsForBusiness", () => {
       sqlite.close();
     }
   });
+
+  it("reuses cached monthly shopping mall delivery request info rows on repeated syncs", async () => {
+    const { sqlite, db } = createTempDb();
+    const firstClient: StandardContractSyncClient = {
+      fetchStandardContractPage: vi.fn(async () => {
+        throw new Error("standard source should not run");
+      }),
+      fetchShoppingMallDeliveryRequestInfoPage: vi.fn(async (_chunk, pageNo, numOfRows) => ({
+        items: [
+          {
+            dlvrReqNo: "DLVR-CACHED",
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            corpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            dlvrReqNm: "Cached delivery request",
+          },
+          {
+            dlvrReqNo: "DLVR-OTHER",
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            corpBizno: "9999999999",
+            corpNm: "Other Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            dlvrReqNm: "Other request",
+          },
+          {
+            dlvrReqNo: "DLVR-CACHED",
+            dlvrReqChgOrd: "01",
+            dlvrReqRcptDate: "2026-01-16",
+            corpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            dlvrReqNm: "Cached delivery request change",
+          },
+        ],
+        totalCount: 3,
+        pageNo,
+        numOfRows,
+      })),
+      fetchShoppingMallDeliveryRequestDetailPage: vi.fn(async (_chunk, deliveryRequestNo, pageNo, numOfRows) => ({
+        items: [
+          {
+            dlvrReqNo: deliveryRequestNo,
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            prdctSno: "1",
+            cntrctCorpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            prdctIdntNoNm: "Delivered product",
+            prdctAmt: "2200000",
+            dlvrReqNm: "Cached delivery request",
+          },
+        ],
+        totalCount: 1,
+        pageNo,
+        numOfRows,
+      })),
+    };
+
+    const secondClient: StandardContractSyncClient = {
+      fetchStandardContractPage: vi.fn(async () => {
+        throw new Error("standard source should not run");
+      }),
+      fetchShoppingMallDeliveryRequestInfoPage: vi.fn(async () => {
+        throw new Error("delivery request info source should use cache");
+      }),
+      fetchShoppingMallDeliveryRequestDetailPage: firstClient.fetchShoppingMallDeliveryRequestDetailPage,
+    };
+
+    try {
+      const firstResult = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "shopping_third_party" },
+        firstClient,
+      );
+      expect(firstResult.insertedCount).toBe(1);
+
+      const cachedRows = sqlite
+        .prepare(
+          "select delivery_request_no as deliveryRequestNo, corp_bizno as corpBizno from shopping_mall_delivery_request_info_cache order by delivery_request_no",
+        )
+        .all() as { deliveryRequestNo: string; corpBizno: string }[];
+      expect(cachedRows).toEqual([
+        { deliveryRequestNo: "DLVR-CACHED", corpBizno: BIZ_NO },
+        { deliveryRequestNo: "DLVR-CACHED", corpBizno: BIZ_NO },
+        { deliveryRequestNo: "DLVR-OTHER", corpBizno: "9999999999" },
+      ]);
+
+      const secondResult = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "shopping_third_party" },
+        secondClient,
+      );
+
+      expect(secondResult.status).toBe("completed");
+      expect(secondResult.skippedCount).toBe(1);
+      expect(secondResult.updatedCount).toBe(1);
+      expect(secondClient.fetchShoppingMallDeliveryRequestInfoPage).not.toHaveBeenCalled();
+      expect(secondClient.fetchShoppingMallDeliveryRequestDetailPage).toHaveBeenCalledTimes(2);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("refreshes stale shopping mall delivery request info cache chunks", async () => {
+    const { sqlite, db } = createTempDb();
+    const initialClient: StandardContractSyncClient = {
+      fetchStandardContractPage: vi.fn(async () => {
+        throw new Error("standard source should not run");
+      }),
+      fetchShoppingMallDeliveryRequestInfoPage: vi.fn(async (_chunk, pageNo, numOfRows) => ({
+        items: [
+          {
+            dlvrReqNo: "DLVR-OLD",
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            corpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            dlvrReqNm: "Old cached delivery request",
+          },
+        ],
+        totalCount: 1,
+        pageNo,
+        numOfRows,
+      })),
+      fetchShoppingMallDeliveryRequestDetailPage: vi.fn(async (_chunk, deliveryRequestNo, pageNo, numOfRows) => ({
+        items: [
+          {
+            dlvrReqNo: deliveryRequestNo,
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-15",
+            prdctSno: "1",
+            cntrctCorpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            prdctIdntNoNm: "Delivered product",
+            prdctAmt: "2200000",
+            dlvrReqNm: "Delivery request",
+          },
+        ],
+        totalCount: 1,
+        pageNo,
+        numOfRows,
+      })),
+    };
+
+    const refreshClient: StandardContractSyncClient = {
+      fetchStandardContractPage: vi.fn(async () => {
+        throw new Error("standard source should not run");
+      }),
+      fetchShoppingMallDeliveryRequestInfoPage: vi.fn(async (_chunk, pageNo, numOfRows) => ({
+        items: [
+          {
+            dlvrReqNo: "DLVR-NEW",
+            dlvrReqChgOrd: "00",
+            dlvrReqRcptDate: "2026-01-20",
+            corpBizno: BIZ_NO,
+            corpNm: "Sample Shopping Co",
+            cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+            dlvrReqNm: "New delivery request",
+          },
+        ],
+        totalCount: 1,
+        pageNo,
+        numOfRows,
+      })),
+      fetchShoppingMallDeliveryRequestDetailPage: initialClient.fetchShoppingMallDeliveryRequestDetailPage,
+    };
+
+    try {
+      await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "shopping_third_party" },
+        initialClient,
+      );
+
+      sqlite
+        .prepare(
+          "update shopping_mall_delivery_request_info_cache_chunks set refreshed_at = ? where date_from = ? and date_to = ?",
+        )
+        .run("2020-01-01T00:00:00.000Z", "2026-01-01", "2026-01-31");
+
+      const refreshResult = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "shopping_third_party" },
+        refreshClient,
+      );
+
+      expect(refreshResult.status).toBe("completed");
+      expect(refreshClient.fetchShoppingMallDeliveryRequestInfoPage).toHaveBeenCalledOnce();
+
+      const cachedRows = sqlite
+        .prepare(
+          "select delivery_request_no as deliveryRequestNo from shopping_mall_delivery_request_info_cache order by delivery_request_no",
+        )
+        .all() as { deliveryRequestNo: string }[];
+      expect(cachedRows).toEqual([{ deliveryRequestNo: "DLVR-NEW" }]);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("does not mark incomplete shopping mall delivery request info fetches as cached", async () => {
+    const { sqlite, db } = createTempDb();
+    const client: StandardContractSyncClient = {
+      fetchStandardContractPage: vi.fn(async () => {
+        throw new Error("standard source should not run");
+      }),
+      fetchShoppingMallDeliveryRequestInfoPage: vi.fn(async (_chunk, pageNo, numOfRows) => ({
+        items:
+          pageNo === 1
+            ? [
+                {
+                  dlvrReqNo: "DLVR-PARTIAL-1",
+                  dlvrReqChgOrd: "00",
+                  dlvrReqRcptDate: "2026-01-15",
+                  corpBizno: BIZ_NO,
+                  corpNm: "Sample Shopping Co",
+                  cntrctCnclsStleNm: "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+                  dlvrReqNm: "Partial request",
+                },
+              ]
+            : [],
+        totalCount: 2,
+        pageNo,
+        numOfRows,
+      })),
+      fetchShoppingMallDeliveryRequestDetailPage: vi.fn(async () => ({
+        items: [],
+        totalCount: 0,
+        pageNo: 1,
+        numOfRows: 999,
+      })),
+    };
+
+    try {
+      const result = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "shopping_third_party" },
+        client,
+      );
+
+      expect(result.status).toBe("completed_with_errors");
+      expect(result.errorCount).toBe(1);
+      expect(client.fetchShoppingMallDeliveryRequestDetailPage).not.toHaveBeenCalled();
+
+      const markerCount = sqlite
+        .prepare("select count(*) as count from shopping_mall_delivery_request_info_cache_chunks")
+        .get() as { count: number };
+      expect(markerCount.count).toBe(0);
+    } finally {
+      sqlite.close();
+    }
+  });
 });

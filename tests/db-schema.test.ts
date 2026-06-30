@@ -40,6 +40,8 @@ describe("initializeSqliteSchema", () => {
       "businesses",
       "contract_records",
       "import_runs",
+      "shopping_mall_delivery_request_info_cache",
+      "shopping_mall_delivery_request_info_cache_chunks",
     ]);
 
     const indexes = db
@@ -56,6 +58,10 @@ describe("initializeSqliteSchema", () => {
         "contract_records_unified_contract_no_idx",
         "contract_records_biz_no_contract_date_idx",
         "contract_records_source_dataset_row_hash_unique",
+        "shopping_delivery_cache_chunk_unique",
+        "shopping_delivery_cache_chunk_biz_idx",
+        "shopping_delivery_cache_chunk_idx",
+        "shopping_delivery_cache_request_unique",
       ]),
     );
   });

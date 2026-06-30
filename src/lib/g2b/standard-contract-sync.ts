@@ -16,6 +16,12 @@ import {
 import { fetchContractInfoPage } from "@/lib/g2b/contract-info-list-client";
 import { redactG2bSecrets } from "@/lib/g2b/http";
 import {
+  appendShoppingMallDeliveryRequestInfoCacheRows,
+  beginShoppingMallDeliveryRequestInfoCacheRefresh,
+  markShoppingMallDeliveryRequestInfoCacheComplete,
+  readCachedShoppingMallDeliveryRequestInfoMatches,
+} from "@/lib/g2b/shopping-mall-delivery-cache";
+import {
   fetchShoppingMallDeliveryRequestDetailPage,
   fetchShoppingMallDeliveryRequestInfoPage,
 } from "@/lib/g2b/shopping-mall-client";
@@ -245,7 +251,7 @@ async function collectShoppingMallThirdPartyRows(
   const result = createEmptyResult();
 
   await mapWithConcurrency(chunks, SYNC_CONCURRENCY, (chunk) =>
-    fetchShoppingMallChunkRows(chunk, normalizedBizNo, fetchInfoPage, fetchDetailPage, result, validRows),
+    fetchShoppingMallChunkRows(db, chunk, normalizedBizNo, fetchInfoPage, fetchDetailPage, result, validRows),
   );
 
   finalizeCollectedRows(db, result, validRows);
@@ -253,6 +259,7 @@ async function collectShoppingMallThirdPartyRows(
 }
 
 async function fetchShoppingMallChunkRows(
+  db: Db,
   chunk: DateChunk,
   normalizedBizNo: string,
   fetchInfoPage: NonNullable<StandardContractSyncClient["fetchShoppingMallDeliveryRequestInfoPage"]>,
@@ -264,6 +271,7 @@ async function fetchShoppingMallChunkRows(
 
   try {
     const deliveryRequestNos = await fetchMatchingDeliveryRequestNosForChunk(
+      db,
       chunk,
       normalizedBizNo,
       fetchInfoPage,
@@ -286,16 +294,29 @@ async function fetchShoppingMallChunkRows(
 }
 
 async function fetchMatchingDeliveryRequestNosForChunk(
+  db: Db,
   chunk: DateChunk,
   normalizedBizNo: string,
   fetchInfoPage: NonNullable<StandardContractSyncClient["fetchShoppingMallDeliveryRequestInfoPage"]>,
   result: StandardContractSyncResult,
 ): Promise<string[]> {
+  const cached = readCachedShoppingMallDeliveryRequestInfoMatches(db, chunk, normalizedBizNo);
+  if (cached !== null) {
+    result.rowsFetched += cached.cachedRowCount;
+    result.skippedCount += cached.cachedRowCount - cached.matchedRowCount;
+    return cached.deliveryRequestNos;
+  }
+
   const deliveryRequestNos = new Set<string>();
+  beginShoppingMallDeliveryRequestInfoCacheRefresh(db, chunk);
+
   const firstPage = await fetchInfoPage(chunk, 1, SHOPPING_PAGE_SIZE);
+  let cachedRowCount = appendShoppingMallDeliveryRequestInfoCacheRows(db, chunk, firstPage.items);
   processShoppingMallInfoPage(firstPage, normalizedBizNo, result, deliveryRequestNos);
 
   if (firstPage.items.length === 0 || firstPage.items.length >= firstPage.totalCount) {
+    assertCompleteShoppingMallInfoFetch(chunk, firstPage.totalCount, cachedRowCount);
+    markShoppingMallDeliveryRequestInfoCacheComplete(db, chunk, firstPage.totalCount, cachedRowCount);
     return [...deliveryRequestNos];
   }
 
@@ -313,10 +334,22 @@ async function fetchMatchingDeliveryRequestNosForChunk(
 
   await mapWithConcurrency(remainingPages, SHOPPING_SYNC_CONCURRENCY, async (pageNo) => {
     const page = await fetchInfoPage(chunk, pageNo, SHOPPING_PAGE_SIZE);
+    cachedRowCount += appendShoppingMallDeliveryRequestInfoCacheRows(db, chunk, page.items);
     processShoppingMallInfoPage(page, normalizedBizNo, result, deliveryRequestNos);
   });
 
+  assertCompleteShoppingMallInfoFetch(chunk, firstPage.totalCount, cachedRowCount);
+  markShoppingMallDeliveryRequestInfoCacheComplete(db, chunk, firstPage.totalCount, cachedRowCount);
   return [...deliveryRequestNos];
+}
+
+function assertCompleteShoppingMallInfoFetch(chunk: DateChunk, expectedCount: number, actualCount: number): void {
+  if (actualCount < expectedCount) {
+    throw new G2bStandardContractError(
+      "provider_error",
+      `G2B shopping mall delivery request info returned ${actualCount} of ${expectedCount} rows for ${chunk.dateFrom} to ${chunk.dateTo}.`,
+    );
+  }
 }
 
 async function fetchAllShoppingMallDetailPagesForRequest(

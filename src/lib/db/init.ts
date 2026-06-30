@@ -91,5 +91,43 @@ export function initializeSqliteSchema(db: Database.Database): void {
       status TEXT NOT NULL,
       notes TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS shopping_mall_delivery_request_info_cache_chunks (
+      id INTEGER PRIMARY KEY,
+      date_from TEXT NOT NULL,
+      date_to TEXT NOT NULL,
+      total_count INTEGER NOT NULL DEFAULT 0,
+      cached_row_count INTEGER NOT NULL DEFAULT 0,
+      refreshed_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS shopping_delivery_cache_chunk_unique
+      ON shopping_mall_delivery_request_info_cache_chunks (date_from, date_to);
+
+    CREATE TABLE IF NOT EXISTS shopping_mall_delivery_request_info_cache (
+      id INTEGER PRIMARY KEY,
+      date_from TEXT NOT NULL,
+      date_to TEXT NOT NULL,
+      source_row_hash TEXT NOT NULL,
+      delivery_request_no TEXT,
+      delivery_request_change_order TEXT,
+      receipt_date TEXT,
+      corp_bizno TEXT,
+      corp_name TEXT,
+      contract_method TEXT,
+      delivery_request_name TEXT,
+      raw_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS shopping_delivery_cache_chunk_idx
+      ON shopping_mall_delivery_request_info_cache (date_from, date_to);
+    CREATE INDEX IF NOT EXISTS shopping_delivery_cache_chunk_biz_idx
+      ON shopping_mall_delivery_request_info_cache (date_from, date_to, corp_bizno);
+    CREATE UNIQUE INDEX IF NOT EXISTS shopping_delivery_cache_request_unique
+      ON shopping_mall_delivery_request_info_cache (date_from, date_to, source_row_hash);
   `);
 }

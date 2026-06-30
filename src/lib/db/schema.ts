@@ -92,3 +92,45 @@ export const importRuns = sqliteTable("import_runs", {
   status: text("status").notNull(),
   notes: text("notes"),
 });
+
+export const shoppingMallDeliveryRequestInfoCacheChunks = sqliteTable(
+  "shopping_mall_delivery_request_info_cache_chunks",
+  {
+    id: integer("id").primaryKey(),
+    dateFrom: text("date_from").notNull(),
+    dateTo: text("date_to").notNull(),
+    totalCount: integer("total_count").notNull().default(0),
+    cachedRowCount: integer("cached_row_count").notNull().default(0),
+    refreshedAt: text("refreshed_at").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("shopping_delivery_cache_chunk_unique").on(table.dateFrom, table.dateTo),
+  ],
+);
+
+export const shoppingMallDeliveryRequestInfoCache = sqliteTable(
+  "shopping_mall_delivery_request_info_cache",
+  {
+    id: integer("id").primaryKey(),
+    dateFrom: text("date_from").notNull(),
+    dateTo: text("date_to").notNull(),
+    sourceRowHash: text("source_row_hash").notNull(),
+    deliveryRequestNo: text("delivery_request_no"),
+    deliveryRequestChangeOrder: text("delivery_request_change_order"),
+    receiptDate: text("receipt_date"),
+    corpBizno: text("corp_bizno"),
+    corpName: text("corp_name"),
+    contractMethod: text("contract_method"),
+    deliveryRequestName: text("delivery_request_name"),
+    rawJson: text("raw_json").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("shopping_delivery_cache_chunk_idx").on(table.dateFrom, table.dateTo),
+    index("shopping_delivery_cache_chunk_biz_idx").on(table.dateFrom, table.dateTo, table.corpBizno),
+    uniqueIndex("shopping_delivery_cache_request_unique").on(table.dateFrom, table.dateTo, table.sourceRowHash),
+  ],
+);
