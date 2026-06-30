@@ -43,17 +43,8 @@ function mockClient(
   };
 }
 
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((innerResolve) => {
-    resolve = innerResolve;
-  });
-
-  return { promise, resolve };
-}
-
-async function resolvesWithin(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
-  return Promise.race([promise.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs))]);
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 describe("syncStandardContractsForBusiness", () => {
@@ -283,7 +274,7 @@ describe("syncStandardContractsForBusiness", () => {
     }
   });
 
-  it("falls back to approved contract information service when public standard service is rate limited", async () => {
+  it("does not fall back to contract information service when public standard service is rate limited", async () => {
     const { sqlite, db } = createTempDb();
     const fetchStandardContractPage = vi.fn(async () => {
       throw new G2bStandardContractError("provider_error", "G2B API request failed with status 429.");
@@ -305,12 +296,15 @@ describe("syncStandardContractsForBusiness", () => {
         },
       );
 
-      expect(result.status).toBe("completed");
-      expect(result.insertedCount).toBe(1);
-      expect(fetchContractInfoPage).toHaveBeenCalled();
-      expect(
-        sqlite.prepare("select contract_no as contractNo from contract_records").get(),
-      ).toEqual({ contractNo: "RATE-LIMIT-FALLBACK" });
+      expect(result.status).toBe("failed");
+      expect(result.insertedCount).toBe(0);
+      expect(result.errors).toEqual([
+        expect.objectContaining({
+          code: "provider_error",
+          message: "G2B API request failed with status 429.",
+        }),
+      ]);
+      expect(fetchContractInfoPage).not.toHaveBeenCalled();
     } finally {
       sqlite.close();
     }
@@ -490,18 +484,15 @@ describe("syncStandardContractsForBusiness", () => {
     }
   });
 
-  it("fetches independent month chunks concurrently", async () => {
+  it("fetches independent month chunks sequentially to avoid provider rate limits", async () => {
     const { sqlite, db } = createTempDb();
-    const releaseJanuary = deferred();
-    const februaryStarted = deferred();
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
     const client = mockClient(async (chunk) => {
-      if (chunk.dateFrom === "2026-01-01") {
-        await releaseJanuary.promise;
-      }
-
-      if (chunk.dateFrom === "2026-02-01") {
-        februaryStarted.resolve();
-      }
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      await delay(5);
+      activeRequests -= 1;
 
       return {
         items: [providerRow({ cntrctNo: `SYNC-${chunk.dateFrom}`, cntrctCnclsDate: chunk.dateFrom })],
@@ -512,20 +503,16 @@ describe("syncStandardContractsForBusiness", () => {
     });
 
     try {
-      const syncPromise = syncStandardContractsForBusiness(
+      const result = await syncStandardContractsForBusiness(
         db,
         { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-02-28", businessCategory: "goods" },
         client,
       );
 
-      await expect(resolvesWithin(februaryStarted.promise, 50)).resolves.toBe(true);
-      releaseJanuary.resolve();
-
-      const result = await syncPromise;
       expect(result.status).toBe("completed");
       expect(result.insertedCount).toBe(2);
+      expect(maxActiveRequests).toBe(1);
     } finally {
-      releaseJanuary.resolve();
       sqlite.close();
     }
   });
@@ -564,18 +551,15 @@ describe("syncStandardContractsForBusiness", () => {
     }
   });
 
-  it("fetches remaining pages in a chunk concurrently after the first page", async () => {
+  it("fetches remaining pages in a chunk sequentially after the first page", async () => {
     const { sqlite, db } = createTempDb();
-    const releasePageTwo = deferred();
-    const pageThreeStarted = deferred();
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
     const client = mockClient(async (_chunk, pageNo) => {
-      if (pageNo === 2) {
-        await releasePageTwo.promise;
-      }
-
-      if (pageNo === 3) {
-        pageThreeStarted.resolve();
-      }
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      await delay(5);
+      activeRequests -= 1;
 
       return {
         items: [providerRow({ cntrctNo: `PAGE-${pageNo}`, cntrctCnclsDate: `2026-01-0${pageNo}` })],
@@ -586,20 +570,16 @@ describe("syncStandardContractsForBusiness", () => {
     });
 
     try {
-      const syncPromise = syncStandardContractsForBusiness(
+      const result = await syncStandardContractsForBusiness(
         db,
         { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "goods" },
         client,
       );
 
-      await expect(resolvesWithin(pageThreeStarted.promise, 50)).resolves.toBe(true);
-      releasePageTwo.resolve();
-
-      const result = await syncPromise;
       expect(result.status).toBe("completed");
       expect(result.insertedCount).toBe(3);
+      expect(maxActiveRequests).toBe(1);
     } finally {
-      releasePageTwo.resolve();
       sqlite.close();
     }
   });

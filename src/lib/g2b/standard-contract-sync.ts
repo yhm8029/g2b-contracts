@@ -40,7 +40,7 @@ import type { ParsedContractCsvRow } from "@/lib/import/csv";
 const PAGE_SIZE = 100;
 const SHOPPING_PAGE_SIZE = 999;
 const MAX_PAGES_PER_CHUNK = 1000;
-const SYNC_CONCURRENCY = 4;
+const SYNC_CONCURRENCY = 1;
 const SHOPPING_SYNC_CONCURRENCY = 8;
 const ALL_CONTRACT_CATEGORIES: G2bContractBusinessCategory[] = ["goods", "services", "construction", "foreign"];
 
@@ -594,11 +594,7 @@ function shouldFallbackToContractInfo(result: StandardContractSyncResult): boole
   return (
     result.pagesFetched === 0 &&
     result.errors.length > 0 &&
-    result.errors.every(
-      (error) =>
-        error.code === "unauthorized_service_key" ||
-        (error.code === "provider_error" && error.message.includes("status 429")),
-    )
+    result.errors.every((error) => error.code === "unauthorized_service_key")
   );
 }
 
