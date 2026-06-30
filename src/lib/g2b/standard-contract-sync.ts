@@ -24,6 +24,7 @@ import type { ParsedContractCsvRow } from "@/lib/import/csv";
 
 const PAGE_SIZE = 100;
 const MAX_PAGES_PER_CHUNK = 1000;
+const SYNC_CONCURRENCY = 4;
 const ALL_CONTRACT_CATEGORIES: G2bContractBusinessCategory[] = ["goods", "services", "construction", "foreign"];
 
 export type StandardContractSyncParams = {
@@ -144,9 +145,7 @@ async function collectRowsForSource(db: Db, params: SourceCollectionParams): Pro
   const validRows: ParsedContractCsvRow[] = [];
   const result = createEmptyResult();
 
-  for (const chunk of params.chunks) {
-    await fetchChunkRows(chunk, params, result, validRows);
-  }
+  await mapWithConcurrency(params.chunks, SYNC_CONCURRENCY, (chunk) => fetchChunkRows(chunk, params, result, validRows));
 
   finalizeCollectedRows(db, result, validRows);
   return result;
@@ -162,22 +161,27 @@ async function collectRowsForContractInfoFallback(
   const validRows: ParsedContractCsvRow[] = [];
   const result = createEmptyResult();
 
-  for (const category of categoriesForSync(businessCategory)) {
-    for (const chunk of chunks) {
-      await fetchChunkRows(
-        chunk,
-        {
-          chunks,
-          normalizedBizNo,
-          selectedCategory: null,
-          sourceDataset: CONTRACT_INFO_SOURCE_DATASET,
-          fetchPage: (innerChunk, pageNo, numOfRows) => fetchPage(innerChunk, pageNo, numOfRows, category),
-        },
-        result,
-        validRows,
-      );
-    }
-  }
+  const tasks = categoriesForSync(businessCategory).flatMap((category) =>
+    chunks.map((chunk) => ({
+      category,
+      chunk,
+    })),
+  );
+
+  await mapWithConcurrency(tasks, SYNC_CONCURRENCY, ({ category, chunk }) =>
+    fetchChunkRows(
+      chunk,
+      {
+        chunks,
+        normalizedBizNo,
+        selectedCategory: null,
+        sourceDataset: CONTRACT_INFO_SOURCE_DATASET,
+        fetchPage: (innerChunk, pageNo, numOfRows) => fetchPage(innerChunk, pageNo, numOfRows, category),
+      },
+      result,
+      validRows,
+    ),
+  );
 
   finalizeCollectedRows(db, result, validRows);
   return result;
@@ -199,9 +203,9 @@ async function fetchChunkRows(
 
       if (expandedChunks.length > 0) {
         result.chunksExpanded += 1;
-        for (const expandedChunk of expandedChunks) {
-          await fetchChunkRows(expandedChunk, source, result, validRows);
-        }
+        await mapWithConcurrency(expandedChunks, SYNC_CONCURRENCY, (expandedChunk) =>
+          fetchChunkRows(expandedChunk, source, result, validRows),
+        );
         return;
       }
     }
@@ -216,37 +220,50 @@ async function fetchAllPagesForChunk(
   result: StandardContractSyncResult,
   validRows: ParsedContractCsvRow[],
 ): Promise<void> {
-  let pageNo = 1;
-  let fetchedItemCount = 0;
+  const firstPage = await source.fetchPage(chunk, 1, PAGE_SIZE);
+  processPage(firstPage, source, result, validRows);
 
-  while (pageNo <= MAX_PAGES_PER_CHUNK) {
-    const page = await source.fetchPage(chunk, pageNo, PAGE_SIZE);
-    result.pagesFetched += 1;
-    result.rowsFetched += page.items.length;
-    fetchedItemCount += page.items.length;
-
-    for (const item of page.items) {
-      const mapped = mapStandardContractRow(item, source.normalizedBizNo, source.sourceDataset);
-
-      if (mapped.success && rowMatchesSelectedCategory(mapped.row, source.selectedCategory)) {
-        result.rowsMatched += 1;
-        validRows.push(mapped.row);
-      } else {
-        result.skippedCount += 1;
-      }
-    }
-
-    if (page.items.length === 0 || fetchedItemCount >= page.totalCount) {
-      return;
-    }
-
-    pageNo += 1;
+  if (firstPage.items.length === 0 || firstPage.items.length >= firstPage.totalCount) {
+    return;
   }
 
-  throw new G2bStandardContractError(
-    "provider_error",
-    `G2B standard contract page cap exceeded for ${chunk.dateFrom} to ${chunk.dateTo}.`,
-  );
+  const pageSize = Math.max(1, firstPage.items.length);
+  const totalPages = Math.ceil(firstPage.totalCount / pageSize);
+
+  if (totalPages > MAX_PAGES_PER_CHUNK) {
+    throw new G2bStandardContractError(
+      "provider_error",
+      `G2B standard contract page cap exceeded for ${chunk.dateFrom} to ${chunk.dateTo}.`,
+    );
+  }
+
+  const remainingPages = Array.from({ length: totalPages - 1 }, (_, index) => index + 2);
+
+  await mapWithConcurrency(remainingPages, SYNC_CONCURRENCY, async (pageNo) => {
+    const page = await source.fetchPage(chunk, pageNo, PAGE_SIZE);
+    processPage(page, source, result, validRows);
+  });
+}
+
+function processPage(
+  page: StandardContractPage,
+  source: SourceCollectionParams,
+  result: StandardContractSyncResult,
+  validRows: ParsedContractCsvRow[],
+): void {
+  result.pagesFetched += 1;
+  result.rowsFetched += page.items.length;
+
+  for (const item of page.items) {
+    const mapped = mapStandardContractRow(item, source.normalizedBizNo, source.sourceDataset);
+
+    if (mapped.success && rowMatchesSelectedCategory(mapped.row, source.selectedCategory)) {
+      result.rowsMatched += 1;
+      validRows.push(mapped.row);
+    } else {
+      result.skippedCount += 1;
+    }
+  }
 }
 
 function createEmptyResult(): StandardContractSyncResult {
@@ -347,4 +364,37 @@ function syncStatus(result: StandardContractSyncResult): StandardContractSyncRes
   }
 
   return "failed";
+}
+
+async function mapWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  let firstError: unknown;
+
+  async function worker(): Promise<void> {
+    while (firstError === undefined) {
+      const index = nextIndex;
+      nextIndex += 1;
+
+      if (index >= items.length) {
+        return;
+      }
+
+      try {
+        await task(items[index]);
+      } catch (error) {
+        firstError = error;
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  if (firstError !== undefined) {
+    throw firstError;
+  }
 }

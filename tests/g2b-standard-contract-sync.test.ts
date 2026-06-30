@@ -42,6 +42,19 @@ function mockClient(
   };
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
+}
+
+async function resolvesWithin(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
+  return Promise.race([promise.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs))]);
+}
+
 describe("syncStandardContractsForBusiness", () => {
   it("imports matching rows for month chunks and records the G2B import source name", async () => {
     const { sqlite, db } = createTempDb();
@@ -401,6 +414,46 @@ describe("syncStandardContractsForBusiness", () => {
     }
   });
 
+  it("fetches independent month chunks concurrently", async () => {
+    const { sqlite, db } = createTempDb();
+    const releaseJanuary = deferred();
+    const februaryStarted = deferred();
+    const client = mockClient(async (chunk) => {
+      if (chunk.dateFrom === "2026-01-01") {
+        await releaseJanuary.promise;
+      }
+
+      if (chunk.dateFrom === "2026-02-01") {
+        februaryStarted.resolve();
+      }
+
+      return {
+        items: [providerRow({ cntrctNo: `SYNC-${chunk.dateFrom}`, cntrctCnclsDate: chunk.dateFrom })],
+        totalCount: 1,
+        pageNo: 1,
+        numOfRows: 100,
+      };
+    });
+
+    try {
+      const syncPromise = syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-02-28", businessCategory: "goods" },
+        client,
+      );
+
+      await expect(resolvesWithin(februaryStarted.promise, 50)).resolves.toBe(true);
+      releaseJanuary.resolve();
+
+      const result = await syncPromise;
+      expect(result.status).toBe("completed");
+      expect(result.insertedCount).toBe(2);
+    } finally {
+      releaseJanuary.resolve();
+      sqlite.close();
+    }
+  });
+
   it("fetches multiple pages and stops when fetched items reach totalCount", async () => {
     const { sqlite, db } = createTempDb();
     const client = mockClient(async (_chunk, pageNo) => ({
@@ -431,6 +484,46 @@ describe("syncStandardContractsForBusiness", () => {
         100,
       );
     } finally {
+      sqlite.close();
+    }
+  });
+
+  it("fetches remaining pages in a chunk concurrently after the first page", async () => {
+    const { sqlite, db } = createTempDb();
+    const releasePageTwo = deferred();
+    const pageThreeStarted = deferred();
+    const client = mockClient(async (_chunk, pageNo) => {
+      if (pageNo === 2) {
+        await releasePageTwo.promise;
+      }
+
+      if (pageNo === 3) {
+        pageThreeStarted.resolve();
+      }
+
+      return {
+        items: [providerRow({ cntrctNo: `PAGE-${pageNo}`, cntrctCnclsDate: `2026-01-0${pageNo}` })],
+        totalCount: 3,
+        pageNo,
+        numOfRows: 1,
+      };
+    });
+
+    try {
+      const syncPromise = syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "goods" },
+        client,
+      );
+
+      await expect(resolvesWithin(pageThreeStarted.promise, 50)).resolves.toBe(true);
+      releasePageTwo.resolve();
+
+      const result = await syncPromise;
+      expect(result.status).toBe("completed");
+      expect(result.insertedCount).toBe(3);
+    } finally {
+      releasePageTwo.resolve();
       sqlite.close();
     }
   });
