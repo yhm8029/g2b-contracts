@@ -6,7 +6,7 @@ import { initializeSqliteSchema } from "@/lib/db/init";
 import { parseBusinessNumberList } from "@/lib/domain/business-number";
 import { getServiceKey, redactG2bSecrets } from "@/lib/g2b/http";
 import {
-  syncStandardContractsForBusiness,
+  syncStandardContractsForBusinesses,
   type StandardContractSyncResult,
 } from "@/lib/g2b/standard-contract-sync";
 
@@ -86,9 +86,7 @@ export async function POST(request: NextRequest) {
     initializeSqliteSchema(connection.sqlite);
 
     const result = sanitizeSyncResult(
-      combineSyncResults(
-        await syncBusinessNumbersSequentially(connection.db, parsed.data),
-      ),
+      await syncStandardContractsForBusinesses(connection.db, parsed.data),
     );
 
     if (hasBlockingUnauthorizedServiceKeyError(result)) {
@@ -101,19 +99,6 @@ export async function POST(request: NextRequest) {
   } finally {
     connection?.sqlite.close();
   }
-}
-
-async function syncBusinessNumbersSequentially(
-  db: Parameters<typeof syncStandardContractsForBusiness>[0],
-  params: z.infer<typeof requestBodySchema>,
-): Promise<StandardContractSyncResult[]> {
-  const results: StandardContractSyncResult[] = [];
-
-  for (const bizNo of parseBusinessNumberList(params.bizNo)) {
-    results.push(await syncStandardContractsForBusiness(db, { ...params, bizNo }));
-  }
-
-  return results;
 }
 
 function combineSyncResults(results: StandardContractSyncResult[]): StandardContractSyncResult {

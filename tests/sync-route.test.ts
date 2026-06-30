@@ -16,6 +16,7 @@ vi.mock("@/lib/db/init", () => ({
 
 vi.mock("@/lib/g2b/standard-contract-sync", () => ({
   syncStandardContractsForBusiness: mocks.syncStandardContractsForBusiness,
+  syncStandardContractsForBusinesses: mocks.syncStandardContractsForBusiness,
 }));
 
 function syncRequest(body: unknown) {
@@ -176,7 +177,7 @@ describe("POST /api/sync", () => {
     expect(mocks.syncStandardContractsForBusiness).toHaveBeenCalledWith(
       {},
       {
-        bizNo: "1234567890",
+        bizNo: "123-45-67890",
         dateFrom: "2026-01-01",
         dateTo: "2026-01-31",
         businessCategory: "goods",
@@ -185,35 +186,21 @@ describe("POST /api/sync", () => {
     expect(mocks.close).toHaveBeenCalledOnce();
   });
 
-  it("syncs comma separated business numbers sequentially and returns combined counts", async () => {
+  it("syncs comma separated business numbers in one batched call", async () => {
     vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "TEST_KEY");
-    mocks.syncStandardContractsForBusiness
-      .mockResolvedValueOnce({
-        status: "completed",
-        chunksAttempted: 1,
-        chunksExpanded: 0,
-        pagesFetched: 2,
-        rowsFetched: 10,
-        rowsMatched: 3,
-        insertedCount: 2,
-        updatedCount: 1,
-        skippedCount: 7,
-        errorCount: 0,
-        errors: [],
-      })
-      .mockResolvedValueOnce({
-        status: "completed",
-        chunksAttempted: 1,
-        chunksExpanded: 0,
-        pagesFetched: 1,
-        rowsFetched: 5,
-        rowsMatched: 1,
-        insertedCount: 1,
-        updatedCount: 0,
-        skippedCount: 4,
-        errorCount: 0,
-        errors: [],
-      });
+    mocks.syncStandardContractsForBusiness.mockResolvedValue({
+      status: "completed",
+      chunksAttempted: 1,
+      chunksExpanded: 0,
+      pagesFetched: 2,
+      rowsFetched: 10,
+      rowsMatched: 3,
+      insertedCount: 2,
+      updatedCount: 1,
+      skippedCount: 7,
+      errorCount: 0,
+      errors: [],
+    });
 
     const { POST } = await import("@/app/api/sync/route");
     const response = await POST(
@@ -228,30 +215,20 @@ describe("POST /api/sync", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       status: "completed",
-      chunksAttempted: 2,
-      pagesFetched: 3,
-      rowsFetched: 15,
-      rowsMatched: 4,
-      insertedCount: 3,
+      chunksAttempted: 1,
+      pagesFetched: 2,
+      rowsFetched: 10,
+      rowsMatched: 3,
+      insertedCount: 2,
       updatedCount: 1,
-      skippedCount: 11,
+      skippedCount: 7,
       errorCount: 0,
     });
-    expect(mocks.syncStandardContractsForBusiness).toHaveBeenNthCalledWith(
-      1,
+    expect(mocks.syncStandardContractsForBusiness).toHaveBeenCalledOnce();
+    expect(mocks.syncStandardContractsForBusiness).toHaveBeenCalledWith(
       {},
       {
-        bizNo: "1234567890",
-        dateFrom: "2026-01-01",
-        dateTo: "2026-01-31",
-        businessCategory: "all",
-      },
-    );
-    expect(mocks.syncStandardContractsForBusiness).toHaveBeenNthCalledWith(
-      2,
-      {},
-      {
-        bizNo: "2048145651",
+        bizNo: "123-45-67890, 2048145651",
         dateFrom: "2026-01-01",
         dateTo: "2026-01-31",
         businessCategory: "all",
@@ -261,33 +238,19 @@ describe("POST /api/sync", () => {
 
   it("returns completed_with_errors when one of multiple business syncs fails", async () => {
     vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "TEST_KEY");
-    mocks.syncStandardContractsForBusiness
-      .mockResolvedValueOnce({
-        status: "completed",
-        chunksAttempted: 1,
-        chunksExpanded: 0,
-        pagesFetched: 1,
-        rowsFetched: 2,
-        rowsMatched: 1,
-        insertedCount: 1,
-        updatedCount: 0,
-        skippedCount: 1,
-        errorCount: 0,
-        errors: [],
-      })
-      .mockResolvedValueOnce({
-        status: "failed",
-        chunksAttempted: 1,
-        chunksExpanded: 0,
-        pagesFetched: 0,
-        rowsFetched: 0,
-        rowsMatched: 0,
-        insertedCount: 0,
-        updatedCount: 0,
-        skippedCount: 0,
-        errorCount: 1,
-        errors: [{ code: "provider_error", message: "provider failed" }],
-      });
+    mocks.syncStandardContractsForBusiness.mockResolvedValue({
+      status: "completed_with_errors",
+      chunksAttempted: 2,
+      chunksExpanded: 0,
+      pagesFetched: 1,
+      rowsFetched: 2,
+      rowsMatched: 1,
+      insertedCount: 1,
+      updatedCount: 0,
+      skippedCount: 1,
+      errorCount: 1,
+      errors: [{ code: "provider_error", message: "provider failed" }],
+    });
 
     const { POST } = await import("@/app/api/sync/route");
     const response = await POST(

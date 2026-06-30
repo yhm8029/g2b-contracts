@@ -9,6 +9,7 @@ import { initializeSqliteSchema } from "@/lib/db/init";
 import { G2bStandardContractError } from "@/lib/g2b/standard-contract-client";
 import {
   syncStandardContractsForBusiness,
+  syncStandardContractsForBusinesses,
   type StandardContractSyncClient,
 } from "@/lib/g2b/standard-contract-sync";
 import type { StandardContractRow } from "@/lib/g2b/standard-contract-mapper";
@@ -56,6 +57,47 @@ async function resolvesWithin(promise: Promise<void>, timeoutMs: number): Promis
 }
 
 describe("syncStandardContractsForBusiness", () => {
+  it("fetches public standard contract pages once for multiple business numbers", async () => {
+    const { sqlite, db } = createTempDb();
+    const client = mockClient(async () => ({
+      items: [
+        providerRow({ bidwinnrBizrno: "123-45-67890", cntrctNo: "BIZ-1" }),
+        providerRow({ bidwinnrBizrno: "204-81-45651", cntrctNo: "BIZ-2" }),
+        providerRow({ bidwinnrBizrno: "999-99-99999", cntrctNo: "OTHER" }),
+      ],
+      totalCount: 3,
+      pageNo: 1,
+      numOfRows: 100,
+    }));
+
+    try {
+      const result = await syncStandardContractsForBusinesses(
+        db,
+        {
+          bizNo: "123-45-67890,2048145651",
+          dateFrom: "2026-01-01",
+          dateTo: "2026-01-31",
+          businessCategory: "goods",
+        },
+        client,
+      );
+
+      expect(result).toMatchObject({
+        status: "completed",
+        chunksAttempted: 1,
+        pagesFetched: 1,
+        rowsFetched: 3,
+        rowsMatched: 2,
+        insertedCount: 2,
+        skippedCount: 1,
+        errorCount: 0,
+      });
+      expect(client.fetchStandardContractPage).toHaveBeenCalledTimes(1);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("imports matching rows for month chunks and records the G2B import source name", async () => {
     const { sqlite, db } = createTempDb();
     const client = mockClient(async () => ({

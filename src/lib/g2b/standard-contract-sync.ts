@@ -1,6 +1,6 @@
 import { recordImportRun, upsertParsedRows } from "@/lib/contracts/repository";
 import type { Db } from "@/lib/db/client";
-import { parseBusinessNumber } from "@/lib/domain/business-number";
+import { parseBusinessNumber, parseBusinessNumberList } from "@/lib/domain/business-number";
 import {
   splitDateRangeIntoDays,
   splitDateRangeIntoMonths,
@@ -110,8 +110,16 @@ export async function syncStandardContractsForBusiness(
   params: StandardContractSyncParams,
   client = defaultClient,
 ): Promise<StandardContractSyncResult> {
+  return syncStandardContractsForBusinesses(db, params, client);
+}
+
+export async function syncStandardContractsForBusinesses(
+  db: Db,
+  params: StandardContractSyncParams,
+  client = defaultClient,
+): Promise<StandardContractSyncResult> {
   const startedAt = new Date().toISOString();
-  const normalizedBizNo = parseBusinessNumber(params.bizNo);
+  const normalizedBizNos = parseBusinessNumberList(params.bizNo);
   const chunks = splitDateRangeIntoMonths(params.dateFrom, params.dateTo);
   const selectedCategory = selectedCategoryForFilter(params.businessCategory);
   const results: StandardContractSyncResult[] = [];
@@ -121,7 +129,7 @@ export async function syncStandardContractsForBusiness(
       db,
       {
         chunks,
-        normalizedBizNo,
+        normalizedBizNos,
         selectedCategory,
         sourceDataset: PUBLIC_STANDARD_SOURCE_DATASET,
         fetchPage: (chunk, pageNo, numOfRows) => client.fetchStandardContractPage(chunk, pageNo, numOfRows),
@@ -131,7 +139,7 @@ export async function syncStandardContractsForBusiness(
     if (shouldFallbackToContractInfo(primaryResult) && client.fetchContractInfoPage !== undefined) {
       const fallbackResult = await collectRowsForContractInfoFallback(
         chunks,
-        normalizedBizNo,
+        normalizedBizNos,
         params.businessCategory,
         client.fetchContractInfoPage,
         db,
@@ -150,13 +158,21 @@ export async function syncStandardContractsForBusiness(
     client.fetchShoppingMallDeliveryRequestInfoPage !== undefined &&
     client.fetchShoppingMallDeliveryRequestDetailPage !== undefined
   ) {
-    const shoppingResult = await collectShoppingMallThirdPartyRows(
-      db,
-      chunks,
-      normalizedBizNo,
-      client.fetchShoppingMallDeliveryRequestInfoPage,
-      client.fetchShoppingMallDeliveryRequestDetailPage,
-    );
+    const shoppingResults: StandardContractSyncResult[] = [];
+
+    for (const normalizedBizNo of normalizedBizNos) {
+      shoppingResults.push(
+        await collectShoppingMallThirdPartyRows(
+          db,
+          chunks,
+          normalizedBizNo,
+          client.fetchShoppingMallDeliveryRequestInfoPage,
+          client.fetchShoppingMallDeliveryRequestDetailPage,
+        ),
+      );
+    }
+
+    const shoppingResult = combineSyncResults(shoppingResults);
 
     persistSyncResult(db, startedAt, SHOPPING_THIRD_PARTY_SOURCE_DATASET, shoppingResult);
     results.push(shoppingResult);
@@ -188,7 +204,7 @@ function persistSyncResult(
 
 type SourceCollectionParams = {
   chunks: DateChunk[];
-  normalizedBizNo: string;
+  normalizedBizNos: string[];
   selectedCategory: G2bContractBusinessCategory | null;
   sourceDataset: string;
   fetchPage: (chunk: DateChunk, pageNo: number, numOfRows: number) => Promise<StandardContractPage>;
@@ -206,7 +222,7 @@ async function collectRowsForSource(db: Db, params: SourceCollectionParams): Pro
 
 async function collectRowsForContractInfoFallback(
   chunks: DateChunk[],
-  normalizedBizNo: string,
+  normalizedBizNos: string[],
   businessCategory: string | undefined,
   fetchPage: NonNullable<StandardContractSyncClient["fetchContractInfoPage"]>,
   db: Db,
@@ -226,7 +242,7 @@ async function collectRowsForContractInfoFallback(
       chunk,
       {
         chunks,
-        normalizedBizNo,
+        normalizedBizNos,
         selectedCategory: null,
         sourceDataset: CONTRACT_INFO_SOURCE_DATASET,
         fetchPage: (innerChunk, pageNo, numOfRows) => fetchPage(innerChunk, pageNo, numOfRows, category),
@@ -453,11 +469,16 @@ function processPage(
   result.rowsFetched += page.items.length;
 
   for (const item of page.items) {
-    const mapped = mapStandardContractRow(item, source.normalizedBizNo, source.sourceDataset);
+    const mappedRows = source.normalizedBizNos.flatMap((normalizedBizNo) => {
+      const mapped = mapStandardContractRow(item, normalizedBizNo, source.sourceDataset);
+      return mapped.success && rowMatchesSelectedCategory(mapped.row, source.selectedCategory)
+        ? [mapped.row]
+        : [];
+    });
 
-    if (mapped.success && rowMatchesSelectedCategory(mapped.row, source.selectedCategory)) {
-      result.rowsMatched += 1;
-      validRows.push(mapped.row);
+    if (mappedRows.length > 0) {
+      result.rowsMatched += mappedRows.length;
+      validRows.push(...mappedRows);
     } else {
       result.skippedCount += 1;
     }
