@@ -594,7 +594,11 @@ function shouldFallbackToContractInfo(result: StandardContractSyncResult): boole
   return (
     result.pagesFetched === 0 &&
     result.errors.length > 0 &&
-    result.errors.every((error) => error.code === "unauthorized_service_key")
+    result.errors.every(
+      (error) =>
+        error.code === "unauthorized_service_key" ||
+        (error.code === "provider_error" && error.message.includes("status 429")),
+    )
   );
 }
 

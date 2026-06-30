@@ -283,6 +283,39 @@ describe("syncStandardContractsForBusiness", () => {
     }
   });
 
+  it("falls back to approved contract information service when public standard service is rate limited", async () => {
+    const { sqlite, db } = createTempDb();
+    const fetchStandardContractPage = vi.fn(async () => {
+      throw new G2bStandardContractError("provider_error", "G2B API request failed with status 429.");
+    });
+    const fetchContractInfoPage = vi.fn(async (_chunk, pageNo, numOfRows, category) => ({
+      items: category === "goods" ? [providerRow({ cntrctNo: "RATE-LIMIT-FALLBACK" })] : [],
+      totalCount: category === "goods" ? 1 : 0,
+      pageNo,
+      numOfRows,
+    }));
+
+    try {
+      const result = await syncStandardContractsForBusiness(
+        db,
+        { bizNo: BIZ_NO, dateFrom: "2026-01-01", dateTo: "2026-01-31", businessCategory: "all" },
+        {
+          fetchStandardContractPage,
+          fetchContractInfoPage,
+        },
+      );
+
+      expect(result.status).toBe("completed");
+      expect(result.insertedCount).toBe(1);
+      expect(fetchContractInfoPage).toHaveBeenCalled();
+      expect(
+        sqlite.prepare("select contract_no as contractNo from contract_records").get(),
+      ).toEqual({ contractNo: "RATE-LIMIT-FALLBACK" });
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("falls back from a month range-limit error to week chunks", async () => {
     const { sqlite, db } = createTempDb();
     const client = mockClient(async (chunk) => {
