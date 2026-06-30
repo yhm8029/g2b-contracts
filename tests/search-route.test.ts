@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   close: vi.fn(),
   searchContractsByBusinessNumber: vi.fn(),
+  searchContractsByBusinessNumbers: vi.fn(),
   getDatabaseHealth: vi.fn(),
 }));
 
@@ -18,6 +19,7 @@ vi.mock("@/lib/db/init", () => ({
 vi.mock("@/lib/contracts/repository", () => ({
   getDatabaseHealth: mocks.getDatabaseHealth,
   searchContractsByBusinessNumber: mocks.searchContractsByBusinessNumber,
+  searchContractsByBusinessNumbers: mocks.searchContractsByBusinessNumbers,
 }));
 
 describe("GET /api/search", () => {
@@ -26,13 +28,29 @@ describe("GET /api/search", () => {
     vi.resetModules();
     vi.clearAllMocks();
     mocks.searchContractsByBusinessNumber.mockReset();
+    mocks.searchContractsByBusinessNumbers.mockReset();
     mocks.getDatabaseHealth.mockReset();
     mocks.searchContractsByBusinessNumber.mockReturnValue([]);
+    mocks.searchContractsByBusinessNumbers.mockReturnValue([]);
     mocks.getDatabaseHealth.mockReturnValue({ contractCount: 0, latestImportAt: null });
   });
 
+  it("accepts comma separated business numbers and searches them together", async () => {
+    const { GET } = await import("@/app/api/search/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/search?bizNo=123-45-67890%2C2048145651"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.searchContractsByBusinessNumbers).toHaveBeenCalledWith(
+      {},
+      { bizNo: "123-45-67890,2048145651", dateFrom: undefined, dateTo: undefined, businessCategory: undefined },
+    );
+    expect(mocks.searchContractsByBusinessNumber).not.toHaveBeenCalled();
+  });
+
   it("returns generic 500 JSON when repository search fails unexpectedly", async () => {
-    mocks.searchContractsByBusinessNumber.mockImplementation(() => {
+    mocks.searchContractsByBusinessNumbers.mockImplementation(() => {
       throw new Error("SQLITE_CANTOPEN: unable to open C:\\secret\\g2b.sqlite");
     });
 

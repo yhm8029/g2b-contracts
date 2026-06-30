@@ -135,6 +135,10 @@ function categoryLabel(value: string | null | undefined) {
   return categoryLabels.get(value) ?? value;
 }
 
+function businessNumberLabel(row: ContractSearchRow) {
+  return row.bizNoDisplay ?? row.bizNoNormalized;
+}
+
 function requestParamsFromForm(params: SearchFormParams): SearchFormParams {
   return {
     ...params,
@@ -158,6 +162,13 @@ function countMonths(dateFrom: string, dateTo: string) {
   return Math.max(1, toIndex - fromIndex + 1);
 }
 
+function countBusinessNumberInputs(value: string) {
+  return value
+    .split(/[,\r\n]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0).length;
+}
+
 function formatElapsed(seconds: number) {
   if (seconds < 60) {
     return `${seconds}초`;
@@ -168,14 +179,16 @@ function formatElapsed(seconds: number) {
 
 export function buildSyncProgressView(params: SyncProgressParams) {
   const months = countMonths(params.dateFrom, params.dateTo);
+  const businessCount = countBusinessNumberInputs(params.bizNo);
+  const businessScope = businessCount > 1 ? `${businessCount}개 사업자, ` : "";
   const includesShopping =
     params.businessCategory === "all" ||
     params.businessCategory === "" ||
     params.businessCategory === "shopping_third_party";
   const scopeLabel =
     params.businessCategory === "shopping_third_party"
-      ? "3자단가 납품요구 판매 실적 조회"
-      : `${months ?? "선택"}개월 범위 계약정보${includesShopping ? " + 3자단가 납품요구 판매 실적 조회" : ""}`;
+      ? `${businessScope}3자단가 납품요구 판매 실적 조회`
+      : `${businessScope}${months ?? "선택"}개월 범위 계약정보${includesShopping ? " + 3자단가 납품요구 판매 실적 조회" : ""}`;
   const phaseLabel = buildSyncPhaseLabel(params.elapsedSeconds, includesShopping);
 
   return {
@@ -283,6 +296,10 @@ export function localizeClientError(message: string, context: "search" | "sync")
   const knownMessages: Record<string, string> = {
     "Business registration number must contain 10 digits.":
       "사업자등록번호는 숫자 10자리여야 합니다.",
+    "each bizNo must contain 10 digits":
+      "각 사업자등록번호는 숫자 10자리여야 합니다.",
+    "Business registration number list can contain up to 20 entries.":
+      "사업자등록번호는 한 번에 최대 20개까지 입력할 수 있습니다.",
     "Search failed.": "검색에 실패했습니다.",
     "G2B sync failed.": "나라장터 동기화에 실패했습니다.",
     "DATA_GO_KR_SERVICE_KEY is required for G2B sync.":
@@ -528,7 +545,7 @@ export function ContractLookupApp() {
           <input
             value={bizNo}
             onChange={(event) => setBizNo(event.target.value)}
-            placeholder="123-45-67890"
+            placeholder="123-45-67890, 204-81-45651"
           />
         </label>
         <label>
@@ -673,6 +690,7 @@ export function ContractLookupApp() {
             <table>
               <thead>
                 <tr>
+                  <th>사업자등록번호</th>
                   <th>계약</th>
                   <th>공고</th>
                   <th>업무 구분</th>
@@ -694,6 +712,12 @@ export function ContractLookupApp() {
                       key={row.id}
                       onClick={() => setSelectedRow(row)}
                     >
+                      <td>
+                        <div className="stacked-cell">
+                          <span>{businessNumberLabel(row)}</span>
+                          <small>{row.businessName ?? row.businessNameAtContract ?? "-"}</small>
+                        </div>
+                      </td>
                       <td>
                         <button
                           className="row-selector"

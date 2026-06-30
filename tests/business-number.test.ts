@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatBusinessNumber, normalizeBusinessNumber, parseBusinessNumber } from "@/lib/domain/business-number";
+import {
+  formatBusinessNumber,
+  normalizeBusinessNumber,
+  parseBusinessNumber,
+  parseBusinessNumberList,
+} from "@/lib/domain/business-number";
 
 describe("business-number", () => {
   it("normalizes hyphenated input", () => {
@@ -12,5 +17,26 @@ describe("business-number", () => {
 
   it("formats normalized input for display", () => {
     expect(formatBusinessNumber("1234567890")).toBe("123-45-67890");
+  });
+
+  it("parses comma and newline separated business numbers in order", () => {
+    expect(parseBusinessNumberList("123-45-67890, 2048145651\n220-81-92516")).toEqual([
+      "1234567890",
+      "2048145651",
+      "2208192516",
+    ]);
+  });
+
+  it("deduplicates business numbers after normalization while preserving first order", () => {
+    expect(parseBusinessNumberList("2048145651, 204-81-45651, 1234567890")).toEqual([
+      "2048145651",
+      "1234567890",
+    ]);
+  });
+
+  it("rejects more than 20 business numbers", () => {
+    const values = Array.from({ length: 21 }, (_, index) => `${1000000000 + index}`).join(",");
+
+    expect(() => parseBusinessNumberList(values)).toThrow("Business registration number list can contain up to 20 entries.");
   });
 });

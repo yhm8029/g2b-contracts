@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { createDb } from "@/lib/db/client";
 import { initializeSqliteSchema } from "@/lib/db/init";
-import { normalizeBusinessNumber } from "@/lib/domain/business-number";
+import { parseBusinessNumberList } from "@/lib/domain/business-number";
 import { getServiceKey, redactG2bSecrets } from "@/lib/g2b/http";
 import {
   syncStandardContractsForBusiness,
@@ -27,8 +27,8 @@ const requestBodySchema = z
     bizNo: z
       .string()
       .min(1, "bizNo is required")
-      .refine((value) => /^\d{10}$/.test(normalizeBusinessNumber(value)), {
-        message: "bizNo must contain 10 digits",
+      .refine((value) => canParseBusinessNumberList(value), {
+        message: "each bizNo must contain 10 digits",
       }),
     dateFrom: dateSchema,
     dateTo: dateSchema,
@@ -46,6 +46,15 @@ function validationMessage(error: z.ZodError): string {
       return path.length > 0 ? `${path}: ${issue.message}` : issue.message;
     })
     .join("; ");
+}
+
+function canParseBusinessNumberList(value: string): boolean {
+  try {
+    parseBusinessNumberList(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -77,7 +86,9 @@ export async function POST(request: NextRequest) {
     initializeSqliteSchema(connection.sqlite);
 
     const result = sanitizeSyncResult(
-      await syncStandardContractsForBusiness(connection.db, parsed.data),
+      combineSyncResults(
+        await syncBusinessNumbersSequentially(connection.db, parsed.data),
+      ),
     );
 
     if (hasBlockingUnauthorizedServiceKeyError(result)) {
@@ -90,6 +101,70 @@ export async function POST(request: NextRequest) {
   } finally {
     connection?.sqlite.close();
   }
+}
+
+async function syncBusinessNumbersSequentially(
+  db: Parameters<typeof syncStandardContractsForBusiness>[0],
+  params: z.infer<typeof requestBodySchema>,
+): Promise<StandardContractSyncResult[]> {
+  const results: StandardContractSyncResult[] = [];
+
+  for (const bizNo of parseBusinessNumberList(params.bizNo)) {
+    results.push(await syncStandardContractsForBusiness(db, { ...params, bizNo }));
+  }
+
+  return results;
+}
+
+function combineSyncResults(results: StandardContractSyncResult[]): StandardContractSyncResult {
+  const combined = results.reduce<StandardContractSyncResult>(
+    (accumulator, result) => ({
+      status: "completed",
+      chunksAttempted: accumulator.chunksAttempted + result.chunksAttempted,
+      chunksExpanded: accumulator.chunksExpanded + result.chunksExpanded,
+      pagesFetched: accumulator.pagesFetched + result.pagesFetched,
+      rowsFetched: accumulator.rowsFetched + result.rowsFetched,
+      rowsMatched: accumulator.rowsMatched + result.rowsMatched,
+      insertedCount: accumulator.insertedCount + result.insertedCount,
+      updatedCount: accumulator.updatedCount + result.updatedCount,
+      skippedCount: accumulator.skippedCount + result.skippedCount,
+      errorCount: accumulator.errorCount + result.errorCount,
+      errors: [...accumulator.errors, ...result.errors],
+    }),
+    {
+      status: "completed",
+      chunksAttempted: 0,
+      chunksExpanded: 0,
+      pagesFetched: 0,
+      rowsFetched: 0,
+      rowsMatched: 0,
+      insertedCount: 0,
+      updatedCount: 0,
+      skippedCount: 0,
+      errorCount: 0,
+      errors: [],
+    },
+  );
+
+  return {
+    ...combined,
+    status: combinedSyncStatus(results, combined.errorCount),
+  };
+}
+
+function combinedSyncStatus(
+  results: StandardContractSyncResult[],
+  errorCount: number,
+): StandardContractSyncResult["status"] {
+  if (results.length > 0 && results.every((result) => result.status === "failed")) {
+    return "failed";
+  }
+
+  if (errorCount > 0 || results.some((result) => result.status !== "completed")) {
+    return "completed_with_errors";
+  }
+
+  return "completed";
 }
 
 function sanitizeSyncResult(result: StandardContractSyncResult): StandardContractSyncResult {

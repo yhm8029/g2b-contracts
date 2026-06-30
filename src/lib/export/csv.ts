@@ -3,19 +3,21 @@ import type { ContractSearchRow } from "@/lib/contracts/types";
 const utf8Bom = "\ufeff";
 
 const header = [
-  "contract_date",
-  "contract_name",
-  "notice_name",
-  "contract_amount",
-  "demand_agency",
-  "contract_agency",
-  "contract_method",
-  "business_category",
-  "notice_no",
-  "contract_no",
-  "contract_detail_url",
-  "notice_detail_url",
-  "source_status",
+  "사업자등록번호",
+  "업체명",
+  "계약일",
+  "계약명",
+  "공고명",
+  "계약금액",
+  "수요기관",
+  "계약기관",
+  "계약방법",
+  "업무구분",
+  "공고번호",
+  "계약번호",
+  "계약상세URL",
+  "공고상세URL",
+  "데이터상태",
 ];
 
 function csvField(value: number | string | null): string {
@@ -34,6 +36,8 @@ function csvField(value: number | string | null): string {
 export function contractsToCsv(rows: ContractSearchRow[]): string {
   const csvRows = rows.map((row) =>
     [
+      row.bizNoDisplay ?? row.bizNoNormalized,
+      row.businessName,
       row.contractDate,
       row.contractName,
       row.noticeName,

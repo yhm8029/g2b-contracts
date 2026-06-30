@@ -53,8 +53,8 @@ describe("contractsToCsv", () => {
 
     expect(csv).toBe(
       [
-        "\ufeffcontract_date,contract_name,notice_name,contract_amount,demand_agency,contract_agency,contract_method,business_category,notice_no,contract_no,contract_detail_url,notice_detail_url,source_status",
-        "2026-01-15,Sample contract,Sample notice,1000,Demand Agency,Contract Agency,Open bid,goods,20260123456,C-2026-001,https://example.test/contracts/1,https://example.test/notices/1,local_only",
+        "\ufeff사업자등록번호,업체명,계약일,계약명,공고명,계약금액,수요기관,계약기관,계약방법,업무구분,공고번호,계약번호,계약상세URL,공고상세URL,데이터상태",
+        "123-45-67890,Sample Office Co,2026-01-15,Sample contract,Sample notice,1000,Demand Agency,Contract Agency,Open bid,goods,20260123456,C-2026-001,https://example.test/contracts/1,https://example.test/notices/1,local_only",
         "",
       ].join("\n"),
     );

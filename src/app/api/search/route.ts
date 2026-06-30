@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getDatabaseHealth, searchContractsByBusinessNumber } from "@/lib/contracts/repository";
+import { getDatabaseHealth, searchContractsByBusinessNumbers } from "@/lib/contracts/repository";
 import { summarizeContracts } from "@/lib/contracts/summary";
 import type { ContractSearchParams } from "@/lib/contracts/types";
 import { createDb } from "@/lib/db/client";
 import { initializeSqliteSchema } from "@/lib/db/init";
-import { normalizeBusinessNumber } from "@/lib/domain/business-number";
+import { parseBusinessNumberList } from "@/lib/domain/business-number";
 
 export const runtime = "nodejs";
 
@@ -16,8 +16,8 @@ const querySchema = z.object({
   bizNo: z
     .string()
     .min(1, "bizNo is required")
-    .refine((value) => /^\d{10}$/.test(normalizeBusinessNumber(value)), {
-      message: "bizNo must contain 10 digits",
+    .refine((value) => canParseBusinessNumberList(value), {
+      message: "each bizNo must contain 10 digits",
     }),
   dateFrom: dateParamSchema.optional(),
   dateTo: dateParamSchema.optional(),
@@ -51,6 +51,15 @@ function apiHealth() {
   };
 }
 
+function canParseBusinessNumberList(value: string): boolean {
+  try {
+    parseBusinessNumberList(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function GET(request: NextRequest) {
   const parsed = querySchema.safeParse(queryFromRequest(request));
 
@@ -65,7 +74,7 @@ export function GET(request: NextRequest) {
     initializeSqliteSchema(connection.sqlite);
 
     const params: ContractSearchParams = parsed.data;
-    const rows = searchContractsByBusinessNumber(connection.db, params);
+    const rows = searchContractsByBusinessNumbers(connection.db, params);
     const summary = summarizeContracts(rows);
     const health = { ...getDatabaseHealth(connection.db), ...apiHealth() };
 

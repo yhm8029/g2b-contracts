@@ -176,13 +176,141 @@ describe("POST /api/sync", () => {
     expect(mocks.syncStandardContractsForBusiness).toHaveBeenCalledWith(
       {},
       {
-        bizNo: "123-45-67890",
+        bizNo: "1234567890",
         dateFrom: "2026-01-01",
         dateTo: "2026-01-31",
         businessCategory: "goods",
       },
     );
     expect(mocks.close).toHaveBeenCalledOnce();
+  });
+
+  it("syncs comma separated business numbers sequentially and returns combined counts", async () => {
+    vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "TEST_KEY");
+    mocks.syncStandardContractsForBusiness
+      .mockResolvedValueOnce({
+        status: "completed",
+        chunksAttempted: 1,
+        chunksExpanded: 0,
+        pagesFetched: 2,
+        rowsFetched: 10,
+        rowsMatched: 3,
+        insertedCount: 2,
+        updatedCount: 1,
+        skippedCount: 7,
+        errorCount: 0,
+        errors: [],
+      })
+      .mockResolvedValueOnce({
+        status: "completed",
+        chunksAttempted: 1,
+        chunksExpanded: 0,
+        pagesFetched: 1,
+        rowsFetched: 5,
+        rowsMatched: 1,
+        insertedCount: 1,
+        updatedCount: 0,
+        skippedCount: 4,
+        errorCount: 0,
+        errors: [],
+      });
+
+    const { POST } = await import("@/app/api/sync/route");
+    const response = await POST(
+      syncRequest({
+        bizNo: "123-45-67890, 2048145651",
+        dateFrom: "2026-01-01",
+        dateTo: "2026-01-31",
+        businessCategory: "all",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "completed",
+      chunksAttempted: 2,
+      pagesFetched: 3,
+      rowsFetched: 15,
+      rowsMatched: 4,
+      insertedCount: 3,
+      updatedCount: 1,
+      skippedCount: 11,
+      errorCount: 0,
+    });
+    expect(mocks.syncStandardContractsForBusiness).toHaveBeenNthCalledWith(
+      1,
+      {},
+      {
+        bizNo: "1234567890",
+        dateFrom: "2026-01-01",
+        dateTo: "2026-01-31",
+        businessCategory: "all",
+      },
+    );
+    expect(mocks.syncStandardContractsForBusiness).toHaveBeenNthCalledWith(
+      2,
+      {},
+      {
+        bizNo: "2048145651",
+        dateFrom: "2026-01-01",
+        dateTo: "2026-01-31",
+        businessCategory: "all",
+      },
+    );
+  });
+
+  it("returns completed_with_errors when one of multiple business syncs fails", async () => {
+    vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "TEST_KEY");
+    mocks.syncStandardContractsForBusiness
+      .mockResolvedValueOnce({
+        status: "completed",
+        chunksAttempted: 1,
+        chunksExpanded: 0,
+        pagesFetched: 1,
+        rowsFetched: 2,
+        rowsMatched: 1,
+        insertedCount: 1,
+        updatedCount: 0,
+        skippedCount: 1,
+        errorCount: 0,
+        errors: [],
+      })
+      .mockResolvedValueOnce({
+        status: "failed",
+        chunksAttempted: 1,
+        chunksExpanded: 0,
+        pagesFetched: 0,
+        rowsFetched: 0,
+        rowsMatched: 0,
+        insertedCount: 0,
+        updatedCount: 0,
+        skippedCount: 0,
+        errorCount: 1,
+        errors: [{ code: "provider_error", message: "provider failed" }],
+      });
+
+    const { POST } = await import("@/app/api/sync/route");
+    const response = await POST(
+      syncRequest({
+        bizNo: "1234567890,2048145651",
+        dateFrom: "2026-01-01",
+        dateTo: "2026-01-31",
+        businessCategory: "all",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "completed_with_errors",
+      chunksAttempted: 2,
+      pagesFetched: 1,
+      rowsFetched: 2,
+      rowsMatched: 1,
+      insertedCount: 1,
+      skippedCount: 1,
+      errorCount: 1,
+      errors: [{ code: "provider_error", message: "provider failed" }],
+    });
   });
 
   it("returns partial sync results when one source succeeds and another source is unauthorized", async () => {

@@ -8,6 +8,7 @@ import {
   getDatabaseHealth,
   importParsedRows,
   searchContractsByBusinessNumber,
+  searchContractsByBusinessNumbers,
 } from "@/lib/contracts/repository";
 import { createDb } from "@/lib/db/client";
 import { initializeSqliteSchema } from "@/lib/db/init";
@@ -21,6 +22,65 @@ function createTempDb() {
 }
 
 describe("contract repository", () => {
+  it("returns multi-business search results grouped by input order", () => {
+    const { sqlite, db } = createTempDb();
+    const row = (bizNo: string, sourceRowHash: string, contractName: string, contractDate: string): ParsedContractCsvRow => ({
+      sourceDataset: "test",
+      sourceRowHash,
+      bizNoNormalized: bizNo,
+      bizNoDisplay: bizNo,
+      businessName: `Business ${bizNo}`,
+      representativeName: null,
+      address: null,
+      businessCategory: "goods",
+      noticeNo: null,
+      noticeOrder: null,
+      noticeName: null,
+      contractNo: sourceRowHash,
+      unifiedContractNo: null,
+      contractName,
+      contractDate,
+      currentContractAmount: 1_000,
+      totalContractAmount: 1_000,
+      demandAgencyCode: null,
+      demandAgencyName: null,
+      contractAgencyCode: null,
+      contractAgencyName: null,
+      contractMethod: null,
+      winningMethod: null,
+      businessNameAtContract: null,
+      contractDetailUrl: null,
+      noticeDetailUrl: null,
+      rawSourceUrl: null,
+    });
+
+    try {
+      importParsedRows(
+        db,
+        [
+          row("1234567890", "first-old", "First old", "2026-01-01"),
+          row("1234567890", "first-new", "First new", "2026-02-01"),
+          row("2048145651", "second", "Second", "2026-03-01"),
+          row("2208192516", "third", "Third", "2026-04-01"),
+        ],
+        "multi.csv",
+      );
+
+      const rows = searchContractsByBusinessNumbers(db, {
+        bizNo: "123-45-67890, 2048145651, 220-81-92516",
+      });
+
+      expect(rows.map((result) => result.contractName)).toEqual([
+        "First new",
+        "First old",
+        "Second",
+        "Third",
+      ]);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("imports sample contracts, searches, filters, and summarizes idempotently", () => {
     const { sqlite, db } = createTempDb();
     const sourceFileName = "sample-contracts.csv";

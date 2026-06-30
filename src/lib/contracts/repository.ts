@@ -8,7 +8,7 @@ import type {
 } from "@/lib/contracts/types";
 import type { Db } from "@/lib/db/client";
 import { apiEnrichmentLogs, businesses, contractRecords, importRuns } from "@/lib/db/schema";
-import { parseBusinessNumber } from "@/lib/domain/business-number";
+import { parseBusinessNumber, parseBusinessNumberList } from "@/lib/domain/business-number";
 import type { ParsedContractCsvRow } from "@/lib/import/csv";
 
 const LEGACY_SHOPPING_THIRD_PARTY_SOURCE_DATASET = "g2b-shopping-mall-third-party-unit";
@@ -272,6 +272,15 @@ export function searchContractsByBusinessNumber(
     .where(and(...filters))
     .orderBy(desc(contractRecords.contractDate), desc(contractRecords.id))
     .all();
+}
+
+export function searchContractsByBusinessNumbers(
+  db: Db,
+  params: ContractSearchParams,
+): ContractSearchRow[] {
+  return parseBusinessNumberList(params.bizNo).flatMap((bizNo) =>
+    searchContractsByBusinessNumber(db, { ...params, bizNo }),
+  );
 }
 
 export function getDatabaseHealth(db: Db): DatabaseHealth {
