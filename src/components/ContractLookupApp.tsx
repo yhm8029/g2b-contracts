@@ -85,6 +85,26 @@ export function exportHrefForLastSearch(params: SearchFormParams | null, visible
   return `/api/export${queryString.length > 0 ? `?${queryString}` : ""}`;
 }
 
+export function normalizeCompactDateInput(value: string) {
+  return value.replace(/\D/g, "").slice(0, 8);
+}
+
+export function compactDateToIsoDate(value: string) {
+  if (!/^\d{8}$/.test(value)) {
+    return value;
+  }
+
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+}
+
+function requestParamsFromForm(params: SearchFormParams): SearchFormParams {
+  return {
+    ...params,
+    dateFrom: compactDateToIsoDate(params.dateFrom),
+    dateTo: compactDateToIsoDate(params.dateTo),
+  };
+}
+
 function formatCurrency(value: number | null | undefined) {
   if (value === null || value === undefined) {
     return "-";
@@ -246,7 +266,7 @@ export function ContractLookupApp() {
     setError(null);
     setStatusMessage(null);
     setHasSearched(true);
-    const submittedParams = { bizNo, dateFrom, dateTo, businessCategory };
+    const submittedParams = requestParamsFromForm({ bizNo, dateFrom, dateTo, businessCategory });
 
     try {
       await runSearch(submittedParams);
@@ -266,7 +286,7 @@ export function ContractLookupApp() {
       return;
     }
 
-    const submittedParams = { bizNo, dateFrom, dateTo, businessCategory };
+    const submittedParams = requestParamsFromForm({ bizNo, dateFrom, dateTo, businessCategory });
     setSyncing(true);
     setError(null);
     setStatusMessage("G2B sync started.");
@@ -336,14 +356,24 @@ export function ContractLookupApp() {
         <label>
           <span>From</span>
           <input
-            type="date"
+            inputMode="numeric"
+            maxLength={8}
+            pattern="\d{8}"
+            placeholder="20250101"
             value={dateFrom}
-            onChange={(event) => setDateFrom(event.target.value)}
+            onChange={(event) => setDateFrom(normalizeCompactDateInput(event.target.value))}
           />
         </label>
         <label>
           <span>To</span>
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+          <input
+            inputMode="numeric"
+            maxLength={8}
+            pattern="\d{8}"
+            placeholder="20251231"
+            value={dateTo}
+            onChange={(event) => setDateTo(normalizeCompactDateInput(event.target.value))}
+          />
         </label>
         <label>
           <span>Category</span>

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   apiStatusLabels,
+  compactDateToIsoDate,
   exportHrefForLastSearch,
+  normalizeCompactDateInput,
   syncStatusMessage,
 } from "@/components/ContractLookupApp";
 
@@ -56,6 +58,20 @@ describe("exportHrefForLastSearch", () => {
     };
 
     expect(exportHrefForLastSearch(lastSearchParams, 0)).toBeNull();
+  });
+});
+
+describe("date input helpers", () => {
+  it("normalizes pasted date text into compact YYYYMMDD display text", () => {
+    expect(normalizeCompactDateInput("2025-01-31")).toBe("20250131");
+    expect(normalizeCompactDateInput("20250131")).toBe("20250131");
+    expect(normalizeCompactDateInput("202501312359")).toBe("20250131");
+  });
+
+  it("converts compact display dates into ISO request dates", () => {
+    expect(compactDateToIsoDate("20250131")).toBe("2025-01-31");
+    expect(compactDateToIsoDate("")).toBe("");
+    expect(compactDateToIsoDate("202501")).toBe("202501");
   });
 });
 
