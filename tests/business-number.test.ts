@@ -35,6 +35,20 @@ describe("business-number", () => {
     ]);
   });
 
+  it("parses slash separated pasted business numbers", () => {
+    expect(parseBusinessNumberList("5028142086/1238180252/1068133832")).toEqual([
+      "5028142086",
+      "1238180252",
+      "1068133832",
+    ]);
+  });
+
+  it("accepts up to 50 business numbers", () => {
+    const values = Array.from({ length: 50 }, (_, index) => `${1000000000 + index}`).join(",");
+
+    expect(parseBusinessNumberList(values)).toHaveLength(50);
+  });
+
   it("deduplicates business numbers after normalization while preserving first order", () => {
     expect(parseBusinessNumberList("2048145651, 204-81-45651, 1234567890")).toEqual([
       "2048145651",
@@ -42,9 +56,9 @@ describe("business-number", () => {
     ]);
   });
 
-  it("rejects more than 20 business numbers", () => {
-    const values = Array.from({ length: 21 }, (_, index) => `${1000000000 + index}`).join(",");
+  it("rejects more than 50 business numbers", () => {
+    const values = Array.from({ length: 51 }, (_, index) => `${1000000000 + index}`).join(",");
 
-    expect(() => parseBusinessNumberList(values)).toThrow("Business registration number list can contain up to 20 entries.");
+    expect(() => parseBusinessNumberList(values)).toThrow("Business registration number list can contain up to 50 entries.");
   });
 });

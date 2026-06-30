@@ -164,7 +164,7 @@ function countMonths(dateFrom: string, dateTo: string) {
 
 function countBusinessNumberInputs(value: string) {
   return value
-    .split(/[,\s]+/)
+    .split(/[,\s/]+/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0).length;
 }
@@ -300,6 +300,8 @@ export function localizeClientError(message: string, context: "search" | "sync")
       "각 사업자등록번호는 숫자 10자리여야 합니다.",
     "Business registration number list can contain up to 20 entries.":
       "사업자등록번호는 한 번에 최대 20개까지 입력할 수 있습니다.",
+    "Business registration number list can contain up to 50 entries.":
+      "사업자등록번호는 한 번에 최대 50개까지 입력할 수 있습니다.",
     "Search failed.": "검색에 실패했습니다.",
     "G2B sync failed.": "나라장터 동기화에 실패했습니다.",
     "DATA_GO_KR_SERVICE_KEY is required for G2B sync.":

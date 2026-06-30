@@ -1,4 +1,4 @@
-const MAX_BUSINESS_NUMBER_LIST_SIZE = 20;
+const MAX_BUSINESS_NUMBER_LIST_SIZE = 50;
 
 export function normalizeBusinessNumber(input: string): string {
   return input.replace(/\D/g, "");
@@ -14,7 +14,7 @@ export function parseBusinessNumber(input: string): string {
 
 export function parseBusinessNumberList(input: string): string[] {
   const parsedValues = input
-    .split(/[,\s]+/)
+    .split(/[,\s/]+/)
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
     .map(parseBusinessNumber);
@@ -26,7 +26,7 @@ export function parseBusinessNumberList(input: string): string[] {
   const uniqueValues = [...new Set(parsedValues)];
 
   if (uniqueValues.length > MAX_BUSINESS_NUMBER_LIST_SIZE) {
-    throw new Error("Business registration number list can contain up to 20 entries.");
+    throw new Error("Business registration number list can contain up to 50 entries.");
   }
 
   return uniqueValues;
