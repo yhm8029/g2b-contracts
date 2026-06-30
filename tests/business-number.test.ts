@@ -27,6 +27,14 @@ describe("business-number", () => {
     ]);
   });
 
+  it("parses whitespace separated business numbers from pasted single-line input", () => {
+    expect(parseBusinessNumberList("5028142086 1238180252 1068133832")).toEqual([
+      "5028142086",
+      "1238180252",
+      "1068133832",
+    ]);
+  });
+
   it("deduplicates business numbers after normalization while preserving first order", () => {
     expect(parseBusinessNumberList("2048145651, 204-81-45651, 1234567890")).toEqual([
       "2048145651",

@@ -29,6 +29,7 @@ body {
 
 button,
 input,
+textarea,
 select {
   font: inherit;
 }
@@ -178,6 +179,7 @@ label span {
 }
 
 input,
+textarea,
 select {
   background: #ffffff;
   border: 1px solid var(--border-strong);
@@ -188,6 +190,11 @@ select {
   outline: none;
   padding: 8px 10px;
   width: 100%;
+}
+
+textarea {
+  line-height: 1.35;
+  resize: vertical;
 }
 
 select {
@@ -206,6 +213,7 @@ select {
 }
 
 input:focus,
+textarea:focus,
 select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(20, 92, 158, 0.13);

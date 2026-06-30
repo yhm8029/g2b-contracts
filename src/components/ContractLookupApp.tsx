@@ -164,7 +164,7 @@ function countMonths(dateFrom: string, dateTo: string) {
 
 function countBusinessNumberInputs(value: string) {
   return value
-    .split(/[,\r\n]+/)
+    .split(/[,\s]+/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0).length;
 }
@@ -542,10 +542,11 @@ export function ContractLookupApp() {
       <form className="search-panel" onSubmit={handleSearch}>
         <label>
           <span>사업자등록번호</span>
-          <input
+          <textarea
             value={bizNo}
             onChange={(event) => setBizNo(event.target.value)}
             placeholder="123-45-67890, 204-81-45651"
+            rows={3}
           />
         </label>
         <label>

@@ -14,7 +14,7 @@ export function parseBusinessNumber(input: string): string {
 
 export function parseBusinessNumberList(input: string): string[] {
   const parsedValues = input
-    .split(/[,\r\n]+/)
+    .split(/[,\s]+/)
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
     .map(parseBusinessNumber);
