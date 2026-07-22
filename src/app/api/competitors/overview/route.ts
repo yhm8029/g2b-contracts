@@ -8,18 +8,19 @@ import {
   CompetitorContractUpstreamError,
   resolveCompetitorContractServiceKey,
 } from "@/lib/competitors/contracts";
+import { parseCompetitorSalesPeriodQuery } from "@/lib/competitors/period-query";
 import { getCompetitorSalesOverview } from "@/lib/competitors/service";
-import { resolveCompetitorSalesPeriod } from "@/lib/competitors/overview";
 import type { CompetitorSalesPeriodQuery } from "@/lib/competitors/types";
 
 export const runtime = "nodejs";
 
-const ALLOWED_QUERY_KEYS = new Set(["period", "year", "month", "quarter", "cacheOnly"]);
 const inFlightOverviews = new Map<string, ReturnType<typeof getCompetitorSalesOverview>>();
 const INVALID_PERIOD = { error: "조회 기간이 올바르지 않습니다." };
 
 export async function GET(request: NextRequest) {
-  const query = parseQuery(request.nextUrl.searchParams, new Date());
+  const query = parseCompetitorSalesPeriodQuery(request.nextUrl.searchParams, {
+    extraAllowedKeys: ["cacheOnly"],
+  });
   const cacheOnly = parseCacheOnly(request.nextUrl.searchParams);
   if (query === null || cacheOnly === null) return NextResponse.json(INVALID_PERIOD, { status: 400 });
 
@@ -134,49 +135,9 @@ function createAbortError() {
   return new DOMException("The request was aborted", "AbortError");
 }
 
-function parseQuery(params: URLSearchParams, now: Date): CompetitorSalesPeriodQuery | null {
-  if ([...params.keys()].some((key) => !ALLOWED_QUERY_KEYS.has(key))) return null;
-  if ([...ALLOWED_QUERY_KEYS].some((key) => params.getAll(key).length > 1)) return null;
-
-  const period = params.get("period");
-  const year = parseInteger(params.get("year"));
-  const month = parseInteger(params.get("month"));
-  const quarter = parseInteger(params.get("quarter"));
-  const hasMonth = params.has("month");
-  const hasQuarter = params.has("quarter");
-  if (period === null || year === null || year < 2004 || year > seoulYear(now)) return null;
-
-  let query: CompetitorSalesPeriodQuery | null = null;
-  if (period === "month" && hasMonth && !hasQuarter && month !== null && month >= 1 && month <= 12) {
-    query = { period, year, month };
-  }
-  if (period === "quarter" && hasQuarter && !hasMonth && quarter !== null && quarter >= 1 && quarter <= 4) {
-    query = { period, year, quarter };
-  }
-  if (period === "year" && !hasMonth && !hasQuarter) query = { period, year };
-  if (query === null) return null;
-  try {
-    resolveCompetitorSalesPeriod(query, now);
-    return query;
-  } catch {
-    return null;
-  }
-}
-
 function parseCacheOnly(params: URLSearchParams) {
   if (!params.has("cacheOnly")) return false;
   return params.get("cacheOnly") === "1" ? true : null;
-}
-
-function parseInteger(value: string | null) {
-  if (value === null) return null;
-  if (!/^\d+$/.test(value)) return null;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) ? parsed : null;
-}
-
-function seoulYear(now: Date) {
-  return Number(new Intl.DateTimeFormat("en", { timeZone: "Asia/Seoul", year: "numeric" }).format(now));
 }
 
 function isAbortError(error: unknown) {

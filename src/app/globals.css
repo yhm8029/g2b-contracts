@@ -884,6 +884,40 @@ tbody tr.selected {
   width: auto;
 }
 
+.competitor-sales-export {
+  align-items: center;
+  appearance: none;
+  background: #ffffff;
+  border: 1px solid #abbacd;
+  border-radius: 5px;
+  color: #29425f;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 800;
+  gap: 5px;
+  justify-content: center;
+  min-height: 28px;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.competitor-sales-export:hover {
+  background: #f5f8fb;
+  border-color: #8ea3bb;
+}
+
+.competitor-sales-export.is-disabled {
+  color: #78899b;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.competitor-sales-export.is-disabled:hover {
+  background: #ffffff;
+  border-color: #abbacd;
+}
+
 .competitor-sales-loading,
 .competitor-sales-error {
   align-items: center;
@@ -980,7 +1014,8 @@ tbody tr.selected {
 }
 
 .competitor-sales-company-toggle:focus-visible,
-.competitor-sales-segmented button:focus-visible {
+.competitor-sales-segmented button:focus-visible,
+.competitor-sales-export:focus-visible {
   outline: 3px solid rgba(20, 92, 158, 0.28);
   outline-offset: -3px;
 }
@@ -1105,6 +1140,10 @@ tbody tr.selected {
 
   .competitor-sales-controls {
     justify-content: flex-start;
+  }
+
+  .competitor-sales-export {
+    max-width: 100%;
   }
 
   .competitor-sales-summary {

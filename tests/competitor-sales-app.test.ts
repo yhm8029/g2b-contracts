@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { CompetitorSalesPeriod } from "@/lib/competitors/types";
 
 import {
+  buildCompetitorExportUrl,
   buildOverviewQuery,
+  canExportCompetitorOverview,
   cacheCollectionStatus,
   formatCompetitorAmount,
   getAvailableMonths,
@@ -82,6 +84,55 @@ describe("competitor sales period selection", () => {
     expect(
       periodContext({ period: "month", year: 2026, month: 7 }, stalePeriod),
     ).toBe("2026년 7월 조달우수 지정 업체의 계약을 집계합니다.");
+  });
+});
+
+describe("competitor sales Excel export", () => {
+  it("builds the export URL from the active period without cache-only query flags", () => {
+    expect(buildCompetitorExportUrl({ period: "quarter", year: 2025, quarter: 3 })).toBe(
+      "/api/competitors/export?period=quarter&year=2025&quarter=3",
+    );
+  });
+
+  it("enables export only for a ready, complete, and fresh overview", () => {
+    const readyOverview = {
+      coverage: { complete: true, fresh: true, missingRanges: [] },
+      period: { period: "month" as const, year: 2026, month: 7, quarter: null },
+    };
+    const selection = { period: "month" as const, year: 2026, month: 7 };
+
+    expect(canExportCompetitorOverview(readyOverview, false, selection)).toBe(true);
+    expect(canExportCompetitorOverview(readyOverview, true, selection)).toBe(false);
+    expect(canExportCompetitorOverview({
+      coverage: { complete: false, fresh: false, missingRanges: [{ dateFrom: "2026-01-01", dateTo: "2026-06-30" }] },
+      period: readyOverview.period,
+    }, false, selection)).toBe(false);
+    expect(canExportCompetitorOverview({
+      coverage: { complete: true, fresh: false, missingRanges: [] },
+      period: readyOverview.period,
+    }, false, selection)).toBe(false);
+    expect(canExportCompetitorOverview(null, false, selection)).toBe(false);
+  });
+
+  it("does not enable export when a monthly overview belongs to the previous selection", () => {
+    expect(canExportCompetitorOverview({
+      coverage: { complete: true, fresh: true, missingRanges: [] },
+      period: { period: "month", year: 2026, month: 6, quarter: null },
+    }, false, { period: "month", year: 2026, month: 7 })).toBe(false);
+  });
+
+  it("does not enable export when a quarterly overview belongs to the previous selection", () => {
+    expect(canExportCompetitorOverview({
+      coverage: { complete: true, fresh: true, missingRanges: [] },
+      period: { period: "quarter", year: 2026, month: null, quarter: 2 },
+    }, false, { period: "quarter", year: 2026, quarter: 3 })).toBe(false);
+  });
+
+  it("does not enable export when a yearly overview belongs to the previous selection", () => {
+    expect(canExportCompetitorOverview({
+      coverage: { complete: true, fresh: true, missingRanges: [] },
+      period: { period: "year", year: 2025, month: null, quarter: null },
+    }, false, { period: "year", year: 2026 })).toBe(false);
   });
 });
 

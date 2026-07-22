@@ -38,6 +38,30 @@ describe("competitor sales loading state", () => {
   });
 });
 
+describe("competitor sales Excel export control", () => {
+  it("renders an active export as a link and an incomplete export as a focusable disabled button", () => {
+    expect(componentSource).toContain('import { ChevronDown, Download, ExternalLink, LoaderCircle } from "lucide-react";');
+    expect(componentSource).toContain("const exportHref = canExportCompetitorOverview(overview, isLoading, selection)");
+    expect(componentSource).toContain("buildCompetitorExportUrl(selection)");
+    expect(componentSource).toMatch(/exportHref \? \([\s\S]*?<a[\s\S]*?href=\{exportHref\}[\s\S]*?aria-label=\{exportLabel\}[\s\S]*?title=\{exportLabel\}/);
+    expect(componentSource).toMatch(/: \([\s\S]*?<button[\s\S]*?aria-disabled="true"[\s\S]*?aria-label=\{exportLabel\}[\s\S]*?title=\{exportLabel\}[\s\S]*?type="button"/);
+    expect(componentSource).not.toMatch(/<button[\s\S]*?\sdisabled(?:=|\s|>)/);
+  });
+
+  it("explains why the disabled export command cannot be used", () => {
+    expect(componentSource).toContain(
+      'const exportLabel = exportHref ? "엑셀 내보내기" : "전체 집계 완료 후 엑셀을 내보낼 수 있습니다.";',
+    );
+    expect(componentSource).toMatch(/<a[\s\S]*?aria-label=\{exportLabel\}[\s\S]*?title=\{exportLabel\}/);
+  });
+
+  it("keeps the export command compact and non-overflowing on mobile", () => {
+    expect(cssSource).toMatch(/\.competitor-sales-export\s*\{[\s\S]*?appearance:\s*none[\s\S]*?font:\s*inherit[\s\S]*?min-height:\s*28px/);
+    const mobileRules = cssSource.slice(cssSource.indexOf("@media (max-width: 720px)"));
+    expect(mobileRules).toMatch(/\.competitor-sales-export\s*\{[\s\S]*?max-width:\s*100%/);
+  });
+});
+
 describe("competitor sales mobile layout", () => {
   it("keeps every company metric visible without page-level horizontal overflow", () => {
     const mobileRules = cssSource.slice(cssSource.indexOf("@media (max-width: 720px)"));

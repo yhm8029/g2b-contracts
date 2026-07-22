@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ExternalLink, LoaderCircle } from "lucide-react";
+import { ChevronDown, Download, ExternalLink, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
@@ -23,6 +23,9 @@ type AmountCompany = {
   collectionStatus: SalesCompany["collectionStatus"];
   contracts: Array<{ amountAttribution?: "full-contract" | "supplier-reported" | "supplier-rate" | "equal-share" }>;
   totalAmount: number | null;
+};
+type ExportableCompetitorOverview = Pick<CompetitorSalesOverviewResponse, "coverage"> & {
+  period: Pick<CompetitorSalesOverview["period"], "period" | "year" | "month" | "quarter">;
 };
 
 const periodUnits: Array<{ label: string; value: PeriodUnit }> = [
@@ -82,6 +85,27 @@ export function buildOverviewQuery(
   if (selection.period === "quarter") params.set("quarter", String(selection.quarter));
   if (options.cacheOnly) params.set("cacheOnly", "1");
   return params.toString();
+}
+
+export function buildCompetitorExportUrl(selection: PeriodSelection) {
+  return `/api/competitors/export?${buildOverviewQuery(selection)}`;
+}
+
+export function canExportCompetitorOverview(
+  overview: ExportableCompetitorOverview | null,
+  isLoading: boolean,
+  selection: PeriodSelection,
+) {
+  return Boolean(
+    overview
+    && !isLoading
+    && overview.coverage.complete
+    && overview.coverage.fresh
+    && overview.period.period === selection.period
+    && overview.period.year === selection.year
+    && overview.period.month === (selection.period === "month" ? selection.month : null)
+    && overview.period.quarter === (selection.period === "quarter" ? selection.quarter : null),
+  );
 }
 
 export function cacheCollectionStatus(coverage?: CompetitorSalesOverviewResponse["coverage"]) {
@@ -177,6 +201,10 @@ export function CompetitorSalesApp() {
   const cacheStatus = cacheCollectionStatus(overview?.coverage);
   const partialCache = cacheStatus.isPartial;
   const loadingMessage = cacheStatus.message ?? "조회 중입니다.";
+  const exportHref = canExportCompetitorOverview(overview, isLoading, selection)
+    ? buildCompetitorExportUrl(selection)
+    : null;
+  const exportLabel = exportHref ? "엑셀 내보내기" : "전체 집계 완료 후 엑셀을 내보낼 수 있습니다.";
 
   function updateSelection(next: PeriodSelection) {
     setSelection(next);
@@ -249,6 +277,28 @@ export function CompetitorSalesApp() {
                 </select>
               </label>
             ) : null}
+            {exportHref ? (
+              <a
+                aria-label={exportLabel}
+                className="competitor-sales-export"
+                href={exportHref}
+                title={exportLabel}
+              >
+                <Download aria-hidden="true" size={15} />
+                엑셀 내보내기
+              </a>
+            ) : (
+              <button
+                aria-disabled="true"
+                aria-label={exportLabel}
+                className="competitor-sales-export is-disabled"
+                title={exportLabel}
+                type="button"
+              >
+                <Download aria-hidden="true" size={15} />
+                엑셀 내보내기
+              </button>
+            )}
           </div>
         </div>
 
