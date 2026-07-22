@@ -38,6 +38,8 @@ describe("initializeSqliteSchema", () => {
     expect(tables.map((row) => row.name)).toEqual([
       "api_enrichment_logs",
       "businesses",
+      "competitor_contract_interval_cache",
+      "competitor_contract_query_cache",
       "contract_records",
       "import_runs",
       "shopping_mall_delivery_request_info_cache",
@@ -51,6 +53,9 @@ describe("initializeSqliteSchema", () => {
       expect.arrayContaining([
         "businesses_biz_no_unique",
         "businesses_business_name_idx",
+        "competitor_contract_query_cache_expiry_idx",
+        "competitor_contract_interval_cache_lookup_idx",
+        "competitor_contract_interval_cache_expiry_idx",
         "contract_records_biz_no_idx",
         "contract_records_contract_date_idx",
         "contract_records_notice_no_idx",

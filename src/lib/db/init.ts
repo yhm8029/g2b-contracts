@@ -129,5 +129,33 @@ export function initializeSqliteSchema(db: Database.Database): void {
       ON shopping_mall_delivery_request_info_cache (date_from, date_to, corp_bizno);
     CREATE UNIQUE INDEX IF NOT EXISTS shopping_delivery_cache_request_unique
       ON shopping_mall_delivery_request_info_cache (date_from, date_to, source_row_hash);
+
+    CREATE TABLE IF NOT EXISTS competitor_contract_query_cache (
+      biz_no_normalized TEXT NOT NULL,
+      date_from TEXT NOT NULL,
+      date_to TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      cached_at_ms INTEGER NOT NULL,
+      result_version TEXT NOT NULL,
+      PRIMARY KEY (biz_no_normalized, date_from, date_to)
+    );
+
+    CREATE INDEX IF NOT EXISTS competitor_contract_query_cache_expiry_idx
+      ON competitor_contract_query_cache (cached_at_ms);
+
+    CREATE TABLE IF NOT EXISTS competitor_contract_interval_cache (
+      biz_no_normalized TEXT NOT NULL,
+      date_from TEXT NOT NULL,
+      date_to TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      cached_at_ms INTEGER NOT NULL,
+      result_version TEXT NOT NULL,
+      PRIMARY KEY (biz_no_normalized, date_from, date_to)
+    );
+
+    CREATE INDEX IF NOT EXISTS competitor_contract_interval_cache_lookup_idx
+      ON competitor_contract_interval_cache (biz_no_normalized, date_from, date_to);
+    CREATE INDEX IF NOT EXISTS competitor_contract_interval_cache_expiry_idx
+      ON competitor_contract_interval_cache (cached_at_ms);
   `);
 }

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const businesses = sqliteTable(
   "businesses",
@@ -132,5 +132,42 @@ export const shoppingMallDeliveryRequestInfoCache = sqliteTable(
     index("shopping_delivery_cache_chunk_idx").on(table.dateFrom, table.dateTo),
     index("shopping_delivery_cache_chunk_biz_idx").on(table.dateFrom, table.dateTo, table.corpBizno),
     uniqueIndex("shopping_delivery_cache_request_unique").on(table.dateFrom, table.dateTo, table.sourceRowHash),
+  ],
+);
+
+export const competitorContractQueryCache = sqliteTable(
+  "competitor_contract_query_cache",
+  {
+    bizNoNormalized: text("biz_no_normalized").notNull(),
+    dateFrom: text("date_from").notNull(),
+    dateTo: text("date_to").notNull(),
+    resultJson: text("result_json").notNull(),
+    cachedAtMs: integer("cached_at_ms").notNull(),
+    resultVersion: text("result_version").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.bizNoNormalized, table.dateFrom, table.dateTo] }),
+    index("competitor_contract_query_cache_expiry_idx").on(table.cachedAtMs),
+  ],
+);
+
+export const competitorContractIntervalCache = sqliteTable(
+  "competitor_contract_interval_cache",
+  {
+    bizNoNormalized: text("biz_no_normalized").notNull(),
+    dateFrom: text("date_from").notNull(),
+    dateTo: text("date_to").notNull(),
+    resultJson: text("result_json").notNull(),
+    cachedAtMs: integer("cached_at_ms").notNull(),
+    resultVersion: text("result_version").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.bizNoNormalized, table.dateFrom, table.dateTo] }),
+    index("competitor_contract_interval_cache_lookup_idx").on(
+      table.bizNoNormalized,
+      table.dateFrom,
+      table.dateTo,
+    ),
+    index("competitor_contract_interval_cache_expiry_idx").on(table.cachedAtMs),
   ],
 );
