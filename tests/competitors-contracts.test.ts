@@ -327,7 +327,10 @@ describe("competitor contract search", () => {
       { serviceKey: "test-key", fetchImpl, queryCache },
     );
 
-    expect(result).toEqual(cachedResult);
+    expect(result).toEqual({
+      ...cachedResult,
+      coverage: { complete: true, fresh: true, missingRanges: [] },
+    });
     expect(queryCache.get).toHaveBeenCalledWith({
       bizNoNormalized: "1234567890",
       dateFrom: "2025-01-01",
@@ -358,8 +361,127 @@ describe("competitor contract search", () => {
 
     expect(result.rows).toHaveLength(1);
     expect(result.fetchedAt).toBe(cachedResult.fetchedAt);
+    expect(result.coverage).toEqual({ complete: true, fresh: true, missingRanges: [] });
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(queryCache.setInterval).not.toHaveBeenCalled();
+  });
+
+  it("returns stale stored interval rows immediately in cache-only mode without fetching or exact caching", async () => {
+    const cachedResult = {
+      fetchedAt: "2026-07-20T00:00:00.000Z",
+      rows: [mappedContractRow({ contractDate: "2025-01-03", contractNo: "STALE-1" })],
+      summary: { contractCount: 1, totalAmount: 1_001, noticeLinkedCount: 1, latestContractDate: "2025-01-03" },
+    };
+    const queryCache = {
+      get: vi.fn(() => null),
+      getStored: vi.fn(() => null),
+      set: vi.fn(),
+      getFreshIntervals: vi.fn(() => []),
+      getStoredIntervals: vi.fn(() => [{
+        dateFrom: "2025-01-01",
+        dateTo: "2025-01-07",
+        result: cachedResult,
+        fresh: false,
+      }]),
+      setInterval: vi.fn(),
+    };
+    const fetchImpl = vi.fn();
+
+    const result = await searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-14" },
+      { serviceKey: "", fetchImpl, queryCache, cacheOnly: true },
+    );
+
+    expect(result.rows.map((row) => row.contractNo)).toEqual(["STALE-1"]);
+    expect(result.coverage).toEqual({
+      complete: false,
+      fresh: false,
+      missingRanges: [{ dateFrom: "2025-01-08", dateTo: "2025-01-14" }],
+    });
+    expect(queryCache.getStored).toHaveBeenCalledOnce();
+    expect(queryCache.getFreshIntervals).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(queryCache.set).not.toHaveBeenCalled();
+    expect(queryCache.setInterval).not.toHaveBeenCalled();
+  });
+
+  it("returns a stale exact cache hit as complete in cache-only mode", async () => {
+    const cachedResult = {
+      fetchedAt: "2026-07-20T00:00:00.000Z",
+      rows: [mappedContractRow({ contractDate: "2025-01-03", contractNo: "EXACT-STALE" })],
+      summary: { contractCount: 1, totalAmount: 1_001, noticeLinkedCount: 1, latestContractDate: "2025-01-03" },
+    };
+    const queryCache = {
+      get: vi.fn(() => null),
+      getStored: vi.fn(() => ({ result: cachedResult, fresh: false })),
+      set: vi.fn(),
+      getStoredIntervals: vi.fn(() => []),
+    };
+    const fetchImpl = vi.fn();
+
+    const result = await searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-07" },
+      { serviceKey: "", fetchImpl, queryCache, cacheOnly: true },
+    );
+
+    expect(result.rows.map((row) => row.contractNo)).toEqual(["EXACT-STALE"]);
+    expect(result.coverage).toEqual({ complete: true, fresh: false, missingRanges: [] });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(queryCache.set).not.toHaveBeenCalled();
+  });
+
+  it("marks fully covered stale intervals complete but not fresh in cache-only mode", async () => {
+    const cachedResult = {
+      rows: [mappedContractRow({ contractDate: "2025-01-03", contractNo: "STALE-INTERVAL" })],
+      summary: { contractCount: 1, totalAmount: 1_001, noticeLinkedCount: 1, latestContractDate: "2025-01-03" },
+    };
+    const queryCache = {
+      get: vi.fn(() => null),
+      getStored: vi.fn(() => null),
+      set: vi.fn(),
+      getStoredIntervals: vi.fn(() => [{
+        dateFrom: "2025-01-01",
+        dateTo: "2025-01-07",
+        result: cachedResult,
+        fresh: false,
+      }]),
+    };
+
+    const result = await searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-07" },
+      { serviceKey: "", fetchImpl: vi.fn(), queryCache, cacheOnly: true },
+    );
+
+    expect(result.coverage).toEqual({ complete: true, fresh: false, missingRanges: [] });
+    expect(queryCache.set).not.toHaveBeenCalled();
+  });
+
+  it("prefers complete fresh interval coverage over overlapping stale intervals in cache-only mode", async () => {
+    const staleResult = {
+      rows: [mappedContractRow({ contractDate: "2025-01-03", contractNo: "OUTDATED" })],
+      summary: { contractCount: 1, totalAmount: 1_001, noticeLinkedCount: 1, latestContractDate: "2025-01-03" },
+    };
+    const freshResult = {
+      rows: [],
+      summary: { contractCount: 0, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: null },
+    };
+    const queryCache = {
+      get: vi.fn(() => null),
+      getStored: vi.fn(() => null),
+      set: vi.fn(),
+      getStoredIntervals: vi.fn(() => [
+        { dateFrom: "2025-01-01", dateTo: "2025-01-07", result: staleResult, fresh: false },
+        { dateFrom: "2025-01-01", dateTo: "2025-01-07", result: freshResult, fresh: true },
+      ]),
+    };
+
+    const result = await searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-07" },
+      { serviceKey: "", fetchImpl: vi.fn(), queryCache, cacheOnly: true },
+    );
+
+    expect(result.rows).toEqual([]);
+    expect(result.coverage).toEqual({ complete: true, fresh: true, missingRanges: [] });
   });
 
   it("fetches only dates missing from fresh interval coverage", async () => {

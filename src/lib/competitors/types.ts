@@ -1,5 +1,7 @@
 export type {
+  CompetitorContractCoverage,
   CompetitorContractRow,
+  CompetitorContractSearchResponse,
   CompetitorContractSearchResult,
 } from "./contracts";
 export type {
@@ -9,3 +11,10 @@ export type {
   CompetitorSalesRegistryItem,
   CompetitorSalesRelatedContract,
 } from "./overview";
+
+import type { CompetitorContractCoverage } from "./contracts";
+import type { CompetitorSalesOverview } from "./overview";
+
+export type CompetitorSalesOverviewResponse = CompetitorSalesOverview & {
+  coverage: CompetitorContractCoverage;
+};

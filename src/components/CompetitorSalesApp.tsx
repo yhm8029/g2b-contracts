@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   CompetitorSalesOverview,
+  CompetitorSalesOverviewResponse,
   CompetitorSalesPeriodQuery,
 } from "@/lib/competitors/types";
 
@@ -16,7 +17,7 @@ type PeriodSelection =
   | { period: "month"; year: number; month: number }
   | { period: "quarter"; year: number; quarter: number }
   | { period: "year"; year: number };
-type SalesCompany = CompetitorSalesOverview["companies"][number];
+type SalesCompany = CompetitorSalesOverviewResponse["companies"][number];
 type SortableCompany = Pick<SalesCompany, "competitorId" | "displayOrder" | "totalAmount">;
 type AmountCompany = {
   collectionStatus: SalesCompany["collectionStatus"];
@@ -72,11 +73,29 @@ export function switchPeriodSelection(
   return { period, year: selection.year };
 }
 
-export function buildOverviewQuery(selection: PeriodSelection) {
+export function buildOverviewQuery(
+  selection: PeriodSelection,
+  options: { cacheOnly?: boolean } = {},
+) {
   const params = new URLSearchParams({ period: selection.period, year: String(selection.year) });
   if (selection.period === "month") params.set("month", String(selection.month));
   if (selection.period === "quarter") params.set("quarter", String(selection.quarter));
+  if (options.cacheOnly) params.set("cacheOnly", "1");
   return params.toString();
+}
+
+export function cacheCollectionStatus(coverage?: CompetitorSalesOverviewResponse["coverage"]) {
+  if (!coverage || (coverage.complete && coverage.fresh)) return { isPartial: false, message: null };
+  if (coverage.complete) {
+    return {
+      isPartial: false,
+      message: "저장된 전체 결과를 표시하고 최신 데이터를 확인 중입니다.",
+    };
+  }
+  return {
+    isPartial: true,
+    message: "저장된 결과를 먼저 표시하고 누락 기간을 조회 중입니다.",
+  };
 }
 
 export function sortCompaniesBySales<T extends SortableCompany>(companies: T[]) {
@@ -100,7 +119,7 @@ export function formatCompetitorAmount(company: AmountCompany) {
 export function CompetitorSalesApp() {
   const current = useRef(getSeoulYearMonth(new Date())).current;
   const [selection, setSelection] = useState<PeriodSelection>(() => getSeoulPeriodSelection());
-  const [overview, setOverview] = useState<CompetitorSalesOverview | null>(null);
+  const [overview, setOverview] = useState<CompetitorSalesOverviewResponse | null>(null);
   const [openCompanyId, setOpenCompanyId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -115,19 +134,32 @@ export function CompetitorSalesApp() {
     setOverview(null);
     setOpenCompanyId(null);
 
-    void loadOverview(selection, controller.signal)
-      .then((nextOverview) => {
+    void (async () => {
+      try {
+        const cachedOverview = await loadOverview(selection, controller.signal, { cacheOnly: true });
         if (sequence !== requestSequence.current) return;
-        setOverview(nextOverview);
+
+        if (hasCachedOverviewData(cachedOverview)) {
+          setOverview(cachedOverview);
+          setOpenCompanyId(null);
+        }
+
+        if (cachedOverview.coverage.complete && cachedOverview.coverage.fresh) {
+          setIsLoading(false);
+          return;
+        }
+
+        const completeOverview = await loadOverview(selection, controller.signal);
+        if (sequence !== requestSequence.current) return;
+        setOverview(completeOverview);
         setOpenCompanyId(null);
-      })
-      .catch((caught: unknown) => {
+      } catch (caught: unknown) {
         if (isAbortError(caught) || sequence !== requestSequence.current) return;
         setError(caught instanceof Error ? caught.message : "경쟁사 영업 성과를 불러오지 못했습니다.");
-      })
-      .finally(() => {
+      } finally {
         if (sequence === requestSequence.current) setIsLoading(false);
-      });
+      }
+    })();
 
     return () => controller.abort();
   }, [selection]);
@@ -142,6 +174,9 @@ export function CompetitorSalesApp() {
     () => getAvailableQuarters(selection.year),
     [selection.year],
   );
+  const cacheStatus = cacheCollectionStatus(overview?.coverage);
+  const partialCache = cacheStatus.isPartial;
+  const loadingMessage = cacheStatus.message ?? "조회 중입니다.";
 
   function updateSelection(next: PeriodSelection) {
     setSelection(next);
@@ -218,12 +253,12 @@ export function CompetitorSalesApp() {
         </div>
 
         {error ? <p className="competitor-sales-error" role="alert">{error}</p> : null}
-        {isLoading ? <p className="competitor-sales-loading" role="status"><LoaderCircle aria-hidden="true" className="competitor-sales-spin" size={15} />조회 중입니다.</p> : null}
+        {isLoading ? <p className="competitor-sales-loading" role="status"><LoaderCircle aria-hidden="true" className="competitor-sales-spin" size={15} />{loadingMessage}</p> : null}
 
         <section className="competitor-sales-summary" aria-label="전체 계약 요약">
-          <Metric label="전체 계약금액" value={formatOverviewAmount(overview)} />
-          <Metric label="전체 계약건수" value={formatOverviewCount(overview)} />
-          <Metric label="전체 최근 계약일" value={formatOverviewLatestDate(overview)} />
+          <Metric label={partialCache ? "저장된 결과 기준 계약금액" : "전체 계약금액"} value={formatOverviewAmount(overview)} />
+          <Metric label={partialCache ? "저장된 결과 기준 계약건수" : "전체 계약건수"} value={formatOverviewCount(overview)} />
+          <Metric label={partialCache ? "저장된 결과 기준 최근 계약일" : "전체 최근 계약일"} value={formatOverviewLatestDate(overview)} />
         </section>
 
         <section className="competitor-sales-list" aria-label="조달우수제품 지정 업체 22곳">
@@ -326,10 +361,30 @@ function CompanySkeleton({ index }: { index: number }) {
   );
 }
 
-async function loadOverview(selection: PeriodSelection, signal: AbortSignal): Promise<CompetitorSalesOverview> {
+export function hasCachedOverviewData(overview: {
+  coverage: CompetitorSalesOverviewResponse["coverage"];
+  period: Pick<CompetitorSalesOverview["period"], "dateFrom" | "dateTo">;
+  companies: Array<Pick<SalesCompany, "contracts">>;
+}) {
+  if (overview.coverage.complete || overview.companies.some((company) => company.contracts.length > 0)) {
+    return true;
+  }
+
+  const [missingRange] = overview.coverage.missingRanges;
+  const wholePeriodIsMissing = overview.coverage.missingRanges.length === 1
+    && missingRange?.dateFrom === overview.period.dateFrom
+    && missingRange.dateTo === overview.period.dateTo;
+  return !wholePeriodIsMissing;
+}
+
+async function loadOverview(
+  selection: PeriodSelection,
+  signal: AbortSignal,
+  options: { cacheOnly?: boolean } = {},
+): Promise<CompetitorSalesOverviewResponse> {
   let response: Response;
   try {
-    response = await fetch(`/api/competitors/overview?${buildOverviewQuery(selection)}`, {
+    response = await fetch(`/api/competitors/overview?${buildOverviewQuery(selection, options)}`, {
       headers: { accept: "application/json" },
       signal,
     });
@@ -341,7 +396,7 @@ async function loadOverview(selection: PeriodSelection, signal: AbortSignal): Pr
   if (!response.ok) {
     throw new Error(await overviewErrorMessage(response));
   }
-  return response.json() as Promise<CompetitorSalesOverview>;
+  return response.json() as Promise<CompetitorSalesOverviewResponse>;
 }
 
 async function overviewErrorMessage(response: Response) {
@@ -357,18 +412,18 @@ async function overviewErrorMessage(response: Response) {
     : "선택한 기간을 조회할 수 없습니다.";
 }
 
-function formatOverviewAmount(overview: CompetitorSalesOverview | null) {
+function formatOverviewAmount(overview: CompetitorSalesOverviewResponse | null) {
   if (!overview || overview.totalAmount === null) return overview?.status === "failed" ? "조회 실패" : "미집계";
   const estimated = overview.companies.some((company) => company.contracts.some((contract) => contract.amountAttribution === "equal-share"));
   return `${formatWon(overview.totalAmount)}${estimated ? " (추정 포함)" : ""}`;
 }
 
-function formatOverviewCount(overview: CompetitorSalesOverview | null) {
+function formatOverviewCount(overview: CompetitorSalesOverviewResponse | null) {
   if (!overview || overview.totalContractCount === null) return overview?.status === "failed" ? "조회 실패" : "미집계";
   return `${wonFormatter.format(overview.totalContractCount)}건`;
 }
 
-function formatOverviewLatestDate(overview: CompetitorSalesOverview | null) {
+function formatOverviewLatestDate(overview: CompetitorSalesOverviewResponse | null) {
   if (!overview || overview.latestContractDate === null) return overview?.status === "ready" ? "계약 없음" : "미집계";
   return overview.latestContractDate;
 }

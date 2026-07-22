@@ -40,10 +40,11 @@ describe("competitor query SQLite cache", () => {
     cache.set(key, result);
 
     expect(cache.get(key)).toEqual(result);
+    expect(cache.getStored(key)).toEqual({ result, fresh: true });
     expect(sqlite.prepare("SELECT COUNT(*) AS count FROM competitor_contract_query_cache").get()).toEqual({ count: 1 });
   });
 
-  it("expires entries after 24 hours", () => {
+  it("keeps expired entries stored for stale reads while excluding them from fresh reads", () => {
     const sqlite = memoryDb();
     let now = 1_000;
     const cache = new SqliteCompetitorQueryCache(sqlite, { now: () => now });
@@ -55,7 +56,14 @@ describe("competitor query SQLite cache", () => {
     now += DEFAULT_COMPETITOR_QUERY_CACHE_TTL_MS;
 
     expect(cache.get(key)).toBeNull();
-    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM competitor_contract_query_cache").get()).toEqual({ count: 0 });
+    expect(cache.getStored(key)).toEqual({
+      result: {
+        rows: [],
+        summary: { contractCount: 0, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: null },
+      },
+      fresh: false,
+    });
+    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM competitor_contract_query_cache").get()).toEqual({ count: 1 });
   });
 
   it("returns fresh cached intervals intersecting the requested range", () => {
@@ -77,7 +85,7 @@ describe("competitor query SQLite cache", () => {
     ]);
   });
 
-  it("excludes expired intervals so callers can refetch their dates", () => {
+  it("keeps expired intervals stored while excluding them from fresh coverage", () => {
     const sqlite = memoryDb();
     let now = 1_000;
     const cache = new SqliteCompetitorQueryCache(sqlite, { now: () => now });
@@ -89,6 +97,39 @@ describe("competitor query SQLite cache", () => {
     now += DEFAULT_COMPETITOR_QUERY_CACHE_TTL_MS;
 
     expect(cache.getFreshIntervals(key)).toEqual([]);
+    expect(cache.getStoredIntervals(key)).toEqual([{
+      dateFrom: key.dateFrom,
+      dateTo: key.dateTo,
+      fresh: false,
+      result: {
+        rows: [],
+        summary: { contractCount: 0, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: null },
+      },
+    }]);
+    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM competitor_contract_interval_cache").get()).toEqual({ count: 1 });
+  });
+
+  it("removes invalid-version stored entries instead of serving them", () => {
+    const sqlite = memoryDb();
+    const cache = new SqliteCompetitorQueryCache(sqlite, { now: () => 2_000 });
+    const emptyResult = JSON.stringify({
+      rows: [],
+      summary: { contractCount: 0, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: null },
+    });
+    sqlite.prepare(`
+      INSERT INTO competitor_contract_query_cache
+        (biz_no_normalized, date_from, date_to, result_json, cached_at_ms, result_version)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(key.bizNoNormalized, key.dateFrom, key.dateTo, emptyResult, 1_000, "old-version");
+    sqlite.prepare(`
+      INSERT INTO competitor_contract_interval_cache
+        (biz_no_normalized, date_from, date_to, result_json, cached_at_ms, result_version)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(key.bizNoNormalized, key.dateFrom, key.dateTo, emptyResult, 1_000, "old-version");
+
+    expect(cache.getStored(key)).toBeNull();
+    expect(cache.getStoredIntervals(key)).toEqual([]);
+    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM competitor_contract_query_cache").get()).toEqual({ count: 0 });
     expect(sqlite.prepare("SELECT COUNT(*) AS count FROM competitor_contract_interval_cache").get()).toEqual({ count: 0 });
   });
 });

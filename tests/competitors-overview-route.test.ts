@@ -46,6 +46,46 @@ describe("GET /api/competitors/overview", () => {
     expect(mocks.getOverview).not.toHaveBeenCalled();
   });
 
+  it("strictly accepts only cacheOnly=1 and passes cache-only mode to the service", async () => {
+    mocks.getOverview.mockResolvedValue({ status: "ready", companies: [] });
+    vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "test-key");
+    const { GET } = await import("@/app/api/competitors/overview/route");
+
+    const accepted = await GET(new NextRequest(
+      "http://localhost/api/competitors/overview?period=year&year=2026&cacheOnly=1",
+    ));
+    const rejected = await GET(new NextRequest(
+      "http://localhost/api/competitors/overview?period=year&year=2026&cacheOnly=true",
+    ));
+
+    expect(accepted.status).toBe(200);
+    expect(mocks.getOverview).toHaveBeenCalledWith(expect.objectContaining({ cacheOnly: true }));
+    expect(rejected.status).toBe(400);
+    expect(mocks.getOverview).toHaveBeenCalledOnce();
+  });
+
+  it("does not singleflight cache-only and full requests together", async () => {
+    let resolveOverview!: (value: { status: "ready"; companies: [] }) => void;
+    const pending = new Promise<{ status: "ready"; companies: [] }>((resolve) => {
+      resolveOverview = resolve;
+    });
+    mocks.getOverview.mockReturnValue(pending);
+    vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "test-key");
+    const { GET } = await import("@/app/api/competitors/overview/route");
+
+    const cached = GET(new NextRequest(
+      "http://localhost/api/competitors/overview?period=year&year=2026&cacheOnly=1",
+    ));
+    const full = GET(new NextRequest(
+      "http://localhost/api/competitors/overview?period=year&year=2026",
+    ));
+
+    expect(mocks.getOverview).toHaveBeenCalledTimes(2);
+    expect(mocks.createDb).toHaveBeenCalledTimes(2);
+    resolveOverview({ status: "ready", companies: [] });
+    await Promise.all([cached, full]);
+  });
+
   it("rejects present-but-invalid parameters instead of treating them as absent", async () => {
     vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "test-key");
     const { GET } = await import("@/app/api/competitors/overview/route");

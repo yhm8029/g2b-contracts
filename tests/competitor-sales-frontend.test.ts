@@ -24,6 +24,18 @@ describe("competitor sales loading state", () => {
       /\.competitor-sales-skeleton span:last-child\s*{[^}]*width:\s*36px/s,
     );
   });
+
+  it("shows cached results first and fetches the complete result only when cache coverage is incomplete", () => {
+    expect(componentSource).toMatch(
+      /loadOverview\(selection, controller\.signal, \{ cacheOnly: true \}\)[\s\S]*?setOverview\(cachedOverview\)/,
+    );
+    expect(componentSource).toMatch(/if \(cachedOverview\.coverage\.complete && cachedOverview\.coverage\.fresh\) \{/);
+    expect(componentSource).toMatch(
+      /loadOverview\(selection, controller\.signal\)[\s\S]*?setOverview\(completeOverview\)/,
+    );
+    expect(componentSource).toContain("cacheCollectionStatus(overview?.coverage)");
+    expect(componentSource).toContain('label={partialCache ? "저장된 결과 기준 계약금액" : "전체 계약금액"}');
+  });
 });
 
 describe("competitor sales mobile layout", () => {

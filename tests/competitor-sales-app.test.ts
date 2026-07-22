@@ -4,11 +4,13 @@ import type { CompetitorSalesPeriod } from "@/lib/competitors/types";
 
 import {
   buildOverviewQuery,
+  cacheCollectionStatus,
   formatCompetitorAmount,
   getAvailableMonths,
   getAvailableQuarters,
   getSeoulPeriodSelection,
   getSeoulYearOptions,
+  hasCachedOverviewData,
   periodContext,
   sortCompaniesBySales,
   switchPeriodSelection,
@@ -26,6 +28,12 @@ describe("competitor sales period selection", () => {
   it("builds only the selected period fields into the overview query", () => {
     expect(buildOverviewQuery({ period: "quarter", year: 2025, quarter: 3 })).toBe(
       "period=quarter&year=2025&quarter=3",
+    );
+  });
+
+  it("adds cacheOnly to the first-stage overview query", () => {
+    expect(buildOverviewQuery({ period: "year", year: 2026 }, { cacheOnly: true })).toBe(
+      "period=year&year=2026&cacheOnly=1",
     );
   });
 
@@ -74,6 +82,62 @@ describe("competitor sales period selection", () => {
     expect(
       periodContext({ period: "month", year: 2026, month: 7 }, stalePeriod),
     ).toBe("2026년 7월 조달우수 지정 업체의 계약을 집계합니다.");
+  });
+});
+
+describe("competitor sales cache collection status", () => {
+  it("identifies an incomplete cached result and names the missing period collection state", () => {
+    expect(cacheCollectionStatus({
+      complete: false,
+      fresh: false,
+      missingRanges: [{ dateFrom: "2026-01-01", dateTo: "2026-06-30" }],
+    })).toEqual({
+      isPartial: true,
+      message: "저장된 결과를 먼저 표시하고 누락 기간을 조회 중입니다.",
+    });
+  });
+
+  it("does not show a collection state for complete cache coverage", () => {
+    expect(cacheCollectionStatus({ complete: true, fresh: true, missingRanges: [] })).toEqual({
+      isPartial: false,
+      message: null,
+    });
+  });
+
+  it("keeps a complete but stale cache visible while checking for newer data", () => {
+    expect(cacheCollectionStatus({ complete: true, fresh: false, missingRanges: [] })).toEqual({
+      isPartial: false,
+      message: "저장된 전체 결과를 표시하고 최신 데이터를 확인 중입니다.",
+    });
+  });
+});
+
+describe("cached overview visibility", () => {
+  const period = { dateFrom: "2026-01-01", dateTo: "2026-12-31" };
+  const emptyCompanies = [{ contracts: [] }];
+
+  it("keeps skeletons only when the whole requested period is missing from cache", () => {
+    expect(hasCachedOverviewData({
+      coverage: {
+        complete: false,
+        fresh: false,
+        missingRanges: [{ dateFrom: "2026-01-01", dateTo: "2026-12-31" }],
+      },
+      companies: emptyCompanies,
+      period,
+    })).toBe(false);
+  });
+
+  it("shows a cached zero-contract segment while another segment is still missing", () => {
+    expect(hasCachedOverviewData({
+      coverage: {
+        complete: false,
+        fresh: false,
+        missingRanges: [{ dateFrom: "2026-07-01", dateTo: "2026-12-31" }],
+      },
+      companies: emptyCompanies,
+      period,
+    })).toBe(true);
   });
 });
 

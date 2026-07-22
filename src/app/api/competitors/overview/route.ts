@@ -14,18 +14,19 @@ import type { CompetitorSalesPeriodQuery } from "@/lib/competitors/types";
 
 export const runtime = "nodejs";
 
-const ALLOWED_QUERY_KEYS = new Set(["period", "year", "month", "quarter"]);
+const ALLOWED_QUERY_KEYS = new Set(["period", "year", "month", "quarter", "cacheOnly"]);
 const inFlightOverviews = new Map<string, ReturnType<typeof getCompetitorSalesOverview>>();
 const INVALID_PERIOD = { error: "조회 기간이 올바르지 않습니다." };
 
 export async function GET(request: NextRequest) {
   const query = parseQuery(request.nextUrl.searchParams, new Date());
-  if (query === null) return NextResponse.json(INVALID_PERIOD, { status: 400 });
+  const cacheOnly = parseCacheOnly(request.nextUrl.searchParams);
+  if (query === null || cacheOnly === null) return NextResponse.json(INVALID_PERIOD, { status: 400 });
 
   const serviceKey = resolveCompetitorContractServiceKey();
   try {
     const overview = await waitForRequestAbort(
-      getSharedOverview(query, serviceKey),
+      getSharedOverview(query, serviceKey, cacheOnly),
       request.signal,
     );
     return NextResponse.json(overview);
@@ -58,12 +59,13 @@ export async function GET(request: NextRequest) {
 function getSharedOverview(
   query: CompetitorSalesPeriodQuery,
   serviceKey: string,
+  cacheOnly: boolean,
 ) {
-  const key = normalizedQueryKey(query);
+  const key = normalizedQueryKey(query, cacheOnly);
   const existing = inFlightOverviews.get(key);
   if (existing) return existing;
 
-  const shared = loadOverview(query, serviceKey);
+  const shared = loadOverview(query, serviceKey, cacheOnly);
   inFlightOverviews.set(key, shared);
   shared.then(
     () => removeSettledOverview(key, shared),
@@ -72,7 +74,7 @@ function getSharedOverview(
   return shared;
 }
 
-async function loadOverview(query: CompetitorSalesPeriodQuery, serviceKey: string) {
+async function loadOverview(query: CompetitorSalesPeriodQuery, serviceKey: string, cacheOnly: boolean) {
   const connection = createDb();
   try {
     initializeSqliteSchema(connection.sqlite);
@@ -80,6 +82,7 @@ async function loadOverview(query: CompetitorSalesPeriodQuery, serviceKey: strin
       query,
       serviceKey,
       sqlite: connection.sqlite,
+      cacheOnly,
     });
   } finally {
     connection.sqlite.close();
@@ -93,12 +96,13 @@ function removeSettledOverview(
   if (inFlightOverviews.get(key) === shared) inFlightOverviews.delete(key);
 }
 
-function normalizedQueryKey(query: CompetitorSalesPeriodQuery) {
+function normalizedQueryKey(query: CompetitorSalesPeriodQuery, cacheOnly: boolean) {
   return JSON.stringify({
     period: query.period,
     year: query.year,
     month: query.period === "month" ? query.month ?? null : null,
     quarter: query.period === "quarter" ? query.quarter ?? null : null,
+    cacheOnly,
   });
 }
 
@@ -157,6 +161,11 @@ function parseQuery(params: URLSearchParams, now: Date): CompetitorSalesPeriodQu
   } catch {
     return null;
   }
+}
+
+function parseCacheOnly(params: URLSearchParams) {
+  if (!params.has("cacheOnly")) return false;
+  return params.get("cacheOnly") === "1" ? true : null;
 }
 
 function parseInteger(value: string | null) {

@@ -54,6 +54,17 @@ export type CompetitorContractSearchResult = {
     noticeLinkedCount: number;
     latestContractDate: string | null;
   };
+  coverage?: CompetitorContractCoverage;
+};
+
+export type CompetitorContractCoverage = {
+  complete: boolean;
+  fresh: boolean;
+  missingRanges: Array<{ dateFrom: string; dateTo: string }>;
+};
+
+export type CompetitorContractSearchResponse = Omit<CompetitorContractSearchResult, "coverage"> & {
+  coverage: CompetitorContractCoverage;
 };
 
 export type CompetitorContractFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -63,7 +74,11 @@ export type CompetitorContractSearchDeps = {
   serviceKey: string;
   fetchImpl?: CompetitorContractFetch;
   queryCache?: Pick<CompetitorContractQueryCache, "get" | "set">
-    & Partial<Pick<CompetitorContractQueryCache, "getFreshIntervals" | "setInterval">>;
+    & Partial<Pick<
+      CompetitorContractQueryCache,
+      "getStored" | "getFreshIntervals" | "getStoredIntervals" | "setInterval"
+    >>;
+  cacheOnly?: boolean;
   sleep?: CompetitorContractSleep;
   now?: () => Date;
   signal?: AbortSignal;
@@ -110,7 +125,7 @@ const COMPETITOR_CONTRACT_IDENTITY_VERSION = "v1";
 export async function searchCompetitorContracts(
   input: CompetitorContractSearchInput,
   deps: CompetitorContractSearchDeps,
-): Promise<CompetitorContractSearchResult> {
+): Promise<CompetitorContractSearchResponse> {
   const businessNumbers = parseBusinessNumbers(input.bizNo).sort();
   const dateFrom = parseDate(input.dateFrom, "dateFrom");
   const dateTo = parseDate(input.dateTo, "dateTo");
@@ -124,15 +139,26 @@ export async function searchCompetitorContracts(
     dateTo: dateTo.dashed,
   };
   const requested = new Set(businessNumbers);
-  const cached = deps.queryCache?.get(cacheKey);
+  const storedExact = deps.cacheOnly ? deps.queryCache?.getStored?.(cacheKey) : null;
+  const cached = deps.cacheOnly ? storedExact?.result : deps.queryCache?.get(cacheKey);
   if (cached) {
     const normalized = normalizeCachedCompetitorContractSearchResult(cached, requested);
     if (normalized) {
-      return normalized;
+      return {
+        ...normalized,
+        coverage: {
+          complete: true,
+          fresh: deps.cacheOnly ? storedExact?.fresh === true : true,
+          missingRanges: [],
+        },
+      };
     }
   }
 
-  const cachedIntervals = (deps.queryCache?.getFreshIntervals?.(cacheKey) ?? [])
+  const intervalCandidates = deps.cacheOnly
+    ? (deps.queryCache?.getStoredIntervals?.(cacheKey) ?? [])
+    : (deps.queryCache?.getFreshIntervals?.(cacheKey) ?? []).map((interval) => ({ ...interval, fresh: true }));
+  const normalizedIntervals = intervalCandidates
     .flatMap((interval) => {
       if (
         !isDashedCalendarDate(interval.dateFrom)
@@ -144,9 +170,18 @@ export async function searchCompetitorContracts(
       const normalized = normalizeCachedCompetitorContractSearchResult(interval.result, requested);
       return normalized ? [{ ...interval, result: normalized }] : [];
     });
+  const freshMissingRanges = deps.cacheOnly
+    ? findMissingDateRanges(cacheKey, normalizedIntervals.filter((interval) => interval.fresh))
+    : [];
+  const cachedIntervals = deps.cacheOnly
+    ? normalizedIntervals.filter((interval) =>
+      interval.fresh || freshMissingRanges.some((range) => dateRangesIntersect(interval, range)))
+    : normalizedIntervals;
   const missingRanges = findMissingDateRanges(cacheKey, cachedIntervals);
   const cachedRows = cachedIntervals.flatMap((interval) =>
-    interval.result.rows.filter((row) => isRowWithinDateRange(row, cacheKey))
+    interval.result.rows.filter((row) =>
+      isRowWithinDateRange(row, cacheKey)
+      && (interval.fresh || isRowWithinAnyDateRange(row, freshMissingRanges)))
   );
   const fetchedRows: CompetitorContractRow[] = [];
   const fetchedSourceRows: G2bPublicStandardContractProjection[] = [];
@@ -156,6 +191,21 @@ export async function searchCompetitorContracts(
   const fetchedAtValues = cachedIntervals
     .map((interval) => interval.result.fetchedAt)
     .filter((value): value is string => value !== undefined);
+
+  if (deps.cacheOnly) {
+    const rows = finalizeCompetitorContractRows(cachedRows);
+    const fetchedAt = fetchedAtValues.sort().at(-1);
+    return {
+      ...(fetchedAt ? { fetchedAt } : {}),
+      rows,
+      summary: summarizeCompetitorContractRows(rows),
+      coverage: {
+        complete: missingRanges.length === 0,
+        fresh: cachedIntervals.every((interval) => interval.fresh),
+        missingRanges,
+      },
+    };
+  }
 
   if (missingRanges.length > 0) {
     const serviceKey = deps.serviceKey?.trim();
@@ -205,6 +255,7 @@ export async function searchCompetitorContracts(
               fetchedAt,
               rows: intervalRows,
               summary: summarizeCompetitorContractRows(intervalRows),
+              coverage: { complete: true, fresh: true, missingRanges: [] },
             },
           );
         },
@@ -232,10 +283,11 @@ export async function searchCompetitorContracts(
   });
   const rows = finalizeCompetitorContractRows([...survivingCachedRows, ...fetchedRows]);
   const fetchedAt = fetchedAtValues.sort().at(-1);
-  const result: CompetitorContractSearchResult = {
+  const result: CompetitorContractSearchResponse = {
     ...(fetchedAt ? { fetchedAt } : {}),
     rows,
     summary: summarizeCompetitorContractRows(rows),
+    coverage: { complete: true, fresh: true, missingRanges: [] },
   };
   deps.queryCache?.set(cacheKey, result);
   return result;
@@ -386,6 +438,20 @@ function isRowWithinDateRange(
   range: Pick<CompetitorContractQueryCacheKey, "dateFrom" | "dateTo">,
 ) {
   return row.contractDate !== null && row.contractDate >= range.dateFrom && row.contractDate <= range.dateTo;
+}
+
+function isRowWithinAnyDateRange(
+  row: CompetitorContractRow,
+  ranges: readonly Pick<CompetitorContractQueryCacheKey, "dateFrom" | "dateTo">[],
+) {
+  return ranges.some((range) => isRowWithinDateRange(row, range));
+}
+
+function dateRangesIntersect(
+  left: Pick<CompetitorContractQueryCacheKey, "dateFrom" | "dateTo">,
+  right: Pick<CompetitorContractQueryCacheKey, "dateFrom" | "dateTo">,
+) {
+  return left.dateFrom <= right.dateTo && left.dateTo >= right.dateFrom;
 }
 
 type OrderedTaskResult<Output> =
@@ -1157,6 +1223,7 @@ function normalizeCachedCompetitorContractSearchResultUnchecked(
     ...(fetchedAt ? { fetchedAt } : {}),
     rows: normalizedRows,
     summary: summarizeCompetitorContractRows(normalizedRows),
+    coverage: { complete: true, fresh: true, missingRanges: [] },
   };
 }
 
