@@ -104,6 +104,7 @@ const MAX_TOTAL_PAGES = 2_500;
 const REQUEST_CONCURRENCY = 4;
 const MAX_WINDOW_DAYS = 7;
 const TRAILING_DAILY_WINDOW_DAYS = 14;
+const MAX_REQUIRED_EMPTY_PAGE_ATTEMPTS = 3;
 const COMPETITOR_CONTRACT_IDENTITY_VERSION = "v1";
 
 export async function searchCompetitorContracts(
@@ -170,7 +171,6 @@ export async function searchCompetitorContracts(
     for (const missingRange of missingRanges) {
       const missingDateFrom = parseDate(missingRange.dateFrom, "dateFrom");
       const missingDateTo = parseDate(missingRange.dateTo, "dateTo");
-      const knownBeforeFetch = new Set(knownSourceGroupKeys);
       const latestSourceContracts = await fetchLatestRequestedStandardContracts({
         windows: splitInclusiveDateRange(missingDateFrom.date, missingDateTo.date, seoulCalendarDate(now)),
         fetchImpl,
@@ -180,34 +180,45 @@ export async function searchCompetitorContracts(
         pageBudget,
         signal: deps.signal,
         sleep: deps.sleep ?? defaultSleep,
+        onWindowComplete: (window, latestRows, knownGroupKeysBeforeWindow) => {
+          const hasSupplierRemoval = latestSourceRowsRemoveRequestedSupplier(
+            latestRows,
+            knownGroupKeysBeforeWindow,
+            requested,
+          );
+          for (const sourceRow of latestRows) {
+            knownSourceGroupKeys.add(sourceContractGroupKey(sourceRow));
+          }
+          if (hasSupplierRemoval) return;
+          const intervalRows = finalizeCompetitorContractRows(
+            latestRows
+              .flatMap((row) => mapStandardContractRows(row, requested))
+              .filter((row) => requested.has(row.bizNoNormalized)),
+          );
+          deps.queryCache?.setInterval?.(
+            {
+              ...cacheKey,
+              dateFrom: compactDateToDashed(window.dateFrom),
+              dateTo: compactDateToDashed(window.dateTo),
+            },
+            {
+              fetchedAt,
+              rows: intervalRows,
+              summary: summarizeCompetitorContractRows(intervalRows),
+            },
+          );
+        },
       });
       for (const sourceRow of latestSourceContracts) {
         knownSourceGroupKeys.add(sourceContractGroupKey(sourceRow));
         fetchedSourceRows.push(sourceRow);
       }
       throwIfSearchAborted(deps.signal);
-      const intervalRows = finalizeCompetitorContractRows(
+      fetchedRows.push(...finalizeCompetitorContractRows(
         latestSourceContracts
           .flatMap((row) => mapStandardContractRows(row, requested))
           .filter((row) => requested.has(row.bizNoNormalized)),
-      );
-      const intervalResult: CompetitorContractSearchResult = {
-        fetchedAt,
-        rows: intervalRows,
-        summary: summarizeCompetitorContractRows(intervalRows),
-      };
-      const hasSupplierRemoval = latestSourceContracts.some((sourceRow) => {
-        const groupKey = sourceContractGroupKey(sourceRow);
-        return knownBeforeFetch.has(groupKey)
-          && !sourceRow.suppliers.some((supplier) => requested.has(supplier.businessNumber));
-      });
-      if (!hasSupplierRemoval) {
-        deps.queryCache?.setInterval?.(
-          { ...cacheKey, dateFrom: missingRange.dateFrom, dateTo: missingRange.dateTo },
-          intervalResult,
-        );
-      }
-      fetchedRows.push(...intervalRows);
+      ));
     }
   }
 
@@ -334,6 +345,10 @@ function formatDashedDate(date: Date) {
   ].join("-");
 }
 
+function compactDateToDashed(value: string) {
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+}
+
 function shiftDashedDate(value: string, days: number) {
   return formatDashedDate(addUtcDays(new Date(`${value}T00:00:00.000Z`), days));
 }
@@ -421,6 +436,11 @@ async function fetchLatestRequestedStandardContracts(input: {
   pageBudget?: { remaining: number };
   signal?: AbortSignal;
   sleep: CompetitorContractSleep;
+  onWindowComplete?: (
+    window: Pick<StandardContractPage, "dateFrom" | "dateTo">,
+    latestRows: G2bPublicStandardContractProjection[],
+    knownGroupKeysBeforeWindow: ReadonlySet<string>,
+  ) => Promise<void> | void;
 }) {
   const availablePageBudget = input.pageBudget?.remaining ?? MAX_TOTAL_PAGES;
   if (input.windows.length > availablePageBudget) {
@@ -448,18 +468,20 @@ async function fetchLatestRequestedStandardContracts(input: {
       sleep: input.sleep,
     }),
     async (firstPage) => {
+      const knownGroupKeysBeforeWindow = overallCollector.retainedGroupKeys();
       const windowResult = await collectStandardContractWindow({
         firstPage,
         fetchImpl: input.fetchImpl,
         serviceKey: input.serviceKey,
         requested: input.requested,
-        knownGroupKeys: overallCollector.retainedGroupKeys(),
+        knownGroupKeys: knownGroupKeysBeforeWindow,
         signal: input.signal,
         sleep: input.sleep,
         remainingPageBudget: remainingAdditionalPageBudget + 1,
       });
       remainingAdditionalPageBudget -= windowResult.totalPages - 1;
       overallCollector.addMapped(windowResult.latestRows);
+      await input.onWindowComplete?.(firstPage, windowResult.latestRows, knownGroupKeysBeforeWindow);
     },
     input.signal,
   );
@@ -568,23 +590,33 @@ async function fetchStandardContractPage(input: {
   sleep: CompetitorContractSleep;
 }): Promise<StandardContractPage> {
   try {
-    const parsed = await fetchG2bPublicStandardContractPage({
-      dateFrom: input.dateFrom,
-      dateTo: input.dateTo,
-      pageNo: input.pageNo,
-      fetchImpl: input.fetchImpl,
-      serviceKey: input.serviceKey,
-      signal: input.signal,
-      sleep: input.sleep,
-    });
-    return {
-      dateFrom: input.dateFrom,
-      dateTo: input.dateTo,
-      windowIndex: input.windowIndex,
-      pageNo: input.pageNo,
-      totalCount: parsed.totalCount,
-      items: parsed.items,
-    };
+    for (let attempt = 1; attempt <= MAX_REQUIRED_EMPTY_PAGE_ATTEMPTS; attempt += 1) {
+      const parsed = await fetchG2bPublicStandardContractPage({
+        dateFrom: input.dateFrom,
+        dateTo: input.dateTo,
+        pageNo: input.pageNo,
+        fetchImpl: input.fetchImpl,
+        serviceKey: input.serviceKey,
+        signal: input.signal,
+        sleep: input.sleep,
+      });
+      const page = {
+        dateFrom: input.dateFrom,
+        dateTo: input.dateTo,
+        windowIndex: input.windowIndex,
+        pageNo: input.pageNo,
+        totalCount: parsed.totalCount,
+        items: parsed.items,
+      };
+      if (!isRequiredEmptyStandardContractPage(page)) return page;
+      if (attempt === MAX_REQUIRED_EMPTY_PAGE_ATTEMPTS) {
+        throw new CompetitorContractUpstreamError(
+          `G2B contract result returned an empty required page ${page.pageNo}`,
+          "incomplete",
+        );
+      }
+    }
+    throw new CompetitorContractUpstreamError("G2B contract empty-page retry loop exhausted", "incomplete");
   } catch (error) {
     if (input.signal?.aborted) throw input.signal.reason;
     throw normalizeUpstreamError(error);
@@ -611,6 +643,10 @@ function normalizeUpstreamError(error: unknown) {
 
 function defaultSleep(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isRequiredEmptyStandardContractPage(page: Pick<StandardContractPage, "pageNo" | "totalCount" | "items">) {
+  return page.totalCount > 0 && page.items.length === 0 && page.pageNo <= totalPagesForCount(page.totalCount);
 }
 
 function throwIfSearchAborted(signal?: AbortSignal) {
@@ -668,6 +704,7 @@ function createLatestRequestedSourceContractCollector(
 ) {
   const groups = new Map<string, {
     latestRows: G2bPublicStandardContractProjection[];
+    sawRequestedSupplier: boolean;
   }>();
 
   const addMapped = (mappedRows: readonly G2bPublicStandardContractProjection[]) => {
@@ -678,13 +715,11 @@ function createLatestRequestedSourceContractCollector(
       const hasRequestedSupplier = mapped.suppliers.some((supplier) => requested.has(supplier.businessNumber));
       const group = groups.get(key);
       if (!group) {
-        if (!hasRequestedSupplier && !knownGroupKeys.has(key)) {
-          continue;
-        }
-        groups.set(key, { latestRows: [mapped] });
+        groups.set(key, { latestRows: [mapped], sawRequestedSupplier: hasRequestedSupplier });
         continue;
       }
 
+      group.sawRequestedSupplier ||= hasRequestedSupplier;
       const representative = group.latestRows[0]!;
       if (sameSourceContractVersion(mapped, representative)) {
         group.latestRows.push(mapped);
@@ -700,14 +735,22 @@ function createLatestRequestedSourceContractCollector(
     },
     addMapped,
     retainedGroupKeys() {
-      return new Set([...knownGroupKeys, ...groups.keys()]);
+      return new Set([
+        ...knownGroupKeys,
+        ...[...groups.entries()]
+          .filter(([, group]) => group.sawRequestedSupplier)
+          .map(([key]) => key),
+      ]);
     },
     retainedGroupCount() {
-      return groups.size;
+      return [...groups.entries()].filter(([key, group]) =>
+        knownGroupKeys.has(key) || group.sawRequestedSupplier
+      ).length;
     },
     finish() {
       const latest: G2bPublicStandardContractProjection[] = [];
-      for (const group of groups.values()) {
+      for (const [key, group] of groups) {
+        if (!knownGroupKeys.has(key) && !group.sawRequestedSupplier) continue;
         latest.push(...group.latestRows);
       }
       return latest;
@@ -727,8 +770,8 @@ function sourceContractGroupKey(row: G2bPublicStandardContractProjection) {
     row.sourceDataset,
     canonicalIdentifier(row.noticeNo),
     canonicalText(row.contractName),
-    canonicalText(row.demandAgencyCode || row.demandAgencyName),
-    canonicalText(row.contractAgencyCode || row.contractAgencyName),
+    canonicalText(row.demandAgencyName),
+    canonicalText(row.contractAgencyName),
     canonicalText(row.originalContractDate),
   ])}`;
 }
@@ -779,6 +822,24 @@ function sourceProjectionIsNewerThanRow(
   const rowDate = row.contractDate ?? "";
   if (sourceDate !== rowDate) return sourceDate > rowDate;
   return !source.suppliers.some((supplier) => supplier.businessNumber === row.bizNoNormalized);
+}
+
+function latestSourceRowsRemoveRequestedSupplier(
+  rows: readonly G2bPublicStandardContractProjection[],
+  knownGroupKeys: ReadonlySet<string>,
+  requested: ReadonlySet<string>,
+) {
+  const rowsByGroup = new Map<string, G2bPublicStandardContractProjection[]>();
+  for (const row of rows) {
+    const key = sourceContractGroupKey(row);
+    const group = rowsByGroup.get(key) ?? [];
+    group.push(row);
+    rowsByGroup.set(key, group);
+  }
+  return [...rowsByGroup.entries()].some(([key, latestRows]) =>
+    knownGroupKeys.has(key)
+    && !latestRows.some((row) => row.suppliers.some((supplier) => requested.has(supplier.businessNumber)))
+  );
 }
 
 function compareSourceContractAmendments(

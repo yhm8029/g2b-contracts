@@ -15,6 +15,7 @@ import type { CompetitorSalesPeriodQuery } from "@/lib/competitors/types";
 export const runtime = "nodejs";
 
 const ALLOWED_QUERY_KEYS = new Set(["period", "year", "month", "quarter"]);
+const inFlightOverviews = new Map<string, ReturnType<typeof getCompetitorSalesOverview>>();
 const INVALID_PERIOD = { error: "조회 기간이 올바르지 않습니다." };
 
 export async function GET(request: NextRequest) {
@@ -22,15 +23,11 @@ export async function GET(request: NextRequest) {
   if (query === null) return NextResponse.json(INVALID_PERIOD, { status: 400 });
 
   const serviceKey = resolveCompetitorContractServiceKey();
-  const connection = createDb();
   try {
-    initializeSqliteSchema(connection.sqlite);
-    const overview = await getCompetitorSalesOverview({
-      query,
-      serviceKey,
-      sqlite: connection.sqlite,
-      signal: request.signal,
-    });
+    const overview = await waitForRequestAbort(
+      getSharedOverview(query, serviceKey),
+      request.signal,
+    );
     return NextResponse.json(overview);
   } catch (error) {
     if (request.signal.aborted || isAbortError(error)) {
@@ -55,9 +52,82 @@ export async function GET(request: NextRequest) {
       { error: "조달청 계약 데이터를 조회하지 못했습니다." },
       { status: 502 },
     );
+  }
+}
+
+function getSharedOverview(
+  query: CompetitorSalesPeriodQuery,
+  serviceKey: string,
+) {
+  const key = normalizedQueryKey(query);
+  const existing = inFlightOverviews.get(key);
+  if (existing) return existing;
+
+  const shared = loadOverview(query, serviceKey);
+  inFlightOverviews.set(key, shared);
+  shared.then(
+    () => removeSettledOverview(key, shared),
+    () => removeSettledOverview(key, shared),
+  );
+  return shared;
+}
+
+async function loadOverview(query: CompetitorSalesPeriodQuery, serviceKey: string) {
+  const connection = createDb();
+  try {
+    initializeSqliteSchema(connection.sqlite);
+    return await getCompetitorSalesOverview({
+      query,
+      serviceKey,
+      sqlite: connection.sqlite,
+    });
   } finally {
     connection.sqlite.close();
   }
+}
+
+function removeSettledOverview(
+  key: string,
+  shared: ReturnType<typeof getCompetitorSalesOverview>,
+) {
+  if (inFlightOverviews.get(key) === shared) inFlightOverviews.delete(key);
+}
+
+function normalizedQueryKey(query: CompetitorSalesPeriodQuery) {
+  return JSON.stringify({
+    period: query.period,
+    year: query.year,
+    month: query.period === "month" ? query.month ?? null : null,
+    quarter: query.period === "quarter" ? query.quarter ?? null : null,
+  });
+}
+
+function waitForRequestAbort<T>(shared: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(createAbortError());
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(createAbortError());
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    shared.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function createAbortError() {
+  return new DOMException("The request was aborted", "AbortError");
 }
 
 function parseQuery(params: URLSearchParams, now: Date): CompetitorSalesPeriodQuery | null {

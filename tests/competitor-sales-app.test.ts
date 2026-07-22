@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { CompetitorSalesPeriod } from "@/lib/competitors/types";
+
 import {
   buildOverviewQuery,
   formatCompetitorAmount,
@@ -7,6 +9,7 @@ import {
   getAvailableQuarters,
   getSeoulPeriodSelection,
   getSeoulYearOptions,
+  periodContext,
   sortCompaniesBySales,
   switchPeriodSelection,
 } from "@/components/CompetitorSalesApp";
@@ -54,6 +57,23 @@ describe("competitor sales period selection", () => {
       year: 2025,
       quarter: 3,
     });
+  });
+
+  it("describes the selected period without using a stale overview period", () => {
+    const stalePeriod: CompetitorSalesPeriod = {
+      period: "year",
+      year: 2025,
+      month: null,
+      quarter: null,
+      label: "2025년",
+      dateFrom: "2025-01-01",
+      dateTo: "2025-12-31",
+      cacheKey: "test",
+    };
+
+    expect(
+      periodContext({ period: "month", year: 2026, month: 7 }, stalePeriod),
+    ).toBe("2026년 7월 조달우수 지정 업체의 계약을 집계합니다.");
   });
 });
 

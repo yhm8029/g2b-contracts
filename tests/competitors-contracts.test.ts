@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { COMPETITOR_CONTRACT_QUERY_RESULT_VERSION } from "@/lib/competitors/cache";
-import type { CompetitorContractRow } from "@/lib/competitors/contracts";
+import type { CompetitorContractRow, CompetitorContractSearchResult } from "@/lib/competitors/contracts";
 import {
   competitorContractTestHooks,
   CompetitorContractUpstreamError,
@@ -1228,7 +1228,12 @@ describe("competitor contract search", () => {
 
   it("accepts an estimated full-year scan of about fifteen hundred pages", async () => {
     const weeklyTotalCount = 27_500;
-    const fetchImpl = vi.fn(async () => standardResponse([], weeklyTotalCount));
+    const unrelated = contractRow(99_001, {
+      corpList: "[A^B^C^Unrelated Corp^1111111111]",
+      cntrctCorpBizno: "111-11-11111",
+      cntrctCorpNm: "Unrelated Corp",
+    });
+    const fetchImpl = vi.fn(async () => standardResponse([unrelated], weeklyTotalCount));
 
     const result = await searchCompetitorContracts(
       { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-12-31" },
@@ -1245,7 +1250,12 @@ describe("competitor contract search", () => {
   }, 20_000);
 
   it("enforces the two thousand five hundred page cap across date windows", async () => {
-    const fetchImpl = vi.fn(async () => standardResponse([], 99_900));
+    const unrelated = contractRow(99_002, {
+      corpList: "[A^B^C^Unrelated Corp^1111111111]",
+      cntrctCorpBizno: "111-11-11111",
+      cntrctCorpNm: "Unrelated Corp",
+    });
+    const fetchImpl = vi.fn(async () => standardResponse([unrelated], 99_900));
 
     await expect(
       searchCompetitorContracts(
@@ -1854,5 +1864,177 @@ describe("competitor contract search", () => {
     expect(result.rows).toHaveLength(totalCount);
     expect(fetchImpl).toHaveBeenCalledTimes(5);
     expect(maxActivePageRequests).toBe(4);
+  });
+
+  it("drops a target-only historical amendment when the API returns its latest non-target amendment first", async () => {
+    const latestWithoutTarget = contractRow(30_001, {
+      dcsnCntrctNo: "LATEST-FIRST-REMOVAL",
+      cntrctOrd: "2",
+      cntrctCnclsDate: "20250115",
+      corpList: "[A^B^C^Remaining Supplier^2222222222]",
+      cntrctCorpBizno: "222-22-22222",
+      cntrctCorpNm: "Remaining Supplier",
+    });
+    const historicalTarget = contractRow(30_000, {
+      dcsnCntrctNo: "LATEST-FIRST-REMOVAL",
+      cntrctOrd: "1",
+      cntrctCnclsDate: "20250110",
+    });
+
+    const result = await searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-07" },
+      { serviceKey: "test-key", fetchImpl: vi.fn(async () => standardResponse([latestWithoutTarget, historicalTarget])) },
+    );
+
+    expect(result.rows).toEqual([]);
+  });
+
+  it("uses fallback agency names to reconcile a cached row with a coded source amendment", async () => {
+    const cachedResult = {
+      rows: [mappedContractRow({
+        contractNo: "",
+        noticeNo: "",
+        contractDetailUrl: "",
+        originalContractDate: "2025-01-03",
+        amendmentOrder: 1,
+        contractDate: "2025-01-03",
+      })],
+      summary: { contractCount: 1, totalAmount: 1_001, noticeLinkedCount: 1, latestContractDate: "2025-01-03" },
+    };
+    const queryCache = {
+      get: vi.fn(() => null),
+      set: vi.fn(),
+      getFreshIntervals: vi.fn(() => [{ dateFrom: "2025-01-01", dateTo: "2025-01-07", result: cachedResult }]),
+      setInterval: vi.fn(),
+    };
+    const latestWithoutTarget = contractRow(30_002, {
+      dcsnCntrctNo: "",
+      bidNtceNo: "",
+      cntrctDtlInfoUrl: "",
+      frstCntrctDate: "20250103",
+      cntrctOrd: "2",
+      cntrctCnclsDate: "20250110",
+      cntrctNm: "Legacy cached contract",
+      dminsttNm: "Demand agency",
+      cntrctInsttNm: "Contract agency",
+      dminsttCd: "D-001",
+      cntrctInsttCd: "C-001",
+      corpList: "[A^B^C^Replacement Supplier^2222222222]",
+      cntrctCorpBizno: "222-22-22222",
+      cntrctCorpNm: "Replacement Supplier",
+    });
+
+    const result = await searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-14" },
+      { serviceKey: "test-key", fetchImpl: vi.fn(async () => standardResponse([latestWithoutTarget])), queryCache },
+    );
+
+    expect(result.rows).toEqual([]);
+  });
+
+  it("rejects a required empty middle page after bounded retries without caching", async () => {
+    const queryCache = {
+      get: vi.fn(() => null),
+      set: vi.fn(),
+      setInterval: vi.fn(),
+    };
+    const fetchImpl = vi.fn(async (input: string | URL) => {
+      const pageNo = Number(new URL(String(input)).searchParams.get("pageNo"));
+      return pageNo === 1 ? standardResponse([contractRow(1)], 1_500) : standardResponse([], 1_500);
+    });
+
+    await expect(searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-07" },
+      { serviceKey: "test-key", fetchImpl, queryCache },
+    )).rejects.toMatchObject({ kind: "incomplete" });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(queryCache.set).not.toHaveBeenCalled();
+    expect(queryCache.setInterval).not.toHaveBeenCalled();
+  });
+
+  it("persists each completed split window before a later window fails without caching the exact range", async () => {
+    const queryCache = {
+      get: vi.fn(() => null),
+      set: vi.fn(),
+      getFreshIntervals: vi.fn(() => []),
+      setInterval: vi.fn(),
+    };
+    const fetchImpl = vi.fn(async (input: string | URL) => {
+      const from = new URL(String(input)).searchParams.get("cntrctCnclsBgnDate");
+      return from === "20250101" ? standardResponse([contractRow(1)]) : new Response("bad request", { status: 400 });
+    });
+
+    await expect(searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-14" },
+      { serviceKey: "test-key", fetchImpl, queryCache, now: () => new Date("2026-07-22T00:00:00.000Z") },
+    )).rejects.toMatchObject({ kind: "response" });
+
+    expect(queryCache.setInterval).toHaveBeenCalledWith(
+      { bizNoNormalized: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-07" },
+      expect.objectContaining({ rows: [expect.objectContaining({ contractNo: "C-1" })] }),
+    );
+    expect(queryCache.set).not.toHaveBeenCalled();
+  });
+
+  it("refetches a supplier-removal window so overlapping interval composition cannot revive a stale target", async () => {
+    const intervals: Array<{ dateFrom: string; dateTo: string; result: CompetitorContractSearchResult }> = [];
+    const queryCache = {
+      get: vi.fn(() => null),
+      set: vi.fn(),
+      getFreshIntervals: vi.fn((key: { dateFrom: string; dateTo: string }) =>
+        intervals.filter((interval) => interval.dateFrom <= key.dateTo && interval.dateTo >= key.dateFrom)),
+      setInterval: vi.fn((key: { dateFrom: string; dateTo: string }, result: CompetitorContractSearchResult) => {
+        intervals.push({ dateFrom: key.dateFrom, dateTo: key.dateTo, result });
+      }),
+    };
+    const historicalTarget = contractRow(30_003, {
+      dcsnCntrctNo: "REFETCH-REMOVAL-WINDOW",
+      cntrctOrd: "1",
+      cntrctCnclsDate: "20250103",
+    });
+    const latestWithoutTarget = contractRow(30_004, {
+      dcsnCntrctNo: "REFETCH-REMOVAL-WINDOW",
+      cntrctOrd: "2",
+      cntrctCnclsDate: "20250110",
+      corpList: "[A^B^C^Replacement Supplier^2222222222]",
+      cntrctCorpBizno: "222-22-22222",
+      cntrctCorpNm: "Replacement Supplier",
+    });
+    const fetchImpl = vi.fn(async (input: string | URL) => {
+      const from = new URL(String(input)).searchParams.get("cntrctCnclsBgnDate");
+      if (from === "20250101") return standardResponse([historicalTarget]);
+      if (from === "20250108") return standardResponse([latestWithoutTarget]);
+      return standardResponse([]);
+    });
+
+    const first = await searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-14" },
+      { serviceKey: "test-key", fetchImpl, queryCache, now: () => new Date("2026-07-22T00:00:00.000Z") },
+    );
+    const overlapping = await searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-21" },
+      { serviceKey: "test-key", fetchImpl, queryCache, now: () => new Date("2026-07-22T00:00:00.000Z") },
+    );
+
+    expect(first.rows).toEqual([]);
+    expect(overlapping.rows).toEqual([]);
+    expect(fetchImpl.mock.calls.map(([input]) =>
+      new URL(String(input)).searchParams.get("cntrctCnclsBgnDate")
+    ).filter((from) => from === "20250108")).toHaveLength(2);
+  });
+
+  it("rejects a nonzero totalCount with an empty first page after bounded retries", async () => {
+    const queryCache = { get: vi.fn(() => null), set: vi.fn(), setInterval: vi.fn() };
+    const fetchImpl = vi.fn(async () => standardResponse([], 1));
+
+    await expect(searchCompetitorContracts(
+      { bizNo: "1234567890", dateFrom: "2025-01-01", dateTo: "2025-01-07" },
+      { serviceKey: "test-key", fetchImpl, queryCache },
+    )).rejects.toMatchObject({ kind: "incomplete" });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(queryCache.set).not.toHaveBeenCalled();
+    expect(queryCache.setInterval).not.toHaveBeenCalled();
   });
 });

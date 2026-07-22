@@ -112,6 +112,8 @@ export function CompetitorSalesApp() {
     requestSequence.current = sequence;
     setIsLoading(true);
     setError(null);
+    setOverview(null);
+    setOpenCompanyId(null);
 
     void loadOverview(selection, controller.signal)
       .then((nextOverview) => {
@@ -319,7 +321,7 @@ function ContractDetails({ company, id }: { company: SalesCompany; id: string })
 function CompanySkeleton({ index }: { index: number }) {
   return (
     <article aria-label={`${index + 1}번째 업체를 불러오는 중`} className="competitor-sales-company competitor-sales-skeleton">
-      <span /><span /><span /><span />
+      <span /><span /><span /><span /><span />
     </article>
   );
 }
@@ -389,11 +391,11 @@ function formatWon(amount: number) {
   return `${wonFormatter.format(amount)}원`;
 }
 
-function periodContext(selection: PeriodSelection, period: CompetitorSalesOverview["period"] | undefined) {
-  if (period) return `${period.label} · ${period.dateFrom} ~ ${period.dateTo}`;
-  if (selection.period === "month") return `${selection.year}년 ${selection.month}월 계약 내역을 집계합니다.`;
-  if (selection.period === "quarter") return `${selection.year}년 ${selection.quarter}분기 계약 내역을 집계합니다.`;
-  return `${selection.year}년 계약 내역을 집계합니다.`;
+export function periodContext(selection: PeriodSelection, _period?: CompetitorSalesOverview["period"]) {
+  const basis = "조달우수 지정 업체의 계약";
+  if (selection.period === "month") return `${selection.year}년 ${selection.month}월 ${basis}을 집계합니다.`;
+  if (selection.period === "quarter") return `${selection.year}년 ${selection.quarter}분기 ${basis}을 집계합니다.`;
+  return `${selection.year}년 ${basis}을 집계합니다.`;
 }
 
 function clampMonth(year: number, month: number, current: { year: number; month: number }) {

@@ -768,320 +768,15 @@ tbody tr.selected {
   }
 }
 
-/* Competitor overview is an independent route and does not rely on the lookup shell. */
-.competitors-page {
-  margin: 0 auto;
-  max-width: 1480px;
-  min-height: 100vh;
-  padding: 28px 30px 40px;
-}
-
-.competitors-heading {
-  align-items: flex-end;
-  display: flex;
-  gap: 24px;
-  justify-content: space-between;
-  margin-bottom: 18px;
-}
-
-.competitors-heading h1 {
-  font-size: 1.65rem;
-  letter-spacing: 0;
-  margin: 3px 0 7px;
-}
-
-.competitors-heading p {
-  color: var(--muted);
-  margin: 0;
-}
-
-.competitors-heading .competitors-eyebrow {
-  color: var(--accent);
-  font-size: 0.75rem;
-  font-weight: 800;
-}
-
-.competitors-loading {
-  align-items: center;
-  color: var(--accent-strong);
-  display: inline-flex;
-  flex: 0 0 auto;
-  font-size: 0.82rem;
-  font-weight: 700;
-  gap: 6px;
-  min-height: 28px;
-}
-
-.competitors-toolbar {
-  align-items: center;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  display: flex;
-  gap: 18px;
-  justify-content: space-between;
-  margin-bottom: 12px;
-  padding: 11px 12px;
-}
-
-.period-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, 76px);
-}
-
-.period-tabs button {
-  background: #fff;
-  border: 1px solid var(--border-strong);
-  color: var(--muted);
-  font-size: 0.86rem;
-  font-weight: 800;
-  min-height: 38px;
-  padding: 7px 10px;
-}
-
-.period-tabs button:first-child { border-radius: 6px 0 0 6px; }
-.period-tabs button:last-child { border-radius: 0 6px 6px 0; }
-.period-tabs button + button { border-left: 0; }
-
-.period-tabs button.active {
-  background: #112b4c;
-  border-color: #112b4c;
-  color: #fff;
-}
-
-.period-selects {
-  align-items: end;
-  display: flex;
-  gap: 9px;
-}
-
-.period-selects label {
-  align-items: center;
-  display: flex;
-  gap: 7px;
-}
-
-.period-selects label span {
-  white-space: nowrap;
-}
-
-.period-selects select {
-  min-height: 38px;
-  width: 112px;
-}
-
-.competitors-error {
-  align-items: center;
-  background: var(--danger-soft);
-  border: 1px solid #ffc9c1;
-  border-radius: 8px;
-  color: var(--danger);
-  display: flex;
-  gap: 9px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-}
-
-.competitors-error span { flex: 1; }
-
-.competitors-error button {
-  align-items: center;
-  background: #fff;
-  border: 1px solid #e29e95;
-  border-radius: 6px;
-  color: var(--danger);
-  display: inline-flex;
-  font-weight: 800;
-  gap: 5px;
-  min-height: 32px;
-  padding: 5px 9px;
-}
-
-.competitors-summary {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-bottom: 12px;
-}
-
-.competitors-summary article {
-  background: #f8fafc;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  min-height: 76px;
-  padding: 12px 14px;
-}
-
-.competitors-summary span,
-.competitor-metric span {
-  color: var(--muted);
-  display: block;
-  font-size: 0.74rem;
-  font-weight: 800;
-  margin-bottom: 7px;
-}
-
-.competitors-summary strong {
-  display: block;
-  font-size: 1.25rem;
-  overflow-wrap: anywhere;
-}
-
-.competitors-meta {
-  align-items: center;
-  color: var(--muted);
-  display: flex;
-  font-size: 0.82rem;
-  justify-content: space-between;
-  margin: 17px 2px 8px;
-}
-
-.competitors-meta strong { color: var(--text); }
-
-.competitors-list {
-  display: grid;
-  gap: 7px;
-  min-height: 220px;
-}
-
-.competitor-row {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.025);
-  min-width: 0;
-  overflow: hidden;
-}
-
-.competitor-row-main {
-  align-items: center;
-  display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(270px, 1.55fr) minmax(170px, 0.75fr) minmax(80px, 0.4fr) minmax(120px, 0.55fr) 64px;
-  min-height: 76px;
-  padding: 10px 12px;
-}
-
-.competitor-identity,
-.competitor-metric {
-  min-width: 0;
-}
-
-.competitor-identity strong,
-.competitor-identity span,
-.competitor-identity small {
-  display: block;
-  overflow-wrap: anywhere;
-}
-
-.competitor-identity strong { font-size: 0.92rem; }
-.competitor-identity span { color: #4d5e73; font-size: 0.75rem; margin-top: 4px; }
-.competitor-identity small { color: var(--muted); font-size: 0.72rem; margin-top: 3px; }
-.competitor-metric strong { font-size: 0.88rem; }
-
-.competitor-detail-toggle {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  color: var(--accent-strong);
-  display: inline-flex;
-  font-size: 0.78rem;
-  font-weight: 800;
-  gap: 2px;
-  justify-content: flex-end;
-  min-height: 38px;
-  padding: 6px 0;
-}
-
-.competitor-contracts {
-  background: #f8fafc;
-  border-top: 1px solid var(--border);
-  padding: 12px;
-}
-
-.competitor-contracts-title {
-  align-items: baseline;
-  display: flex;
-  gap: 7px;
-  margin-bottom: 9px;
-}
-
-.competitor-contracts-title span { color: var(--muted); font-size: 0.78rem; }
-.competitor-contract-table-frame { overflow-x: auto; }
-
-.competitor-contract-table-frame table {
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  min-width: 820px;
-}
-
-.competitor-contract-table-frame th,
-.competitor-contract-table-frame td { padding: 9px 10px; }
-.competitor-contract-table-frame td { font-size: 0.82rem; }
-
-.competitor-contract-table-frame td strong,
-.competitor-contract-table-frame td small { display: block; }
-.competitor-contract-table-frame td small { color: var(--muted); margin-top: 3px; }
-
-.competitor-empty,
-.competitors-initial-state {
-  color: var(--muted);
-  font-size: 0.86rem;
-  margin: 0;
-  padding: 22px;
-  text-align: center;
-}
-
-.competitors-initial-state {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  min-height: 220px;
-}
-
-.competitors-note {
-  background: #edf6f3;
-  border: 1px solid #c8e0d7;
-  border-radius: 7px;
-  color: #315e50;
-  font-size: 0.79rem;
-  line-height: 1.5;
-  margin: 12px 0 0;
-  padding: 9px 11px;
-}
-
-@media (max-width: 900px) {
-  .competitors-page { padding: 20px 16px 32px; }
-  .competitor-row-main { grid-template-columns: minmax(210px, 1.5fr) repeat(3, minmax(95px, 0.65fr)) 58px; overflow-x: auto; }
-}
-
-@media (max-width: 640px) {
-  .competitors-heading { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .competitors-toolbar { align-items: stretch; flex-direction: column; }
-  .period-tabs { grid-template-columns: repeat(3, 1fr); }
-  .period-selects { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .period-selects label { align-items: stretch; display: grid; }
-  .period-selects select { width: 100%; }
-  .competitors-summary { grid-template-columns: 1fr; }
-  .competitors-summary article { min-height: 68px; }
-  .competitors-meta { align-items: flex-start; flex-direction: column; gap: 4px; }
-  .competitor-row-main { gap: 8px 12px; grid-template-columns: minmax(0, 1fr) 54px; overflow: visible; }
-  .competitor-identity { grid-column: 1; }
-  .competitor-detail-toggle { grid-column: 2; grid-row: 1; }
-  .competitor-metric { border-top: 1px solid var(--border); padding-top: 9px; }
-  .competitor-metric:nth-of-type(2) { grid-column: 1 / -1; }
-  .competitor-metric:nth-of-type(3), .competitor-metric:nth-of-type(4) { grid-column: auto; }
-  .competitors-error { align-items: flex-start; flex-wrap: wrap; }
-}
-
 /* Compact competitor-sales screen. */
 .competitor-sales-page {
   margin: 0 auto;
   max-width: 1180px;
   min-height: 100vh;
+  min-width: 0;
+  overflow-x: clip;
   padding: 22px 30px 36px;
+  width: 100%;
 }
 
 .competitor-sales-heading {
@@ -1251,12 +946,14 @@ tbody tr.selected {
 .competitor-sales-list {
   display: grid;
   gap: 6px;
+  min-width: 0;
   padding: 0 14px 14px;
 }
 
 .competitor-sales-company {
   border: 1px solid #d8e1eb;
   border-radius: 5px;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -1369,7 +1066,7 @@ tbody tr.selected {
   background: #ffffff;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(225px, 1.45fr) minmax(120px, 0.72fr) minmax(64px, 0.38fr) minmax(112px, 0.58fr);
+  grid-template-columns: minmax(225px, 1.45fr) minmax(120px, 0.72fr) minmax(64px, 0.38fr) minmax(112px, 0.58fr) auto;
   min-height: 56px;
   padding: 8px 10px;
 }
@@ -1383,6 +1080,10 @@ tbody tr.selected {
 
 .competitor-sales-skeleton span:first-child {
   height: 28px;
+}
+
+.competitor-sales-skeleton span:last-child {
+  width: 36px;
 }
 
 @keyframes competitor-sales-spin {
@@ -1416,25 +1117,92 @@ tbody tr.selected {
 
   .competitor-sales-company-toggle,
   .competitor-sales-skeleton {
-    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 8px;
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.55fr) minmax(0, 1fr) auto;
+    padding: 8px 7px;
+    row-gap: 7px;
   }
 
   .competitor-sales-company-name {
-    grid-row: span 2;
+    grid-column: 1 / 4;
+    grid-row: 1;
   }
 
-  .competitor-sales-company-metric:nth-of-type(2),
+  .competitor-sales-company-metric {
+    grid-row: 2;
+  }
+
+  .competitor-sales-company-metric:nth-of-type(2) {
+    grid-column: 1;
+    overflow: hidden;
+  }
+
   .competitor-sales-company-metric:nth-of-type(3) {
-    display: none;
+    grid-column: 2;
+  }
+
+  .competitor-sales-company-metric:nth-of-type(4) {
+    grid-column: 3;
+  }
+
+  .competitor-sales-company-name strong,
+  .competitor-sales-company-metric strong {
+    font-size: 0.74rem;
+    line-height: 1.2;
+  }
+
+  .competitor-sales-company-name small {
+    font-size: 0.65rem;
+  }
+
+  .competitor-sales-company-metric small {
+    font-size: 0.65rem;
+    margin-bottom: 2px;
+  }
+
+  .competitor-sales-company-metric:nth-of-type(2) strong {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 
   .competitor-sales-view {
-    grid-column: 2;
-    grid-row: 1 / span 2;
+    font-size: 0.68rem;
+    gap: 2px;
+    grid-column: 4;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  .competitor-sales-view svg {
+    height: 13px;
+    width: 13px;
+  }
+
+  .competitor-sales-skeleton span:first-child {
+    grid-column: 1 / 4;
+    grid-row: 1;
   }
 
   .competitor-sales-skeleton span:nth-child(2),
+  .competitor-sales-skeleton span:nth-child(3),
+  .competitor-sales-skeleton span:nth-child(4) {
+    grid-row: 2;
+  }
+
+  .competitor-sales-skeleton span:nth-child(2) {
+    grid-column: 1;
+  }
+
   .competitor-sales-skeleton span:nth-child(3) {
-    display: none;
+    grid-column: 2;
+  }
+
+  .competitor-sales-skeleton span:nth-child(4) {
+    grid-column: 3;
+  }
+
+  .competitor-sales-skeleton span:last-child {
+    grid-column: 4;
+    grid-row: 1;
   }
 }
