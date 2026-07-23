@@ -126,6 +126,9 @@ export function resolveCompetitorSalesPeriod(query: CompetitorSalesPeriodQuery, 
 }
 
 export function classifyCompetitorSalesContract(row: CompetitorContractRow) {
+  if (isThirdPartyUnitPriceContract(row)) {
+    return { related: false, positiveSignals: [], conflictingSignals: [] };
+  }
   const itemCodes = [...new Set((row.itemCodes ?? []).map(normalizeItemCode).filter(Boolean))];
   if (itemCodes.length > 0) {
     return { related: itemCodes.includes(TARGET_ITEM_CODE), positiveSignals: [], conflictingSignals: [] };
@@ -134,6 +137,16 @@ export function classifyCompetitorSalesContract(row: CompetitorContractRow) {
     ...row,
     contractName: [row.contractName, ...(row.itemNames ?? [])].join(" "),
   });
+}
+
+function isThirdPartyUnitPriceContract(row: Pick<CompetitorContractRow, "contractType" | "contractName">) {
+  const thirdPartyUnitPriceContract = "제3자단가계약";
+  if (normalizeContractType(row.contractType) === thirdPartyUnitPriceContract) return true;
+  return normalizeContractType(row.contractName).includes(thirdPartyUnitPriceContract);
+}
+
+function normalizeContractType(value: string | undefined) {
+  return (value ?? "").normalize("NFKC").replace(/\s+/g, "");
 }
 
 export function buildCompetitorSalesOverview(input: {

@@ -93,6 +93,53 @@ describe("competitor sales overview", () => {
     expect(classifyCompetitorSalesContract(contractRow({ itemCodes: [], contractName: "City hall BEMS installation" })).related).toBe(true);
   });
 
+  it("excludes third-party unit-price contract ceilings before item-code classification", () => {
+    const competitor = COMPETITOR_SALES_REGISTRY[0];
+    const rows = [
+      contractRow({
+        id: "third-party-type",
+        bizNoNormalized: competitor.bizNo,
+        contractNo: "THIRD-PARTY-TYPE",
+        contractType: "제3자단가계약",
+        contractName: "우수조달물품 계약",
+        itemCodes: ["3912180101"],
+        totalContractAmount: 9_025_070_000,
+      }),
+      contractRow({
+        id: "third-party-name",
+        bizNoNormalized: competitor.bizNo,
+        contractNo: "THIRD-PARTY-NAME",
+        contractName: "우수조달물품 제 3자 단가계약",
+        itemCodes: ["3912180101"],
+        totalContractAmount: 800,
+      }),
+      contractRow({
+        id: "ordinary-unit-price",
+        bizNoNormalized: competitor.bizNo,
+        contractNo: "ORDINARY-UNIT-PRICE",
+        contractType: "일반단가계약",
+        contractName: "빌딩자동제어장치 일반단가계약",
+        itemCodes: ["3912180101"],
+        totalContractAmount: 700,
+      }),
+    ];
+
+    expect(classifyCompetitorSalesContract(rows[0]!).related).toBe(false);
+    expect(classifyCompetitorSalesContract(rows[1]!).related).toBe(false);
+    expect(classifyCompetitorSalesContract(rows[2]!).related).toBe(true);
+
+    const overview = buildCompetitorSalesOverview({
+      period: resolveCompetitorSalesPeriod({ period: "month", year: 2026, month: 6 }, now),
+      collectedAt: "2026-07-22T03:00:00.000Z",
+      rows,
+    });
+
+    expect(overview.totalContractCount).toBe(1);
+    expect(overview.totalAmount).toBe(700);
+    expect(overview.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts).toHaveLength(1);
+    expect(overview.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts[0]?.id).toBe("ordinary-unit-price");
+  });
+
   it("uses the latest amendment amount per contract number and returns all 22 companies ordered by amount", () => {
     const first = COMPETITOR_SALES_REGISTRY[0];
     const second = COMPETITOR_SALES_REGISTRY[1];
