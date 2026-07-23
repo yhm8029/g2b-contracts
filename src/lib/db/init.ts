@@ -157,5 +157,18 @@ export function initializeSqliteSchema(db: Database.Database): void {
       ON competitor_contract_interval_cache (biz_no_normalized, date_from, date_to);
     CREATE INDEX IF NOT EXISTS competitor_contract_interval_cache_expiry_idx
       ON competitor_contract_interval_cache (cached_at_ms);
+
+    CREATE TABLE IF NOT EXISTS competitor_third_party_delivery_monthly_cache (
+      registry_key TEXT NOT NULL,
+      date_from TEXT NOT NULL,
+      date_to TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      cached_at_ms INTEGER NOT NULL,
+      result_version TEXT NOT NULL,
+      PRIMARY KEY (registry_key, date_from, date_to)
+    );
+
+    CREATE INDEX IF NOT EXISTS competitor_third_party_delivery_monthly_cache_expiry_idx
+      ON competitor_third_party_delivery_monthly_cache (cached_at_ms);
   `);
 }

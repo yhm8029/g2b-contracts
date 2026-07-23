@@ -42,7 +42,7 @@ export type CompetitorContractRow = {
   noticeNo: string;
   contractDetailUrl: string;
   noticeDetailUrl: string;
-  sourceDataset: "g2b-public-standard-contract";
+  sourceDataset: "g2b-public-standard-contract" | "g2b-shopping-mall-third-party-delivery";
 };
 
 export type CompetitorContractSearchResult = {

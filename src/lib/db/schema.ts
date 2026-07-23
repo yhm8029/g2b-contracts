@@ -171,3 +171,19 @@ export const competitorContractIntervalCache = sqliteTable(
     index("competitor_contract_interval_cache_expiry_idx").on(table.cachedAtMs),
   ],
 );
+
+export const competitorThirdPartyDeliveryMonthlyCache = sqliteTable(
+  "competitor_third_party_delivery_monthly_cache",
+  {
+    registryKey: text("registry_key").notNull(),
+    dateFrom: text("date_from").notNull(),
+    dateTo: text("date_to").notNull(),
+    resultJson: text("result_json").notNull(),
+    cachedAtMs: integer("cached_at_ms").notNull(),
+    resultVersion: text("result_version").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.registryKey, table.dateFrom, table.dateTo] }),
+    index("competitor_third_party_delivery_monthly_cache_expiry_idx").on(table.cachedAtMs),
+  ],
+);

@@ -93,7 +93,7 @@ describe("competitor sales overview", () => {
     expect(classifyCompetitorSalesContract(contractRow({ itemCodes: [], contractName: "City hall BEMS installation" })).related).toBe(true);
   });
 
-  it("excludes third-party unit-price contract ceilings before item-code classification", () => {
+  it("excludes only public-standard third-party unit-price contract ceilings", () => {
     const competitor = COMPETITOR_SALES_REGISTRY[0];
     const rows = [
       contractRow({
@@ -102,6 +102,7 @@ describe("competitor sales overview", () => {
         contractNo: "THIRD-PARTY-TYPE",
         contractType: "제3자단가계약",
         contractName: "우수조달물품 계약",
+        demandAgencyName: "각 수요기관",
         itemCodes: ["3912180101"],
         totalContractAmount: 9_025_070_000,
       }),
@@ -110,6 +111,7 @@ describe("competitor sales overview", () => {
         bizNoNormalized: competitor.bizNo,
         contractNo: "THIRD-PARTY-NAME",
         contractName: "우수조달물품 제 3자 단가계약",
+        demandAgencyName: "각수요기관",
         itemCodes: ["3912180101"],
         totalContractAmount: 800,
       }),
@@ -122,11 +124,23 @@ describe("competitor sales overview", () => {
         itemCodes: ["3912180101"],
         totalContractAmount: 700,
       }),
+      contractRow({
+        id: "third-party-delivery",
+        bizNoNormalized: competitor.bizNo,
+        contractNo: "DELIVERY-REQUEST-1",
+        contractType: "제3자단가계약",
+        contractMethod: "제3자단가계약",
+        contractName: "빌딩자동제어장치 납품요구",
+        itemCodes: ["3912180101"],
+        totalContractAmount: 500,
+        sourceDataset: "g2b-shopping-mall-third-party-delivery",
+      }),
     ];
 
     expect(classifyCompetitorSalesContract(rows[0]!).related).toBe(false);
     expect(classifyCompetitorSalesContract(rows[1]!).related).toBe(false);
     expect(classifyCompetitorSalesContract(rows[2]!).related).toBe(true);
+    expect(classifyCompetitorSalesContract(rows[3]!).related).toBe(true);
 
     const overview = buildCompetitorSalesOverview({
       period: resolveCompetitorSalesPeriod({ period: "month", year: 2026, month: 6 }, now),
@@ -134,10 +148,32 @@ describe("competitor sales overview", () => {
       rows,
     });
 
-    expect(overview.totalContractCount).toBe(1);
-    expect(overview.totalAmount).toBe(700);
-    expect(overview.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts).toHaveLength(1);
-    expect(overview.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts[0]?.id).toBe("ordinary-unit-price");
+    expect(overview.totalContractCount).toBe(2);
+    expect(overview.totalAmount).toBe(1_200);
+    expect(overview.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts).toHaveLength(2);
+    expect(overview.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts.map((row) => row.id)).toEqual([
+      "ordinary-unit-price",
+      "third-party-delivery",
+    ]);
+  });
+
+  it("retains public-standard third-party unit-price sales for a specific demand agency", () => {
+    const row = contractRow({
+      contractType: "제3자단가계약",
+      contractName: "빌딩자동제어장치 납품요구",
+      demandAgencyName: "육군 제32보병사단",
+      itemCodes: ["3912180101"],
+      totalContractAmount: 250_000_000,
+    });
+
+    expect(classifyCompetitorSalesContract(row).related).toBe(true);
+
+    const overview = buildCompetitorSalesOverview({
+      period: resolveCompetitorSalesPeriod({ period: "month", year: 2026, month: 6 }, now),
+      collectedAt: "2026-07-22T03:00:00.000Z",
+      rows: [row],
+    });
+    expect(overview.totalAmount).toBe(250_000_000);
   });
 
   it("uses the latest amendment amount per contract number and returns all 22 companies ordered by amount", () => {

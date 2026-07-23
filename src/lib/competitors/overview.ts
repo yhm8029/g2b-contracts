@@ -126,7 +126,7 @@ export function resolveCompetitorSalesPeriod(query: CompetitorSalesPeriodQuery, 
 }
 
 export function classifyCompetitorSalesContract(row: CompetitorContractRow) {
-  if (isThirdPartyUnitPriceContract(row)) {
+  if (isThirdPartyUnitPriceMasterCeiling(row)) {
     return { related: false, positiveSignals: [], conflictingSignals: [] };
   }
   const itemCodes = [...new Set((row.itemCodes ?? []).map(normalizeItemCode).filter(Boolean))];
@@ -139,6 +139,14 @@ export function classifyCompetitorSalesContract(row: CompetitorContractRow) {
   });
 }
 
+function isThirdPartyUnitPriceMasterCeiling(row: CompetitorContractRow) {
+  return (
+    row.sourceDataset === "g2b-public-standard-contract"
+    && isThirdPartyUnitPriceContract(row)
+    && normalizeDemandAgencyName(row.demandAgencyName) === "각수요기관"
+  );
+}
+
 function isThirdPartyUnitPriceContract(row: Pick<CompetitorContractRow, "contractType" | "contractName">) {
   const thirdPartyUnitPriceContract = "제3자단가계약";
   if (normalizeContractType(row.contractType) === thirdPartyUnitPriceContract) return true;
@@ -147,6 +155,10 @@ function isThirdPartyUnitPriceContract(row: Pick<CompetitorContractRow, "contrac
 
 function normalizeContractType(value: string | undefined) {
   return (value ?? "").normalize("NFKC").replace(/\s+/g, "");
+}
+
+function normalizeDemandAgencyName(value: string) {
+  return value.normalize("NFKC").replace(/\s+/g, "");
 }
 
 export function buildCompetitorSalesOverview(input: {
