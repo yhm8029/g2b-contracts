@@ -8,7 +8,156 @@ $port = 5182
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $installRoot = [System.IO.Path]::GetFullPath((Join-Path -Path $scriptDirectory -ChildPath '..'))
 $appPath = [System.IO.Path]::GetFullPath((Join-Path -Path $installRoot -ChildPath 'app'))
-$normalizedAppPath = $appPath.TrimEnd('\').Replace('/', '\')
+$runtimePath = [System.IO.Path]::GetFullPath((Join-Path -Path $installRoot -ChildPath 'runtime'))
+$metadataPath = Join-Path -Path $runtimePath -ChildPath 'server.json'
+
+function Show-UserMessage {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Error', 'Warning')]
+        [string]$Kind
+    )
+
+    $messageWasShown = $false
+    $forceNonInteractive = [System.Environment]::GetEnvironmentVariable(
+        'G2B_LAUNCHER_NONINTERACTIVE'
+    ) -eq '1'
+    if ([System.Environment]::UserInteractive -and (-not $forceNonInteractive)) {
+        try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+            $icon = if ($Kind -eq 'Error') {
+                [System.Windows.Forms.MessageBoxIcon]::Error
+            }
+            else {
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            }
+            [void][System.Windows.Forms.MessageBox]::Show(
+                $Message,
+                'G2B Contracts Local Web',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                $icon
+            )
+            $messageWasShown = $true
+        }
+        catch {
+            $messageWasShown = $false
+        }
+    }
+
+    if ($Kind -eq 'Error') {
+        Write-Error -Message $Message -ErrorAction Continue
+    }
+    elseif (-not $messageWasShown) {
+        Write-Warning -Message $Message
+    }
+}
+
+function Normalize-PathForComparison {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd('\').Replace('/', '\')
+}
+
+function Test-CommandLineContainsExactPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CommandLine,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedPath
+    )
+
+    $normalizedCommandLine = $CommandLine.Replace('/', '\')
+    $normalizedExpectedPath = Normalize-PathForComparison -Path $ExpectedPath
+    $searchIndex = 0
+
+    while ($searchIndex -lt $normalizedCommandLine.Length) {
+        $matchIndex = $normalizedCommandLine.IndexOf(
+            $normalizedExpectedPath,
+            $searchIndex,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+        if ($matchIndex -lt 0) {
+            return $false
+        }
+
+        $beforeIsBoundary = $matchIndex -eq 0
+        if (-not $beforeIsBoundary) {
+            $before = $normalizedCommandLine[$matchIndex - 1]
+            $beforeIsBoundary = [char]::IsWhiteSpace($before) -or
+                ($before -eq '"') -or
+                ($before -eq [char]39) -or
+                ($before -eq '=')
+        }
+
+        $afterIndex = $matchIndex + $normalizedExpectedPath.Length
+        $afterIsBoundary = $afterIndex -eq $normalizedCommandLine.Length
+        if (-not $afterIsBoundary) {
+            $after = $normalizedCommandLine[$afterIndex]
+            $afterIsBoundary = [char]::IsWhiteSpace($after) -or
+                ($after -eq '\') -or
+                ($after -eq '"') -or
+                ($after -eq [char]39)
+        }
+
+        if ($beforeIsBoundary -and $afterIsBoundary) {
+            return $true
+        }
+
+        $searchIndex = $matchIndex + 1
+    }
+
+    return $false
+}
+
+function Test-MetadataMatchesListener {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Listener,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedAppPath
+    )
+
+    try {
+        if ([string]::IsNullOrWhiteSpace([string]$Metadata.ListenerCreationTimeUtc) -or
+            [string]::IsNullOrWhiteSpace([string]$Listener.CreationTimeUtc)) {
+            return $false
+        }
+
+        $metadataAppPath = Normalize-PathForComparison -Path ([string]$Metadata.AppPath)
+        $expectedNormalizedAppPath = Normalize-PathForComparison -Path $ExpectedAppPath
+        if (-not $metadataAppPath.Equals(
+                $expectedNormalizedAppPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+            return $false
+        }
+
+        if ([int]$Metadata.ListenerProcessId -ne [int]$Listener.Id) {
+            return $false
+        }
+
+        return ([string]$Metadata.ListenerCreationTimeUtc).Equals(
+            [string]$Listener.CreationTimeUtc,
+            [System.StringComparison]::Ordinal
+        )
+    }
+    catch {
+        return $false
+    }
+}
+
+$normalizedAppPath = Normalize-PathForComparison -Path $appPath
 
 function Get-ListeningProcessIds {
     $getNetTcpConnection = Get-Command -Name 'Get-NetTCPConnection' -ErrorAction SilentlyContinue
@@ -54,13 +203,16 @@ function Get-ProcessDetails {
         return $null
     }
 
-    $commandLine = [string]$process.CommandLine
-    $normalizedCommandLine = $commandLine.Replace('/', '\')
+    $creationTimeUtc = ''
+    if ($null -ne $process.CreationDate) {
+        $creationTimeUtc = ([datetime]$process.CreationDate).ToUniversalTime().ToString('o')
+    }
+
     return [pscustomobject]@{
         Id = [int]$process.ProcessId
         ParentId = [int]$process.ParentProcessId
-        CommandLine = $commandLine
-        NormalizedCommandLine = $normalizedCommandLine
+        CommandLine = [string]$process.CommandLine
+        CreationTimeUtc = $creationTimeUtc
     }
 }
 
@@ -103,14 +255,42 @@ try {
         exit 0
     }
 
+    $metadata = $null
+    if (Test-Path -LiteralPath $metadataPath -PathType Leaf) {
+        try {
+            $metadata = Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
+        }
+        catch {
+            $metadata = $null
+        }
+    }
+
+    if ($null -eq $metadata) {
+        Show-UserMessage `
+            -Message "Port $port has a listener, but valid portable server metadata was not found. No process was stopped." `
+            -Kind 'Warning'
+        exit 0
+    }
+
     $portableTargets = @{}
     $unrelatedProcessIds = New-Object 'System.Collections.Generic.List[string]'
 
     foreach ($listenerProcessId in $listenerProcessIds) {
         $chain = @(Get-ProcessChain -StartingProcessId ([int]$listenerProcessId))
+        if (($chain.Count -eq 0) -or
+            (-not (Test-MetadataMatchesListener `
+                    -Metadata $metadata `
+                    -Listener $chain[0] `
+                    -ExpectedAppPath $normalizedAppPath))) {
+            [void]$unrelatedProcessIds.Add([string]$listenerProcessId)
+            continue
+        }
+
         $portableMatches = @(
             $chain | Where-Object {
-                $_.NormalizedCommandLine.IndexOf($normalizedAppPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                Test-CommandLineContainsExactPath `
+                    -CommandLine $_.CommandLine `
+                    -ExpectedPath $normalizedAppPath
             }
         )
 
@@ -129,7 +309,9 @@ try {
 
     if ($portableTargets.Count -eq 0) {
         $unrelatedText = ($unrelatedProcessIds -join ', ')
-        Write-Output "Port $port is used by unrelated process ID(s) $unrelatedText. No process was stopped."
+        Show-UserMessage `
+            -Message "Port $port is used by unrelated process ID(s) $unrelatedText. No process was stopped." `
+            -Kind 'Warning'
         exit 0
     }
 
@@ -138,13 +320,16 @@ try {
         Stop-Process -Id $target.Id -Force -ErrorAction Stop
         Write-Output "Stopped portable local web process $($target.Id)."
     }
+    Remove-Item -LiteralPath $metadataPath -Force -ErrorAction SilentlyContinue
 
     if ($unrelatedProcessIds.Count -gt 0) {
         $unrelatedText = ($unrelatedProcessIds -join ', ')
-        Write-Output "Left unrelated listener process ID(s) $unrelatedText running."
+        Show-UserMessage `
+            -Message "Left unrelated listener process ID(s) $unrelatedText running." `
+            -Kind 'Warning'
     }
 }
 catch {
-    Write-Error $_.Exception.Message
+    Show-UserMessage -Message $_.Exception.Message -Kind 'Error'
     exit 1
 }
