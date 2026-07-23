@@ -14,6 +14,8 @@ $metadataPath = Join-Path -Path $runtimePath -ChildPath 'server.json'
 function Show-UserMessage {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
         [string]$Message,
 
         [Parameter(Mandatory = $true)]
@@ -21,6 +23,12 @@ function Show-UserMessage {
         [string]$Kind
     )
 
+    $safeMessage = if ([string]::IsNullOrWhiteSpace($Message)) {
+        'The portable launcher encountered an unknown error.'
+    }
+    else {
+        $Message
+    }
     $messageWasShown = $false
     $forceNonInteractive = [System.Environment]::GetEnvironmentVariable(
         'G2B_LAUNCHER_NONINTERACTIVE'
@@ -35,7 +43,7 @@ function Show-UserMessage {
                 [System.Windows.Forms.MessageBoxIcon]::Warning
             }
             [void][System.Windows.Forms.MessageBox]::Show(
-                $Message,
+                $safeMessage,
                 'G2B Contracts Local Web',
                 [System.Windows.Forms.MessageBoxButtons]::OK,
                 $icon
@@ -48,33 +56,70 @@ function Show-UserMessage {
     }
 
     if ($Kind -eq 'Error') {
-        Write-Error -Message $Message -ErrorAction Continue
+        try {
+            Write-Error -Message $safeMessage -ErrorAction Continue
+        }
+        catch {
+            try {
+                [System.Console]::Error.WriteLine($safeMessage)
+            }
+            catch {
+            }
+        }
     }
     elseif (-not $messageWasShown) {
-        Write-Warning -Message $Message
+        try {
+            Write-Warning -Message $safeMessage
+        }
+        catch {
+        }
     }
 }
 
 function Normalize-PathForComparison {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
         [string]$Path
     )
 
-    return [System.IO.Path]::GetFullPath($Path).TrimEnd('\').Replace('/', '\')
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath($Path).TrimEnd('\').Replace('/', '\')
+    }
+    catch {
+        return $null
+    }
 }
 
 function Test-CommandLineContainsExactPath {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
         [string]$CommandLine,
 
         [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
         [string]$ExpectedPath
     )
 
-    $normalizedCommandLine = $CommandLine.Replace('/', '\')
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or
+        [string]::IsNullOrWhiteSpace($ExpectedPath)) {
+        return $false
+    }
+
     $normalizedExpectedPath = Normalize-PathForComparison -Path $ExpectedPath
+    if ([string]::IsNullOrWhiteSpace($normalizedExpectedPath)) {
+        return $false
+    }
+
+    $normalizedCommandLine = $CommandLine.Replace('/', '\')
     $searchIndex = 0
 
     while ($searchIndex -lt $normalizedCommandLine.Length) {

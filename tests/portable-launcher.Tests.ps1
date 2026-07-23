@@ -143,6 +143,7 @@ Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Test-CommandLineC
 Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Test-MetadataMatchesListener')
 Invoke-Expression (Get-FunctionDefinition -Ast $startAst -Name 'Test-PortableServerIdentity')
 Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Test-ProcessIdentityUnchanged')
+Invoke-Expression (Get-FunctionDefinition -Ast $startAst -Name 'Show-UserMessage')
 
 $fixtureAppPath = 'C:\Portable Root\app'
 Assert-True -Condition (Test-CommandLineContainsExactPath `
@@ -160,6 +161,21 @@ Assert-True -Condition (-not (Test-CommandLineContainsExactPath `
 Assert-True -Condition (-not (Test-CommandLineContainsExactPath `
             -CommandLine '"XC:\Portable Root\app\node_modules\next\server.js"' `
             -ExpectedPath $fixtureAppPath)) -Message 'A path without a leading token boundary must not match'
+Assert-True -Condition (-not (Test-CommandLineContainsExactPath `
+            -CommandLine '' `
+            -ExpectedPath $fixtureAppPath)) -Message 'Empty command lines must fail closed'
+Assert-True -Condition (-not (Test-CommandLineContainsExactPath `
+            -CommandLine $null `
+            -ExpectedPath $fixtureAppPath)) -Message 'Null command lines must fail closed'
+
+$messageDisplayThrew = $false
+try {
+    Show-UserMessage -Message '' -Kind 'Error' 2>$null
+}
+catch {
+    $messageDisplayThrew = $true
+}
+Assert-True -Condition (-not $messageDisplayThrew) -Message 'Empty error messages must not throw'
 
 $listenerFixture = [pscustomobject]@{
     Id = 8123
