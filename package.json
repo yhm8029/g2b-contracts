@@ -7,6 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "test": "vitest run",
+    "test:portable": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/run-portable-tests.ps1",
     "db:init": "tsx scripts/db-init.ts",
     "contracts:import": "tsx scripts/import-contract-index.ts",
     "contracts:enrich": "tsx scripts/enrich-g2b-details.ts"
