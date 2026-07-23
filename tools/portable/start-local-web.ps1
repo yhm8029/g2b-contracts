@@ -552,7 +552,10 @@ try {
         $existingMetadata = $null
         if (Test-Path -LiteralPath $metadataPath -PathType Leaf) {
             try {
-                $existingMetadata = Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
+                $existingMetadata = Get-Content `
+                    -Raw `
+                    -LiteralPath $metadataPath `
+                    -Encoding UTF8 | ConvertFrom-Json
             }
             catch {
                 $existingMetadata = $null

@@ -363,7 +363,10 @@ try {
     $metadata = $null
     if (Test-Path -LiteralPath $metadataPath -PathType Leaf) {
         try {
-            $metadata = Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
+            $metadata = Get-Content `
+                -Raw `
+                -LiteralPath $metadataPath `
+                -Encoding UTF8 | ConvertFrom-Json
         }
         catch {
             $metadata = $null

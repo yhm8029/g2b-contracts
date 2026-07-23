@@ -320,8 +320,65 @@ Assert-True -Condition ($fixtureInstallRoot -eq 'C:\Fixture Install') -Message '
 $startText = Get-Content -Raw -LiteralPath $startScriptPath
 $stopText = Get-Content -Raw -LiteralPath $stopScriptPath
 
+$koreanFolderName = -join @(
+    [char]0xB098,
+    [char]0xB77C,
+    [char]0xC7A5,
+    [char]0xD130
+)
+$utf8AppPath = "C:\Fixture\$koreanFolderName\app"
+$utf8MetadataPath = Join-Path `
+    ([System.IO.Path]::GetTempPath()) `
+    "g2b-launcher-metadata-$([guid]::NewGuid().ToString('N')).json"
+$utf8MetadataFixture = [ordered]@{
+    AppPath = $utf8AppPath
+    RootProcessId = 8000
+    RootCreationTimeUtc = '2026-07-23T01:02:02.0000000Z'
+    ListenerProcessId = 8123
+    ListenerCreationTimeUtc = '2026-07-23T01:02:03.0000000Z'
+}
+$utf8ProcessChain = @(
+    [pscustomobject]@{
+        Id = 8123
+        ParentId = 8000
+        CommandLine = "`"$utf8AppPath\node_modules\next\server.js`""
+        CreationTimeUtc = '2026-07-23T01:02:03.0000000Z'
+    },
+    [pscustomobject]@{
+        Id = 8000
+        ParentId = 7000
+        CommandLine = "npx.cmd `"$utf8AppPath\node_modules\next\dist\bin\next`" start"
+        CreationTimeUtc = '2026-07-23T01:02:02.0000000Z'
+    }
+)
+try {
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText(
+        $utf8MetadataPath,
+        ($utf8MetadataFixture | ConvertTo-Json),
+        $utf8WithoutBom
+    )
+    $utf8ReadMetadata = Get-Content `
+        -LiteralPath $utf8MetadataPath `
+        -Raw `
+        -Encoding UTF8 | ConvertFrom-Json
+    Assert-True -Condition ($utf8ReadMetadata.AppPath -eq $utf8AppPath) `
+        -Message 'BOMless UTF-8 metadata must preserve the Korean app path'
+    Assert-True -Condition (Test-PortableServerIdentity `
+            -Metadata $utf8ReadMetadata `
+            -ProcessChain $utf8ProcessChain `
+            -ExpectedAppPath $utf8AppPath) -Message 'UTF-8 metadata identity must pass'
+}
+finally {
+    Remove-Item -LiteralPath $utf8MetadataPath -Force -ErrorAction SilentlyContinue
+}
+
 Assert-True -Condition (($startText -match "'runtime'") -and ($startText -match "'server\.json'")) `
     -Message 'Start metadata path is missing'
+Assert-True -Condition ($startText -match 'Get-Content[\s\S]*?-Encoding UTF8[\s\S]*?ConvertFrom-Json') `
+    -Message 'Start metadata must be read explicitly as UTF-8'
+Assert-True -Condition ($stopText -match 'Get-Content[\s\S]*?-Encoding UTF8[\s\S]*?ConvertFrom-Json') `
+    -Message 'Stop metadata must be read explicitly as UTF-8'
 Assert-True -Condition ($startText -match '\$request\.AllowAutoRedirect\s*=\s*\$false') `
     -Message 'Readiness must not follow redirects'
 Assert-True -Condition ($startText -match 'ListenerCreationTimeUtc') -Message 'Start metadata creation time is missing'
