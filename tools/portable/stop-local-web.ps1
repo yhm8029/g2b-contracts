@@ -157,6 +157,32 @@ function Test-MetadataMatchesListener {
     }
 }
 
+function Test-ProcessIdentityUnchanged {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Expected,
+
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [object]$Current
+    )
+
+    if ($null -eq $Current) {
+        return $false
+    }
+
+    return ([int]$Expected.Id -eq [int]$Current.Id) -and
+        ([int]$Expected.ParentId -eq [int]$Current.ParentId) -and
+        ([string]$Expected.CreationTimeUtc).Equals(
+            [string]$Current.CreationTimeUtc,
+            [System.StringComparison]::Ordinal
+        ) -and
+        ([string]$Expected.CommandLine).Equals(
+            [string]$Current.CommandLine,
+            [System.StringComparison]::Ordinal
+        )
+}
+
 $normalizedAppPath = Normalize-PathForComparison -Path $appPath
 
 function Get-ListeningProcessIds {
@@ -317,6 +343,12 @@ try {
 
     $targets = @($portableTargets.Values | Sort-Object -Property Depth)
     foreach ($target in $targets) {
+        $currentTarget = Get-ProcessDetails -ProcessId $target.Id
+        if (-not (Test-ProcessIdentityUnchanged -Expected $target -Current $currentTarget)) {
+            Write-Warning "Skipped process $($target.Id) because its identity changed or it exited."
+            continue
+        }
+
         Stop-Process -Id $target.Id -Force -ErrorAction Stop
         Write-Output "Stopped portable local web process $($target.Id)."
     }

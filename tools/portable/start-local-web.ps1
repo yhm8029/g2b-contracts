@@ -244,6 +244,63 @@ function Get-ProcessChain {
     return @($chain.ToArray())
 }
 
+function Test-PortableServerIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata,
+
+        [Parameter(Mandatory = $true)]
+        [object[]]$ProcessChain,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedAppPath
+    )
+
+    try {
+        if (($ProcessChain.Count -eq 0) -or
+            [string]::IsNullOrWhiteSpace([string]$Metadata.ListenerCreationTimeUtc) -or
+            [string]::IsNullOrWhiteSpace([string]$Metadata.RootCreationTimeUtc)) {
+            return $false
+        }
+
+        $metadataAppPath = Normalize-PathForComparison -Path ([string]$Metadata.AppPath)
+        $expectedNormalizedAppPath = Normalize-PathForComparison -Path $ExpectedAppPath
+        if (-not $metadataAppPath.Equals(
+                $expectedNormalizedAppPath,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+            return $false
+        }
+
+        $listener = $ProcessChain[0]
+        if (([int]$Metadata.ListenerProcessId -ne [int]$listener.Id) -or
+            (-not ([string]$Metadata.ListenerCreationTimeUtc).Equals(
+                    [string]$listener.CreationTimeUtc,
+                    [System.StringComparison]::Ordinal
+                ))) {
+            return $false
+        }
+
+        $root = $ProcessChain |
+            Where-Object { $_.Id -eq [int]$Metadata.RootProcessId } |
+            Select-Object -First 1
+        if (($null -eq $root) -or
+            (-not ([string]$Metadata.RootCreationTimeUtc).Equals(
+                    [string]$root.CreationTimeUtc,
+                    [System.StringComparison]::Ordinal
+                ))) {
+            return $false
+        }
+
+        return Test-CommandLineContainsExactPath `
+            -CommandLine $listener.CommandLine `
+            -ExpectedPath $expectedNormalizedAppPath
+    }
+    catch {
+        return $false
+    }
+}
+
 function Get-PortableListenerDetails {
     $matches = New-Object 'System.Collections.Generic.List[object]'
 
@@ -411,8 +468,40 @@ function Stop-StartedProcessTree {
 
 try {
     if (Test-HttpEndpoint -TargetUrl $url) {
-        Start-Process -FilePath $url | Out-Null
-        exit 0
+        $existingMetadata = $null
+        if (Test-Path -LiteralPath $metadataPath -PathType Leaf) {
+            try {
+                $existingMetadata = Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
+            }
+            catch {
+                $existingMetadata = $null
+            }
+        }
+
+        $existingListenerProcessIds = @(Get-ListeningProcessIds)
+        $existingIdentityMatches = $false
+        if (($null -ne $existingMetadata) -and ($existingListenerProcessIds.Count -eq 1)) {
+            $existingProcessChain = @(
+                Get-ProcessChain -StartingProcessId ([int]$existingListenerProcessIds[0])
+            )
+            $existingIdentityMatches = Test-PortableServerIdentity `
+                -Metadata $existingMetadata `
+                -ProcessChain $existingProcessChain `
+                -ExpectedAppPath $normalizedAppPath
+        }
+
+        if ($existingIdentityMatches) {
+            Start-Process -FilePath $url | Out-Null
+            exit 0
+        }
+
+        $processText = if ($existingListenerProcessIds.Count -gt 0) {
+            $existingListenerProcessIds -join ', '
+        }
+        else {
+            'unknown'
+        }
+        throw "Port $port returned HTTP 200 from unrelated process ID(s) $processText. The browser was not opened and no process was stopped."
     }
 
     $listenerProcessIds = @(Get-ListeningProcessIds)

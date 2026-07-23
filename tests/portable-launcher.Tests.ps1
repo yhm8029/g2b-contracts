@@ -141,6 +141,8 @@ Assert-True -Condition (-not (Invoke-HttpStatusFixture -StatusCode 500)) -Messag
 Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Normalize-PathForComparison')
 Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Test-CommandLineContainsExactPath')
 Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Test-MetadataMatchesListener')
+Invoke-Expression (Get-FunctionDefinition -Ast $startAst -Name 'Test-PortableServerIdentity')
+Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Test-ProcessIdentityUnchanged')
 
 $fixtureAppPath = 'C:\Portable Root\app'
 Assert-True -Condition (Test-CommandLineContainsExactPath `
@@ -206,6 +208,65 @@ Assert-True -Condition (-not (Test-MetadataMatchesListener `
             -Metadata $emptyCreationMetadataFixture `
             -Listener $emptyCreationListenerFixture `
             -ExpectedAppPath $fixtureAppPath)) -Message 'Empty creation times must fail closed'
+
+$portableIdentityMetadata = [pscustomobject]@{
+    AppPath = $fixtureAppPath
+    RootProcessId = 8000
+    RootCreationTimeUtc = '2026-07-23T01:02:02.0000000Z'
+    ListenerProcessId = 8123
+    ListenerCreationTimeUtc = '2026-07-23T01:02:03.0000000Z'
+}
+$portableIdentityChain = @(
+    [pscustomobject]@{
+        Id = 8123
+        ParentId = 8000
+        CommandLine = '"C:\Portable Root\app\node_modules\next\server.js"'
+        CreationTimeUtc = '2026-07-23T01:02:03.0000000Z'
+    },
+    [pscustomobject]@{
+        Id = 8000
+        ParentId = 7000
+        CommandLine = 'npx.cmd "C:\Portable Root\app\node_modules\next\dist\bin\next" start'
+        CreationTimeUtc = '2026-07-23T01:02:02.0000000Z'
+    }
+)
+Assert-True -Condition (Test-PortableServerIdentity `
+        -Metadata $portableIdentityMetadata `
+        -ProcessChain $portableIdentityChain `
+        -ExpectedAppPath $fixtureAppPath) -Message 'Matching portable listener/root identity must pass'
+
+$unrelatedIdentityChain = @(
+    [pscustomobject]@{
+        Id = 8123
+        ParentId = 8000
+        CommandLine = '"C:\Portable Root\app-backup\node_modules\next\server.js"'
+        CreationTimeUtc = '2026-07-23T01:02:03.0000000Z'
+    },
+    $portableIdentityChain[1]
+)
+Assert-True -Condition (-not (Test-PortableServerIdentity `
+            -Metadata $portableIdentityMetadata `
+            -ProcessChain $unrelatedIdentityChain `
+            -ExpectedAppPath $fixtureAppPath)) -Message 'Unrelated HTTP 200 listener must fail identity'
+
+$currentTargetFixture = [pscustomobject]@{
+    Id = 8123
+    ParentId = 8000
+    CommandLine = '"C:\Portable Root\app\node_modules\next\server.js"'
+    CreationTimeUtc = '2026-07-23T01:02:03.0000000Z'
+}
+Assert-True -Condition (Test-ProcessIdentityUnchanged `
+        -Expected $portableIdentityChain[0] `
+        -Current $currentTargetFixture) -Message 'Unchanged stop target identity must pass'
+$currentTargetFixture.CreationTimeUtc = '2026-07-23T01:02:04.0000000Z'
+Assert-True -Condition (-not (Test-ProcessIdentityUnchanged `
+            -Expected $portableIdentityChain[0] `
+            -Current $currentTargetFixture)) -Message 'Reused stop target PID must be skipped'
+$currentTargetFixture.CreationTimeUtc = '2026-07-23T01:02:03.0000000Z'
+$currentTargetFixture.CommandLine = '"C:\Portable Root\app-backup\node_modules\next\server.js"'
+Assert-True -Condition (-not (Test-ProcessIdentityUnchanged `
+            -Expected $portableIdentityChain[0] `
+            -Current $currentTargetFixture)) -Message 'Changed stop target command identity must be skipped'
 
 $fixtureScriptPath = 'C:\Fixture Install\tools\start-local-web.ps1'
 $fixtureInstallRoot = [System.IO.Path]::GetFullPath(
