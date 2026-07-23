@@ -144,6 +144,33 @@ Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Test-MetadataMatc
 Invoke-Expression (Get-FunctionDefinition -Ast $startAst -Name 'Test-PortableServerIdentity')
 Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Test-ProcessIdentityUnchanged')
 Invoke-Expression (Get-FunctionDefinition -Ast $startAst -Name 'Show-UserMessage')
+Invoke-Expression (Get-FunctionDefinition -Ast $stopAst -Name 'Test-CreationTimeMatches')
+
+Assert-True -Condition (Test-CreationTimeMatches `
+        -Expected '2026-07-23T01:02:03.1000000Z' `
+        -Actual '2026-07-23T01:02:03.9000000Z') -Message 'Sub-second creation precision differences must match'
+Assert-True -Condition (-not (Test-CreationTimeMatches `
+            -Expected '2026-07-23T01:02:03.0000000Z' `
+            -Actual '2026-07-23T01:02:05.0000000Z')) -Message 'Creation times two seconds apart must not match'
+
+$creationProbe = Start-Process powershell.exe `
+    -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 5') `
+    -WindowStyle Hidden `
+    -PassThru
+try {
+    Start-Sleep -Milliseconds 250
+    $firstCreation = Get-CimInstance Win32_Process -Filter "ProcessId = $($creationProbe.Id)"
+    Start-Sleep -Milliseconds 100
+    $secondCreation = Get-CimInstance Win32_Process -Filter "ProcessId = $($creationProbe.Id)"
+    $firstCreationUtc = ([datetime]$firstCreation.CreationDate).ToUniversalTime().ToString('o')
+    $secondCreationUtc = ([datetime]$secondCreation.CreationDate).ToUniversalTime().ToString('o')
+    Assert-True -Condition (Test-CreationTimeMatches `
+            -Expected $firstCreationUtc `
+            -Actual $secondCreationUtc) -Message 'Repeated CIM creation time reads must match'
+}
+finally {
+    Stop-Process -Id $creationProbe.Id -Force -ErrorAction SilentlyContinue
+}
 
 $fixtureAppPath = 'C:\Portable Root\app'
 Assert-True -Condition (Test-CommandLineContainsExactPath `
@@ -194,7 +221,7 @@ Assert-True -Condition (Test-MetadataMatchesListener `
 $reusedPidMetadataFixture = [pscustomobject]@{
     AppPath = $fixtureAppPath
     ListenerProcessId = 8123
-    ListenerCreationTimeUtc = '2026-07-23T01:02:04.0000000Z'
+    ListenerCreationTimeUtc = '2026-07-23T01:02:05.0000000Z'
 }
 Assert-True -Condition (-not (Test-MetadataMatchesListener `
             -Metadata $reusedPidMetadataFixture `
@@ -274,7 +301,7 @@ $currentTargetFixture = [pscustomobject]@{
 Assert-True -Condition (Test-ProcessIdentityUnchanged `
         -Expected $portableIdentityChain[0] `
         -Current $currentTargetFixture) -Message 'Unchanged stop target identity must pass'
-$currentTargetFixture.CreationTimeUtc = '2026-07-23T01:02:04.0000000Z'
+$currentTargetFixture.CreationTimeUtc = '2026-07-23T01:02:05.0000000Z'
 Assert-True -Condition (-not (Test-ProcessIdentityUnchanged `
             -Expected $portableIdentityChain[0] `
             -Current $currentTargetFixture)) -Message 'Reused stop target PID must be skipped'
@@ -302,6 +329,8 @@ Assert-True -Condition ($stopText -match 'ConvertFrom-Json') -Message 'Stop meta
 Assert-True -Condition ($startText -match 'Stop-StartedProcessTree') -Message 'Startup cleanup is missing'
 Assert-True -Condition ($startText -match 'root PID was reused|rootRecord.*rootIsSameProcess') `
     -Message 'Cleanup PID reuse guard is missing'
+Assert-True -Condition ($startText -match 'metadataWasWrittenByThisLaunch') `
+    -Message 'Metadata ownership guard is missing'
 Assert-True -Condition ($startText -match 'System\.Windows\.Forms') -Message 'Start MessageBox fallback is missing'
 Assert-True -Condition ($stopText -match 'System\.Windows\.Forms') -Message 'Stop MessageBox fallback is missing'
 Assert-True -Condition (($startText -match 'G2B_LAUNCHER_NONINTERACTIVE') -and

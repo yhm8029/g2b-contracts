@@ -96,6 +96,42 @@ function Normalize-PathForComparison {
     }
 }
 
+function Test-CreationTimeMatches {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Expected,
+
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Actual
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Expected) -or
+        [string]::IsNullOrWhiteSpace($Actual)) {
+        return $false
+    }
+
+    try {
+        $expectedTime = [datetime]::Parse(
+            $Expected,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        ).ToUniversalTime()
+        $actualTime = [datetime]::Parse(
+            $Actual,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        ).ToUniversalTime()
+        return [math]::Abs(($expectedTime - $actualTime).TotalMilliseconds) -le 1000
+    }
+    catch {
+        return $false
+    }
+}
+
 function Test-CommandLineContainsExactPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -192,10 +228,9 @@ function Test-MetadataMatchesListener {
             return $false
         }
 
-        return ([string]$Metadata.ListenerCreationTimeUtc).Equals(
-            [string]$Listener.CreationTimeUtc,
-            [System.StringComparison]::Ordinal
-        )
+        return Test-CreationTimeMatches `
+            -Expected ([string]$Metadata.ListenerCreationTimeUtc) `
+            -Actual ([string]$Listener.CreationTimeUtc)
     }
     catch {
         return $false
@@ -218,10 +253,9 @@ function Test-ProcessIdentityUnchanged {
 
     return ([int]$Expected.Id -eq [int]$Current.Id) -and
         ([int]$Expected.ParentId -eq [int]$Current.ParentId) -and
-        ([string]$Expected.CreationTimeUtc).Equals(
-            [string]$Current.CreationTimeUtc,
-            [System.StringComparison]::Ordinal
-        ) -and
+        (Test-CreationTimeMatches `
+            -Expected ([string]$Expected.CreationTimeUtc) `
+            -Actual ([string]$Current.CreationTimeUtc)) -and
         ([string]$Expected.CommandLine).Equals(
             [string]$Current.CommandLine,
             [System.StringComparison]::Ordinal

@@ -102,6 +102,42 @@ function Normalize-PathForComparison {
     }
 }
 
+function Test-CreationTimeMatches {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Expected,
+
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Actual
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Expected) -or
+        [string]::IsNullOrWhiteSpace($Actual)) {
+        return $false
+    }
+
+    try {
+        $expectedTime = [datetime]::Parse(
+            $Expected,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        ).ToUniversalTime()
+        $actualTime = [datetime]::Parse(
+            $Actual,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        ).ToUniversalTime()
+        return [math]::Abs(($expectedTime - $actualTime).TotalMilliseconds) -le 1000
+    }
+    catch {
+        return $false
+    }
+}
+
 function Test-CommandLineContainsExactPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -319,10 +355,9 @@ function Test-PortableServerIdentity {
 
         $listener = $ProcessChain[0]
         if (([int]$Metadata.ListenerProcessId -ne [int]$listener.Id) -or
-            (-not ([string]$Metadata.ListenerCreationTimeUtc).Equals(
-                    [string]$listener.CreationTimeUtc,
-                    [System.StringComparison]::Ordinal
-                ))) {
+            (-not (Test-CreationTimeMatches `
+                    -Expected ([string]$Metadata.ListenerCreationTimeUtc) `
+                    -Actual ([string]$listener.CreationTimeUtc)))) {
             return $false
         }
 
@@ -330,10 +365,9 @@ function Test-PortableServerIdentity {
             Where-Object { $_.Id -eq [int]$Metadata.RootProcessId } |
             Select-Object -First 1
         if (($null -eq $root) -or
-            (-not ([string]$Metadata.RootCreationTimeUtc).Equals(
-                    [string]$root.CreationTimeUtc,
-                    [System.StringComparison]::Ordinal
-                ))) {
+            (-not (Test-CreationTimeMatches `
+                    -Expected ([string]$Metadata.RootCreationTimeUtc) `
+                    -Actual ([string]$root.CreationTimeUtc)))) {
             return $false
         }
 
@@ -400,6 +434,7 @@ function Write-ServerMetadata {
 
 $startedRootProcessId = 0
 $startedRootCreationTimeUtc = ''
+$metadataWasWrittenByThisLaunch = $false
 
 function Stop-StartedProcessTree {
     param(
@@ -438,7 +473,9 @@ function Stop-StartedProcessTree {
 
     $rootRecord = $snapshot | Where-Object { $_.Id -eq $RootProcessId } | Select-Object -First 1
     $rootIsSameProcess = ($null -ne $rootRecord) -and
-        $rootRecord.CreationTimeUtc.Equals($RootCreationTimeUtc, [System.StringComparison]::Ordinal)
+        (Test-CreationTimeMatches `
+            -Expected $RootCreationTimeUtc `
+            -Actual $rootRecord.CreationTimeUtc)
     if (($null -ne $rootRecord) -and (-not $rootIsSameProcess)) {
         # A different creation time means the root PID was reused; fail closed.
         return
@@ -502,10 +539,9 @@ function Stop-StartedProcessTree {
     foreach ($target in @($targets.ToArray() | Sort-Object -Property Depth -Descending)) {
         $current = Get-ProcessDetails -ProcessId $target.Id
         if (($null -ne $current) -and
-            $current.CreationTimeUtc.Equals(
-                $target.CreationTimeUtc,
-                [System.StringComparison]::Ordinal
-            )) {
+            (Test-CreationTimeMatches `
+                -Expected $target.CreationTimeUtc `
+                -Actual $current.CreationTimeUtc)) {
             Stop-Process -Id $target.Id -Force -ErrorAction SilentlyContinue
         }
     }
@@ -624,6 +660,7 @@ try {
                 -Listener $portableListeners[0] `
                 -RootProcessId $serverProcess.Id `
                 -RootCreationTimeUtc $serverRootCreationTimeUtc
+            $metadataWasWrittenByThisLaunch = $true
             Start-Process -FilePath $url | Out-Null
             exit 0
         }
@@ -643,7 +680,9 @@ catch {
             -RootProcessId $startedRootProcessId `
             -RootCreationTimeUtc $startedRootCreationTimeUtc
     }
-    Remove-Item -LiteralPath $metadataPath -Force -ErrorAction SilentlyContinue
+    if (($startedRootProcessId -gt 0) -and $metadataWasWrittenByThisLaunch) {
+        Remove-Item -LiteralPath $metadataPath -Force -ErrorAction SilentlyContinue
+    }
     Show-UserMessage -Message $_.Exception.Message -Kind 'Error'
     exit 1
 }
