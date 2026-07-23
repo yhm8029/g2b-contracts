@@ -104,6 +104,101 @@ function New-PowerShellFileArguments {
     return '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $ScriptPath
 }
 
+function Get-PortableToolPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptName
+    )
+
+    if ([System.IO.Path]::GetFileName($ScriptName) -ne $ScriptName) {
+        throw "Portable script name must be a file name: $ScriptName"
+    }
+
+    return Join-Path $InstallRoot (Join-Path 'tools' $ScriptName)
+}
+
+function New-InstallerOwnedSiblingPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('installing', 'backup')]
+        [string]$Purpose
+    )
+
+    $destination = Normalize-PathForComparison -Path $DestinationRoot
+    $parent = Split-Path -Parent $destination
+    $leafName = Split-Path -Leaf $destination
+    $siblingName = '{0}.{1}-{2}' -f $leafName, $Purpose, [guid]::NewGuid().ToString('N')
+    return Normalize-PathForComparison -Path (Join-Path $parent $siblingName)
+}
+
+function Test-InstallerOwnedSiblingPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    $candidate = Normalize-PathForComparison -Path $Path
+    $destination = Normalize-PathForComparison -Path $DestinationRoot
+    $candidateParent = Normalize-PathForComparison -Path (Split-Path -Parent $candidate)
+    $destinationParent = Normalize-PathForComparison -Path (Split-Path -Parent $destination)
+    if (-not $candidateParent.Equals(
+            $destinationParent,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+        return $false
+    }
+
+    $destinationLeaf = [System.Text.RegularExpressions.Regex]::Escape(
+        (Split-Path -Leaf $destination)
+    )
+    $candidateLeaf = Split-Path -Leaf $candidate
+    return $candidateLeaf -match "^$destinationLeaf\.(installing|backup)-[0-9a-f]{32}$"
+}
+
+function Remove-InstallerOwnedDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $candidate = Normalize-PathForComparison -Path $Path
+    $expected = Normalize-PathForComparison -Path $ExpectedPath
+    if (-not $candidate.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing cleanup outside the exact installer-owned path: $candidate"
+    }
+    if (-not (Test-InstallerOwnedSiblingPath `
+            -Path $candidate `
+            -DestinationRoot $DestinationRoot)) {
+        throw "Refusing cleanup outside an installer-owned destination sibling: $candidate"
+    }
+
+    $candidateItem = Get-Item -LiteralPath $candidate -Force
+    if (($candidateItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Refusing recursive cleanup of a reparse point: $candidate"
+    }
+
+    Remove-Item -LiteralPath $candidate -Recurse -Force -ErrorAction Stop
+}
+
 function Show-UserError {
     param(
         [Parameter(Mandatory = $true)]
@@ -276,33 +371,6 @@ function Assert-SafeDestinationRoot {
     return $destination
 }
 
-function Remove-ExistingDestination {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$DestinationRoot,
-
-        [Parameter(Mandatory = $true)]
-        [string]$ValidatedDestinationRoot
-    )
-
-    if (-not (Test-Path -LiteralPath $DestinationRoot)) {
-        return
-    }
-
-    $currentDestination = Normalize-PathForComparison -Path $DestinationRoot
-    if (-not $currentDestination.Equals(
-            $ValidatedDestinationRoot,
-            [System.StringComparison]::OrdinalIgnoreCase
-        )) {
-        throw "Refusing recursive deletion outside the validated destination boundary: $currentDestination"
-    }
-    if (-not (Test-ExistingDestinationCanBeRemoved -DestinationRoot $currentDestination)) {
-        throw "Refusing to replace existing DestinationRoot without a valid installer marker: $currentDestination"
-    }
-
-    Remove-Item -LiteralPath $currentDestination -Recurse -Force -ErrorAction Stop
-}
-
 function Export-TrackedApplication {
     param(
         [Parameter(Mandatory = $true)]
@@ -378,7 +446,12 @@ function Copy-RequiredSourceFiles {
     if ($portableTools.Count -eq 0) {
         throw "Required portable tools are missing: $portableToolsSource"
     }
-    Copy-Item -LiteralPath $portableTools.FullName -Destination (Join-Path $DestinationRoot 'tools') -Force
+    foreach ($portableTool in $portableTools) {
+        $portableToolDestination = Get-PortableToolPath `
+            -InstallRoot $DestinationRoot `
+            -ScriptName $portableTool.Name
+        Copy-Item -LiteralPath $portableTool.FullName -Destination $portableToolDestination -Force
+    }
 }
 
 function Invoke-NpmBuild {
@@ -388,19 +461,22 @@ function Invoke-NpmBuild {
     )
 
     $nodeCommand = Get-Command -Name 'node.exe' -ErrorAction SilentlyContinue
-    $npmCommand = Get-Command -Name 'npm' -ErrorAction SilentlyContinue
+    $npmCommand = Get-Command `
+        -Name 'npm.cmd' `
+        -CommandType Application `
+        -ErrorAction SilentlyContinue
     if (($null -eq $nodeCommand) -or ($null -eq $npmCommand)) {
         throw 'Both node and npm must be available on PATH to build the portable application.'
     }
 
     Push-Location -LiteralPath $AppPath
     try {
-        & $npmCommand.Source ci
+        & $npmCommand.Path ci
         if ($LASTEXITCODE -ne 0) {
             throw "npm ci failed in $AppPath with exit code $LASTEXITCODE"
         }
 
-        & $npmCommand.Source run build
+        & $npmCommand.Path run build
         if ($LASTEXITCODE -ne 0) {
             throw "npm run build failed in $AppPath with exit code $LASTEXITCODE"
         }
@@ -413,7 +489,10 @@ function Invoke-NpmBuild {
 function New-PortableShortcut {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$DestinationRoot,
+        [string]$ShortcutRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$InstallRoot,
 
         [Parameter(Mandatory = $true)]
         [string]$ShortcutName,
@@ -430,17 +509,20 @@ function New-PortableShortcut {
         throw "Windows PowerShell was not found: $powerShellPath"
     }
 
-    $scriptPath = Join-Path $DestinationRoot (Join-Path 'tools\portable' $ScriptName)
-    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
-        throw "Shortcut target script was not found: $scriptPath"
+    $copiedScriptPath = Get-PortableToolPath `
+        -InstallRoot $ShortcutRoot `
+        -ScriptName $ScriptName
+    if (-not (Test-Path -LiteralPath $copiedScriptPath -PathType Leaf)) {
+        throw "Shortcut source script was not found: $copiedScriptPath"
     }
 
-    $shortcutPath = Join-Path $DestinationRoot $ShortcutName
+    $scriptPath = Get-PortableToolPath -InstallRoot $InstallRoot -ScriptName $ScriptName
+    $shortcutPath = Join-Path $ShortcutRoot $ShortcutName
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
     $shortcut.TargetPath = $powerShellPath
     $shortcut.Arguments = New-PowerShellFileArguments -ScriptPath $scriptPath
-    $shortcut.WorkingDirectory = $DestinationRoot
+    $shortcut.WorkingDirectory = $InstallRoot
     $shortcut.IconLocation = "$powerShellPath,0"
     $shortcut.Description = $Description
     $shortcut.Save()
@@ -466,6 +548,54 @@ function Write-InstallMarker {
     $marker | ConvertTo-Json | Set-Content `
         -LiteralPath (Join-Path $DestinationRoot $installerMarkerName) `
         -Encoding UTF8
+}
+
+function Complete-StagedInstallation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StagingRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    $backupRoot = $null
+    if (Test-Path -LiteralPath $DestinationRoot) {
+        if (-not (Test-ExistingDestinationCanBeRemoved -DestinationRoot $DestinationRoot)) {
+            throw "Refusing to replace existing DestinationRoot without a valid installer marker: $DestinationRoot"
+        }
+
+        $backupRoot = New-InstallerOwnedSiblingPath `
+            -DestinationRoot $DestinationRoot `
+            -Purpose 'backup'
+        Move-Item -LiteralPath $DestinationRoot -Destination $backupRoot -ErrorAction Stop
+    }
+
+    try {
+        Move-Item -LiteralPath $StagingRoot -Destination $DestinationRoot -ErrorAction Stop
+    }
+    catch {
+        $swapError = $_
+        if (($null -ne $backupRoot) -and
+            (Test-Path -LiteralPath $backupRoot) -and
+            (-not (Test-Path -LiteralPath $DestinationRoot))) {
+            try {
+                Move-Item -LiteralPath $backupRoot -Destination $DestinationRoot -ErrorAction Stop
+            }
+            catch {
+                throw "Installing the staged application failed and restoring the previous installation also failed. Previous installation remains at $backupRoot. Swap error: $($swapError.Exception.Message). Restore error: $($_.Exception.Message)"
+            }
+        }
+
+        throw $swapError
+    }
+
+    if (($null -ne $backupRoot) -and (Test-Path -LiteralPath $backupRoot)) {
+        Remove-InstallerOwnedDirectory `
+            -Path $backupRoot `
+            -ExpectedPath $backupRoot `
+            -DestinationRoot $DestinationRoot
+    }
 }
 
 function Invoke-PortableDesktopInstaller {
@@ -500,39 +630,57 @@ function Invoke-PortableDesktopInstaller {
         throw "Port 5182 is currently used by process ID(s) $($listenerIds -join ', '). Stop the server yourself before reinstalling; the installer does not stop processes."
     }
 
-    Remove-ExistingDestination `
-        -DestinationRoot $validatedDestinationRoot `
-        -ValidatedDestinationRoot $validatedDestinationRoot
-    New-Item -ItemType Directory -Path $validatedDestinationRoot -Force | Out-Null
-    foreach ($directoryName in @('app', 'data', 'logs', 'tools')) {
-        New-Item -ItemType Directory -Path (Join-Path $validatedDestinationRoot $directoryName) -Force | Out-Null
+    if ((Test-Path -LiteralPath $validatedDestinationRoot) -and
+        (-not (Test-ExistingDestinationCanBeRemoved -DestinationRoot $validatedDestinationRoot))) {
+        throw "Refusing to replace existing DestinationRoot without a valid installer marker: $validatedDestinationRoot"
     }
 
-    $appPath = Join-Path $validatedDestinationRoot 'app'
-    Export-TrackedApplication -SourceRoot $normalizedSourceRoot -DestinationAppPath $appPath
-    Copy-RequiredSourceFiles -SourceRoot $normalizedSourceRoot -DestinationRoot $validatedDestinationRoot
-    Invoke-NpmBuild -AppPath $appPath
+    $stagingRoot = New-InstallerOwnedSiblingPath `
+        -DestinationRoot $validatedDestinationRoot `
+        -Purpose 'installing'
+    try {
+        New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
+        foreach ($directoryName in @('app', 'data', 'logs', 'tools')) {
+            New-Item -ItemType Directory -Path (Join-Path $stagingRoot $directoryName) -Force | Out-Null
+        }
 
-    $package = Get-Content -LiteralPath (Join-Path $appPath 'package.json') -Raw | ConvertFrom-Json
-    $version = [string]$package.version
-    if ([string]::IsNullOrWhiteSpace($version)) {
-        throw 'The exported application package.json does not contain a version.'
+        $appPath = Join-Path $stagingRoot 'app'
+        Export-TrackedApplication -SourceRoot $normalizedSourceRoot -DestinationAppPath $appPath
+        Copy-RequiredSourceFiles -SourceRoot $normalizedSourceRoot -DestinationRoot $stagingRoot
+        Invoke-NpmBuild -AppPath $appPath
+
+        $package = Get-Content -LiteralPath (Join-Path $appPath 'package.json') -Raw | ConvertFrom-Json
+        $version = [string]$package.version
+        if ([string]::IsNullOrWhiteSpace($version)) {
+            throw 'The exported application package.json does not contain a version.'
+        }
+
+        New-PortableShortcut `
+            -ShortcutRoot $stagingRoot `
+            -InstallRoot $validatedDestinationRoot `
+            -ShortcutName '실행.lnk' `
+            -ScriptName 'start-local-web.ps1' `
+            -Description 'Start G2B Contracts local web'
+        New-PortableShortcut `
+            -ShortcutRoot $stagingRoot `
+            -InstallRoot $validatedDestinationRoot `
+            -ShortcutName '종료.lnk' `
+            -ScriptName 'stop-local-web.ps1' `
+            -Description 'Stop G2B Contracts local web'
+        Write-InstallMarker `
+            -DestinationRoot $stagingRoot `
+            -SourceCommit $sourceCommit `
+            -Version $version
+        Complete-StagedInstallation `
+            -StagingRoot $stagingRoot `
+            -DestinationRoot $validatedDestinationRoot
     }
-
-    New-PortableShortcut `
-        -DestinationRoot $validatedDestinationRoot `
-        -ShortcutName '실행.lnk' `
-        -ScriptName 'start-local-web.ps1' `
-        -Description 'Start G2B Contracts local web'
-    New-PortableShortcut `
-        -DestinationRoot $validatedDestinationRoot `
-        -ShortcutName '종료.lnk' `
-        -ScriptName 'stop-local-web.ps1' `
-        -Description 'Stop G2B Contracts local web'
-    Write-InstallMarker `
-        -DestinationRoot $validatedDestinationRoot `
-        -SourceCommit $sourceCommit `
-        -Version $version
+    finally {
+        Remove-InstallerOwnedDirectory `
+            -Path $stagingRoot `
+            -ExpectedPath $stagingRoot `
+            -DestinationRoot $validatedDestinationRoot
+    }
 
     Write-Output "Portable desktop application installed at $validatedDestinationRoot"
 }

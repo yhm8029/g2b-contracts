@@ -68,6 +68,12 @@ Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'Test-PathIsD
 Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'Test-ExistingDestinationCanBeRemoved')
 Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'New-PowerShellFileArguments')
 Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'Test-ArchiveContainsGitMetadata')
+Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'Get-PortableToolPath')
+Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'Copy-RequiredSourceFiles')
+Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'New-InstallerOwnedSiblingPath')
+Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'Test-InstallerOwnedSiblingPath')
+Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'Remove-InstallerOwnedDirectory')
+Invoke-Expression (Get-FunctionDefinition -Ast $installerAst -Name 'Complete-StagedInstallation')
 
 $desktopFixture = 'C:\Fixture User\Desktop'
 $expectedDestinationFixture = Join-Path $desktopFixture 'portable-app'
@@ -97,9 +103,84 @@ finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-$shortcutArguments = New-PowerShellFileArguments -ScriptPath 'C:\Fixture Install\tools\portable\start-local-web.ps1'
-Assert-True -Condition ($shortcutArguments -eq '-NoProfile -ExecutionPolicy Bypass -File "C:\Fixture Install\tools\portable\start-local-web.ps1"') `
+$shortcutTarget = Get-PortableToolPath `
+    -InstallRoot 'C:\Fixture Install' `
+    -ScriptName 'start-local-web.ps1'
+$shortcutArguments = New-PowerShellFileArguments -ScriptPath $shortcutTarget
+Assert-True -Condition ($shortcutArguments -eq '-NoProfile -ExecutionPolicy Bypass -File "C:\Fixture Install\tools\start-local-web.ps1"') `
     -Message 'Shortcut arguments must quote the PowerShell script path exactly once'
+
+try {
+    $sourceFixture = Join-Path $fixtureRoot 'source'
+    $destinationFixture = Join-Path $fixtureRoot 'destination'
+    foreach ($fixtureDirectory in @(
+            $sourceFixture,
+            (Join-Path $sourceFixture 'data'),
+            (Join-Path $sourceFixture 'tools\portable'),
+            (Join-Path $destinationFixture 'app'),
+            (Join-Path $destinationFixture 'data'),
+            (Join-Path $destinationFixture 'tools')
+        )) {
+        New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
+    }
+    'fixture-env' | Set-Content -LiteralPath (Join-Path $sourceFixture '.env.local')
+    'fixture-db' | Set-Content -LiteralPath (Join-Path $sourceFixture 'data\g2b-contracts.sqlite')
+    'start-fixture' | Set-Content -LiteralPath (Join-Path $sourceFixture 'tools\portable\start-local-web.ps1')
+    'stop-fixture' | Set-Content -LiteralPath (Join-Path $sourceFixture 'tools\portable\stop-local-web.ps1')
+
+    Copy-RequiredSourceFiles -SourceRoot $sourceFixture -DestinationRoot $destinationFixture
+
+    $copiedStartPath = Get-PortableToolPath `
+        -InstallRoot $destinationFixture `
+        -ScriptName 'start-local-web.ps1'
+    $copiedStopPath = Get-PortableToolPath `
+        -InstallRoot $destinationFixture `
+        -ScriptName 'stop-local-web.ps1'
+    Assert-True -Condition (Test-Path -LiteralPath $copiedStartPath -PathType Leaf) `
+        -Message 'Start shortcut target must be the path actually copied into root tools'
+    Assert-True -Condition (Test-Path -LiteralPath $copiedStopPath -PathType Leaf) `
+        -Message 'Stop shortcut target must be the path actually copied into root tools'
+    Assert-True -Condition (-not (Test-Path -LiteralPath (Join-Path $destinationFixture 'tools\portable'))) `
+        -Message 'Installed portable scripts must not be nested below tools\portable'
+
+    $stagingPath = New-InstallerOwnedSiblingPath `
+        -DestinationRoot $destinationFixture `
+        -Purpose 'installing'
+    New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null
+    'partial' | Set-Content -LiteralPath (Join-Path $stagingPath 'partial.txt')
+    Remove-InstallerOwnedDirectory `
+        -Path $stagingPath `
+        -ExpectedPath $stagingPath `
+        -DestinationRoot $destinationFixture
+    Assert-True -Condition (-not (Test-Path -LiteralPath $stagingPath)) `
+        -Message 'Installer-owned partial staging directory must be cleaned after failure'
+    Assert-True -Condition (Test-Path -LiteralPath $destinationFixture -PathType Container) `
+        -Message 'Staging cleanup must not remove the destination directory'
+
+    $existingDestinationFixture = Join-Path $fixtureRoot 'existing-destination'
+    New-Item -ItemType Directory -Path $existingDestinationFixture -Force | Out-Null
+    '{"version":"0.1.0","installedAt":"2026-07-23T00:00:00.0000000Z","sourceCommit":"old123"}' |
+        Set-Content -LiteralPath (Join-Path $existingDestinationFixture '.g2b-portable-install.json') -Encoding UTF8
+    'previous-install' | Set-Content -LiteralPath (Join-Path $existingDestinationFixture 'previous.txt')
+    $missingStagingFixture = New-InstallerOwnedSiblingPath `
+        -DestinationRoot $existingDestinationFixture `
+        -Purpose 'installing'
+    $swapFailed = $false
+    try {
+        Complete-StagedInstallation `
+            -StagingRoot $missingStagingFixture `
+            -DestinationRoot $existingDestinationFixture
+    }
+    catch {
+        $swapFailed = $true
+    }
+    Assert-True -Condition $swapFailed -Message 'Missing staging source must fail the swap'
+    Assert-True -Condition (Test-Path -LiteralPath (Join-Path $existingDestinationFixture 'previous.txt') -PathType Leaf) `
+        -Message 'Failed swap must restore the previous marked installation'
+}
+finally {
+    Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Assert-True -Condition (-not (Test-ArchiveContainsGitMetadata -EntryNames @(
             'package.json',
@@ -114,5 +195,9 @@ Assert-True -Condition ($installerText -match 'git.*archive') -Message 'Installe
 Assert-True -Condition ($installerText -match 'Expand-Archive') -Message 'Installer must extract the git archive safely'
 Assert-True -Condition ($installerText -match 'G2B_INSTALLER_NONINTERACTIVE') -Message 'Installer must support noninteractive user-error fallback'
 Assert-True -Condition ($installerText -match 'Get-ListeningProcessIds') -Message 'Installer must refuse to alter a running server'
+Assert-True -Condition ($installerText -match "-Name\s+'npm\.cmd'") `
+    -Message 'Installer must resolve npm.cmd explicitly'
+Assert-True -Condition ($installerText -match '(?s)finally\s*\{.*Remove-InstallerOwnedDirectory') `
+    -Message 'Installer must clean its partial staging directory in a finally block'
 
 Write-Output 'portable_installer_tests=passed'
