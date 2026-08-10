@@ -1,3 +1,4 @@
+import { drizzle } from "drizzle-orm/better-sqlite3";
 import { and, desc, eq, gte, lte, max, ne, sql } from "drizzle-orm";
 
 import type {
@@ -14,6 +15,79 @@ import type { ParsedContractCsvRow } from "@/lib/import/csv";
 const LEGACY_SHOPPING_THIRD_PARTY_SOURCE_DATASET = "g2b-shopping-mall-third-party-unit";
 
 type ImportRunStatus = "completed" | "completed_with_errors" | "failed";
+
+type BusinessProfileRow = {
+  bizNoNormalized: string;
+  bizNoDisplay: string | null;
+  businessName: string | null;
+  representativeName: string | null;
+  address: string | null;
+  phone?: string | null;
+  profileSource?: string | null;
+  lastSyncedAt?: string | null;
+};
+
+type BusinessTx = Pick<ReturnType<typeof drizzle>, "insert" | "select" | "update"> & {
+  select: ReturnType<typeof drizzle>["select"];
+};
+
+/**
+ * Insert or upsert a business profile while preserving any non-null
+ * fields already stored on the row. CSV/API fallback values only fill
+ * gaps; an existing non-null value (e.g. API-enriched name, phone, or
+ * address) is never overwritten with `null`.
+ */
+function upsertBusinessProfileFallback(
+  tx: BusinessTx,
+  row: BusinessProfileRow,
+  now: string,
+): void {
+  const incoming = {
+    bizNoNormalized: row.bizNoNormalized,
+    bizNoDisplay: row.bizNoDisplay ?? null,
+    businessName: row.businessName ?? null,
+    representativeName: row.representativeName ?? null,
+    address: row.address ?? null,
+    phone: row.phone ?? null,
+    profileSource: row.profileSource ?? null,
+    lastSyncedAt: row.lastSyncedAt ?? null,
+    updatedAt: now,
+  };
+
+  const existing = tx
+    .select({
+      bizNoDisplay: businesses.bizNoDisplay,
+      businessName: businesses.businessName,
+      representativeName: businesses.representativeName,
+      address: businesses.address,
+      phone: businesses.phone,
+      profileSource: businesses.profileSource,
+      lastSyncedAt: businesses.lastSyncedAt,
+    })
+    .from(businesses)
+    .where(eq(businesses.bizNoNormalized, row.bizNoNormalized))
+    .get();
+
+  if (existing === undefined) {
+    tx.insert(businesses).values(incoming).run();
+    return;
+  }
+
+  tx.update(businesses)
+    .set({
+      bizNoDisplay: existing.bizNoDisplay ?? incoming.bizNoDisplay,
+      businessName: existing.businessName ?? incoming.businessName,
+      representativeName:
+        existing.representativeName ?? incoming.representativeName,
+      address: existing.address ?? incoming.address,
+      phone: existing.phone ?? incoming.phone,
+      profileSource: existing.profileSource ?? incoming.profileSource,
+      lastSyncedAt: existing.lastSyncedAt ?? incoming.lastSyncedAt,
+      updatedAt: now,
+    })
+    .where(eq(businesses.bizNoNormalized, row.bizNoNormalized))
+    .run();
+}
 
 export type ImportRunInput = ImportResult & {
   sourceName: string;
@@ -64,27 +138,7 @@ export function upsertParsedRows(db: Db, rows: ParsedContractCsvRow[]): ImportRe
         let existing: { id: number } | undefined;
 
         tx.transaction((rowTx) => {
-          rowTx
-            .insert(businesses)
-            .values({
-              bizNoNormalized: row.bizNoNormalized,
-              bizNoDisplay: row.bizNoDisplay,
-              businessName: row.businessName,
-              representativeName: row.representativeName,
-              address: row.address,
-              updatedAt: now,
-            })
-            .onConflictDoUpdate({
-              target: businesses.bizNoNormalized,
-              set: {
-                bizNoDisplay: row.bizNoDisplay,
-                businessName: row.businessName,
-                representativeName: row.representativeName,
-                address: row.address,
-                updatedAt: now,
-              },
-            })
-            .run();
+          upsertBusinessProfileFallback(rowTx, row, now);
 
           const business = rowTx
             .select({ id: businesses.id })
