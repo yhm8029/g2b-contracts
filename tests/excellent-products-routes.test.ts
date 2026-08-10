@@ -1,7 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDb } from "@/lib/db/client";
@@ -50,12 +49,6 @@ function setupDatabase() {
   replaceExcellentProductsSnapshot(connection.db, [row()], "test.csv");
   connection.sqlite.close();
   return databaseUrl;
-}
-
-function syncRequest() {
-  return new NextRequest("http://localhost/api/excellent-products/building-control/sync", {
-    method: "POST",
-  });
 }
 
 describe("excellent product building-control routes", () => {
@@ -111,8 +104,8 @@ describe("excellent product building-control routes", () => {
     );
     const { POST } = await import("@/app/api/excellent-products/building-control/sync/route");
 
-    const first = POST(syncRequest());
-    const second = POST(syncRequest());
+    const first = POST();
+    const second = POST();
     await Promise.resolve();
     expect(syncMock.syncBuildingControlCompanies).toHaveBeenCalledOnce();
 
@@ -126,6 +119,12 @@ describe("excellent product building-control routes", () => {
     });
   });
 
+  it("declares sync POST as an arg-less route handler", async () => {
+    const { POST } = await import("@/app/api/excellent-products/building-control/sync/route");
+
+    expect(POST.length).toBe(0);
+  });
+
   it("does not turn an empty snapshot into a failed sync", async () => {
     vi.stubEnv("DATABASE_URL", join(mkdtempSync(join(tmpdir(), "excellent-products-empty-")), "empty.sqlite"));
     syncMock.syncBuildingControlCompanies.mockResolvedValue({
@@ -135,7 +134,7 @@ describe("excellent product building-control routes", () => {
     });
     const { POST } = await import("@/app/api/excellent-products/building-control/sync/route");
 
-    const response = await POST(syncRequest());
+    const response = await POST();
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -154,7 +153,7 @@ describe("excellent product building-control routes", () => {
     });
     const { POST } = await import("@/app/api/excellent-products/building-control/sync/route");
 
-    const response = await POST(syncRequest());
+    const response = await POST();
 
     expect(response.status).toBe(500);
     expect(await response.json()).toMatchObject({ processedCompanies: 1, updatedCompanies: 0 });

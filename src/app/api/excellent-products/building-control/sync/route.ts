@@ -50,7 +50,7 @@ function sanitizeResult(result: ExcellentProductSyncResult): ExcellentProductSyn
   };
 }
 
-export async function POST(_request?: Request) {
+export async function POST() {
   try {
     const result = sanitizeResult(await startSync());
     const allAttemptedCompaniesFailed =
