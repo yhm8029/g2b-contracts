@@ -73,8 +73,7 @@ export async function syncBuildingControlCompanies(
   };
 
   for (const company of companies) {
-    const shoppingCompanyName =
-      company.companyNameProfile?.trim() || company.companyNameCsv.trim();
+    const shoppingCompanyName = company.companyNameCsv.trim();
 
     try {
       // Deferring each invocation into a promise also turns a synchronous
