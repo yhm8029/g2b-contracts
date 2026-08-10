@@ -366,9 +366,12 @@ export function getBuildingControlExcellentProducts(
     // resolves the managed profile without changing product cardinality.
     .leftJoin(businesses, eq(businesses.bizNoNormalized, excellentProducts.bizNoNormalized))
     .where(
-      like(
-        excellentProducts.productClassificationNormalized,
-        `${TARGET_PRODUCT_CLASSIFICATION_PREFIX}%`,
+      and(
+        eq(excellentProducts.sourceDataset, EXCELLENT_PRODUCTS_SOURCE_DATASET),
+        like(
+          excellentProducts.productClassificationNormalized,
+          `${TARGET_PRODUCT_CLASSIFICATION_PREFIX}%`,
+        ),
       ),
     )
     .orderBy(
