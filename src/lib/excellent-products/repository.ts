@@ -37,6 +37,70 @@ export type ExcellentProductImportResult = {
   finishedAt: string;
 };
 
+export type BuildingControlExcellentProductCompany = {
+  bizNoNormalized: string;
+  /** Deterministic CSV fallback (the first name by source row ordering). */
+  companyNameCsv: string;
+  /** Current priority-managed profile name, when one exists. */
+  companyNameProfile: string | null;
+};
+
+/**
+ * Return one deterministic company candidate for each business in the fixed
+ * building-control snapshot. Product rows are deliberately reduced here so
+ * enrichment callers cannot accidentally issue one request per designation.
+ */
+export function getBuildingControlExcellentProductCompanies(
+  db: Db,
+): BuildingControlExcellentProductCompany[] {
+  const rows = db
+    .select({
+      bizNoNormalized: excellentProducts.bizNoNormalized,
+      companyNameCsv: excellentProducts.companyNameCsv,
+      companyNameProfile: businesses.businessName,
+      sourceRowHash: excellentProducts.sourceRowHash,
+      productClassificationNo: excellentProducts.productClassificationNo,
+      productClassificationNormalized: excellentProducts.productClassificationNormalized,
+    })
+    .from(excellentProducts)
+    .leftJoin(businesses, eq(businesses.bizNoNormalized, excellentProducts.bizNoNormalized))
+    .where(
+      and(
+        eq(excellentProducts.sourceDataset, EXCELLENT_PRODUCTS_SOURCE_DATASET),
+        like(
+          excellentProducts.productClassificationNormalized,
+          `${TARGET_PRODUCT_CLASSIFICATION_PREFIX}%`,
+        ),
+      ),
+    )
+    .orderBy(
+      asc(excellentProducts.bizNoNormalized),
+      asc(excellentProducts.companyNameCsv),
+      asc(excellentProducts.sourceRowHash),
+    )
+    .all()
+    .filter(
+      (row) =>
+        isTargetProductClassification(row.productClassificationNormalized) &&
+        isTargetProductClassification(row.productClassificationNo),
+    );
+
+  const companies: BuildingControlExcellentProductCompany[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.bizNoNormalized)) {
+      continue;
+    }
+    seen.add(row.bizNoNormalized);
+    companies.push({
+      bizNoNormalized: row.bizNoNormalized,
+      companyNameCsv: row.companyNameCsv,
+      companyNameProfile: row.companyNameProfile,
+    });
+  }
+  return companies;
+}
+
 /**
  * Replace the current excellent-product snapshot with the supplied rows.
  *
