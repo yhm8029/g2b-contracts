@@ -151,7 +151,7 @@ describe("getBuildingControlExcellentProducts", () => {
         "경기도 화성시 공장로 10",
         "충청북도 청주시 산단로 5",
       ]);
-      expect(item.industries).toEqual(["전기 공사업 (F4211)", "전동기 제조업 (C2811)"]);
+      expect(item.industries).toEqual(["전기 공사업", "전동기 제조업"]);
     }
 
     sqlite.close();
@@ -304,7 +304,7 @@ describe("getBuildingControlExcellentProducts", () => {
     expect(items[0].factoryLocations).toEqual(["경기도 화성시 공장로 10"]);
     expect(items[0].industries).toEqual([]);
     expect(items[1].factoryLocations).toEqual(["부산광역시 사하구 공단로 7"]);
-    expect(items[1].industries).toEqual(["전기 공사업 (F4211)"]);
+    expect(items[1].industries).toEqual(["전기 공사업"]);
 
     sqlite.close();
   });
