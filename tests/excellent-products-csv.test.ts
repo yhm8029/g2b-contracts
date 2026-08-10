@@ -721,6 +721,65 @@ describe("parseExcellentProductsCsv - combined classification parsing", () => {
       "Row 2: Missing product classification number.",
     ]);
   });
+
+  it("extracts the classification token from a separate number field without consuming later name digits", () => {
+    const headers = [
+      "물품규격내용",
+      "물품분류번호",
+      "물품분류명",
+      "업체대표자명",
+      "업체명",
+      "업체사업자번호",
+      "업체전화번호",
+      "업체주소",
+      "우수조달지정요청분야",
+      "우수조달지정증서번호",
+      "인증내역",
+      "제제유형",
+      "지정시작일자",
+      "지정연장일자",
+    ];
+    const row = [
+      "표준규격",
+      "39121801-01 model20",
+      "건물자동제어장치",
+      "홍길동",
+      "스마트빌딩",
+      "123-45-67890",
+      "02-1234-5678",
+      "서울특별시 강남구",
+      "건물자동제어장치",
+      "EQ-SEP-MODEL20-001",
+      "K마크",
+      "없음",
+      "2024-01-15",
+      "2026-01-14",
+    ];
+    const csv = [headers.join(","), row.join(",")].join("\n");
+    const result = parseExcellentProductsCsv(csv, "separate-model20.csv");
+
+    expect(result.errors).toEqual([]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].productClassificationNo).toBe("39121801-01");
+    expect(result.rows[0].productClassificationNormalized).toBe("3912180101");
+    expect(result.rows[0].productClassificationName).toBe("건물자동제어장치");
+  });
+
+  it("normalizes dot-separated 39121801.01 punctuation in the combined classification cell", () => {
+    const csv = [
+      buildOfficialHeaderRow(),
+      buildBaseRow({
+        물품분류: "39121801.01 빌딩자동제어장치",
+        우수조달지정증서번호: "EQ-PUNCT-001",
+      }),
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "punct.csv");
+    expect(result.errors).toEqual([]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].productClassificationNo).toBe("39121801.01");
+    expect(result.rows[0].productClassificationNormalized).toBe("3912180101");
+  });
 });
 
 describe("parseExcellentProductsCsv - result shape", () => {

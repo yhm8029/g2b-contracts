@@ -35,6 +35,7 @@ type ProductSeed = {
   designationEndDate?: string | null;
   certificationDetailsRaw?: string | null;
   sourceRowHash?: string;
+  sourceDataset?: string;
 };
 
 function createTempDb() {
@@ -70,7 +71,7 @@ function seedProduct(db: ReturnType<typeof createTempDb>["db"], seed: ProductSee
       designationEndDate: orDefault(seed.designationEndDate, "2027-01-14"),
       certificationDetailsRaw: orDefault(seed.certificationDetailsRaw, "K마크"),
       sanctionType: null,
-      sourceDataset: EXCELLENT_PRODUCTS_SOURCE_DATASET,
+      sourceDataset: seed.sourceDataset ?? EXCELLENT_PRODUCTS_SOURCE_DATASET,
       sourceRowHash: seed.sourceRowHash ?? `hash-${hashCounter}`,
       sourceFileName: "test.csv",
       sourceImportedAt: "2026-08-10T00:00:00.000Z",
@@ -305,6 +306,27 @@ describe("getBuildingControlExcellentProducts", () => {
     expect(items[0].industries).toEqual([]);
     expect(items[1].factoryLocations).toEqual(["부산광역시 사하구 공단로 7"]);
     expect(items[1].industries).toEqual(["전기 공사업"]);
+
+    sqlite.close();
+  });
+
+  it("excludes target-prefixed rows whose source_dataset is not the excellent-products dataset", () => {
+    const { db, sqlite } = createTempDb();
+
+    seedProduct(db, { designationNo: "EQ-2024-001" });
+    seedProduct(db, {
+      bizNoNormalized: "5566778899",
+      designationNo: "EQ-FOREIGN-001",
+      companyNameCsv: "외부데이터회사",
+      sourceDataset: "legacy-manual-import",
+    });
+
+    const result = getBuildingControlExcellentProducts(db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].designationNo).toBe("EQ-2024-001");
+    expect(result.companyCount).toBe(1);
+    expect(result.designationCount).toBe(1);
 
     sqlite.close();
   });

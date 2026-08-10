@@ -80,7 +80,7 @@ const DATE_PATTERNS: Array<{ pattern: RegExp; build: (m: RegExpExecArray) => str
 // a 10-digit no-separator form (e.g. "3912180101") and the 8-digit form
 // optionally followed by punctuation/spacing and exactly two more digits
 // (e.g. "39121801-01" or "39121801 01").
-const CLASSIFICATION_TOKEN_SOURCE_PATTERN = /^(?:(\d{10})|(\d{8})(?:[\s\-:·]+(\d{2}))?)(?!\d)/;
+const CLASSIFICATION_TOKEN_SOURCE_PATTERN = /^(?:(\d{10})|(\d{8})(?:[\s\-:·./]+(\d{2}))?)(?!\d)/;
 
 /**
  * Parse a 조달청 우수제품 지정 내역 CSV buffer into normalized snapshot rows.
@@ -447,14 +447,14 @@ function parseClassification(raw: Record<string, string>): ClassificationResult 
   const combinedField = getField(raw, "classificationCombined").trim();
 
   if (numberField.length > 0) {
-    const normalized = normalizeProductClassificationNo(numberField);
-    if (normalized.length === 0) {
+    const extracted = extractClassificationToken(numberField);
+    if (extracted === null) {
       return { ok: false, error: "Missing product classification number." };
     }
     return {
       ok: true,
-      rawToken: numberField,
-      normalized,
+      rawToken: extracted.rawToken,
+      normalized: extracted.normalized,
       name: nameField.length > 0 ? nameField : null,
     };
   }
@@ -468,20 +468,29 @@ function parseClassification(raw: Record<string, string>): ClassificationResult 
   // negative lookahead at the end guarantees the token terminates at a
   // non-digit (or at end-of-string), so e.g. "39121801 model20" parses
   // as "39121801" and never accidentally consumes the trailing "20".
-  const match = combinedField.match(CLASSIFICATION_TOKEN_SOURCE_PATTERN);
-  if (!match) {
+  const extracted = extractClassificationToken(combinedField);
+  if (extracted === null) {
     return { ok: false, error: "Missing product classification number." };
   }
 
-  const digits = match[1] ?? match[2] + (match[3] ?? "");
-  const rawToken = match[0];
-  const derivedName = deriveClassificationName(combinedField, digits);
+  const derivedName = deriveClassificationName(combinedField, extracted.normalized);
   return {
     ok: true,
-    rawToken,
-    normalized: digits,
+    rawToken: extracted.rawToken,
+    normalized: extracted.normalized,
     name: nameField.length > 0 ? nameField : derivedName,
   };
+}
+
+function extractClassificationToken(
+  value: string,
+): { rawToken: string; normalized: string } | null {
+  const match = value.match(CLASSIFICATION_TOKEN_SOURCE_PATTERN);
+  if (!match) {
+    return null;
+  }
+  const normalized = match[1] ?? match[2] + (match[3] ?? "");
+  return { rawToken: match[0], normalized };
 }
 
 function deriveClassificationName(combined: string, digits: string): string | null {

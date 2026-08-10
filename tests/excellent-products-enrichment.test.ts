@@ -380,4 +380,60 @@ describe("excellent product enrichment", () => {
       source: EXCELLENT_PRODUCTS_API_SOURCE_NAME,
     });
   });
+
+  it("accepts a shopping row whose non-null detailed field is unrelated when a base field is target-prefixed", async () => {
+    replaceExcellentProductsSnapshot(db, [row("1111111111", "회사 A", "a1")], "snapshot.csv");
+    const clients = clientsFor({
+      fetchCompanyIndustries: vi.fn(async () => []),
+      fetchThirdPartyProducts: vi.fn(async () => [
+        {
+          detailedClassificationNo: "99999999",
+          classificationNo: "39121801",
+          prdctClsfcNo: null,
+          dtilPrdctClsfcNo: null,
+          prdctNm: null,
+          prdctIdntNoNm: null,
+          prdctSpec: null,
+          cntrctCorpNm: null,
+          headOfficeLocation: null,
+          factoryLocation: "공장 디테일무관",
+        },
+      ]),
+    });
+
+    await syncBuildingControlCompanies(db, clients);
+    expect(
+      sqlite
+        .prepare("select location from factory_locations where biz_no_normalized = ?")
+        .all("1111111111"),
+    ).toEqual([{ location: "공장 디테일무관" }]);
+  });
+
+  it("preserves the inverse existing case where a target detailed field accepts the row", async () => {
+    replaceExcellentProductsSnapshot(db, [row("1111111111", "회사 A", "a1")], "snapshot.csv");
+    const clients = clientsFor({
+      fetchCompanyIndustries: vi.fn(async () => []),
+      fetchThirdPartyProducts: vi.fn(async () => [
+        {
+          detailedClassificationNo: "3912180101",
+          classificationNo: "99999999",
+          prdctClsfcNo: null,
+          dtilPrdctClsfcNo: null,
+          prdctNm: null,
+          prdctIdntNoNm: null,
+          prdctSpec: null,
+          cntrctCorpNm: null,
+          headOfficeLocation: null,
+          factoryLocation: "공장 디테일유관",
+        },
+      ]),
+    });
+
+    await syncBuildingControlCompanies(db, clients);
+    expect(
+      sqlite
+        .prepare("select location from factory_locations where biz_no_normalized = ?")
+        .all("1111111111"),
+    ).toEqual([{ location: "공장 디테일유관" }]);
+  });
 });

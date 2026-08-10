@@ -220,12 +220,13 @@ function dedupeFactories(rows: ExcellentProductShoppingRow[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const row of rows) {
-    const classification =
-      row.detailedClassificationNo ??
-      row.classificationNo ??
-      row.dtilPrdctClsfcNo ??
-      row.prdctClsfcNo;
-    if (!isTargetProductClassification(classification)) {
+    const isMatch = [
+      row.detailedClassificationNo,
+      row.classificationNo,
+      row.dtilPrdctClsfcNo,
+      row.prdctClsfcNo,
+    ].some((value) => isTargetProductClassification(value));
+    if (!isMatch) {
       continue;
     }
     const location = row.factoryLocation?.trim() ?? "";
