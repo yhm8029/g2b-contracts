@@ -231,7 +231,7 @@ describe("contract repository", () => {
     }
   });
 
-  it("does not leave a business-only partial write when a contract row fails", () => {
+  it("rolls back the entire import when a contract row fails", () => {
     const { sqlite, db } = createTempDb();
     const sourceFileName = "sample-contracts.csv";
     const csv = readFileSync(join(process.cwd(), "data", sourceFileName), "utf8");
@@ -248,19 +248,24 @@ describe("contract repository", () => {
     expect(parsed.errors).toEqual([]);
 
     try {
-      const result = importParsedRows(db, [malformedRow], "malformed.csv");
-
-      expect(result).toMatchObject({
-        rowCount: 1,
-        insertedCount: 0,
-        updatedCount: 0,
-        errorCount: 1,
-      });
+      expect(() => importParsedRows(db, [malformedRow], "malformed.csv")).toThrow();
 
       const business = sqlite
         .prepare("select id from businesses where biz_no_normalized = ?")
         .get("9876543210");
       expect(business).toBeUndefined();
+
+      const contract = sqlite
+        .prepare("select id from contract_records where source_row_hash = ?")
+        .get("malformed-row");
+      expect(contract).toBeUndefined();
+
+      const importRun = sqlite
+        .prepare(
+          "select id from import_runs where source_file_name = ?",
+        )
+        .get("malformed.csv");
+      expect(importRun).toBeUndefined();
     } finally {
       sqlite.close();
     }

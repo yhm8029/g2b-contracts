@@ -29,9 +29,19 @@ function ensureBusinessProfileColumns(db: Database.Database): void {
     try {
       db.exec(definition);
       existingColumns.add(column);
-    } catch {
-      // Column may already exist due to a parallel migration; ignore the
-      // duplicate-column error so re-runs remain idempotent.
+    } catch (error) {
+      // The ALTER may have raced with a concurrent migration. Re-read the
+      // column list and only swallow the error when the column is in fact
+      // present now; otherwise rethrow so callers do not silently keep an
+      // outdated schema.
+      const refreshedColumns = new Set(
+        (db.prepare("pragma table_info(businesses)").all() as { name: string }[]).map(
+          (entry) => entry.name,
+        ),
+      );
+      if (!refreshedColumns.has(column)) {
+        throw error;
+      }
     }
   }
 }

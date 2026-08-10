@@ -1,4 +1,3 @@
-import { drizzle } from "drizzle-orm/better-sqlite3";
 import { and, desc, eq, gte, lte, max, sql } from "drizzle-orm";
 
 import type {
@@ -10,76 +9,13 @@ import type {
 import type { Db } from "@/lib/db/client";
 import { apiEnrichmentLogs, businesses, contractRecords, importRuns } from "@/lib/db/schema";
 import { parseBusinessNumber } from "@/lib/domain/business-number";
+import {
+  EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
+  upsertBusinessProfilePriority,
+} from "@/lib/excellent-products/profile";
 import type { ParsedContractCsvRow } from "@/lib/import/csv";
 
 type ImportRunStatus = "completed" | "completed_with_errors" | "failed";
-
-type BusinessProfileRow = {
-  bizNoNormalized: string;
-  bizNoDisplay: string | null;
-  businessName: string | null;
-  representativeName: string | null;
-  address: string | null;
-  phone?: string | null;
-  profileSource?: string | null;
-  lastSyncedAt?: string | null;
-};
-
-type BusinessTx = Pick<ReturnType<typeof drizzle>, "insert" | "select" | "update"> & {
-  select: ReturnType<typeof drizzle>["select"];
-};
-
-function upsertBusinessProfileFallback(
-  tx: BusinessTx,
-  row: BusinessProfileRow,
-  now: string,
-): void {
-  const incoming = {
-    bizNoNormalized: row.bizNoNormalized,
-    bizNoDisplay: row.bizNoDisplay ?? null,
-    businessName: row.businessName ?? null,
-    representativeName: row.representativeName ?? null,
-    address: row.address ?? null,
-    phone: row.phone ?? null,
-    profileSource: row.profileSource ?? null,
-    lastSyncedAt: row.lastSyncedAt ?? null,
-    updatedAt: now,
-  };
-
-  const existing = tx
-    .select({
-      bizNoDisplay: businesses.bizNoDisplay,
-      businessName: businesses.businessName,
-      representativeName: businesses.representativeName,
-      address: businesses.address,
-      phone: businesses.phone,
-      profileSource: businesses.profileSource,
-      lastSyncedAt: businesses.lastSyncedAt,
-    })
-    .from(businesses)
-    .where(eq(businesses.bizNoNormalized, row.bizNoNormalized))
-    .get();
-
-  if (existing === undefined) {
-    tx.insert(businesses).values(incoming).run();
-    return;
-  }
-
-  tx.update(businesses)
-    .set({
-      bizNoDisplay: existing.bizNoDisplay ?? incoming.bizNoDisplay,
-      businessName: existing.businessName ?? incoming.businessName,
-      representativeName:
-        existing.representativeName ?? incoming.representativeName,
-      address: existing.address ?? incoming.address,
-      phone: existing.phone ?? incoming.phone,
-      profileSource: existing.profileSource ?? incoming.profileSource,
-      lastSyncedAt: existing.lastSyncedAt ?? incoming.lastSyncedAt,
-      updatedAt: now,
-    })
-    .where(eq(businesses.bizNoNormalized, row.bizNoNormalized))
-    .run();
-}
 
 export type ImportRunInput = ImportResult & {
   sourceName: string;
@@ -94,7 +30,7 @@ export function importParsedRows(
   db: Db,
   rows: ParsedContractCsvRow[],
   sourceFileName: string,
-  sourceName = "csv",
+  sourceName = EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
 ): ImportResult {
   const startedAt = new Date().toISOString();
   const result = upsertParsedRows(db, rows);
@@ -125,36 +61,73 @@ export function upsertParsedRows(db: Db, rows: ParsedContractCsvRow[]): ImportRe
 
   db.transaction((tx) => {
     for (const row of rows) {
-      try {
-        const now = new Date().toISOString();
-        let existing: { id: number } | undefined;
+      const now = new Date().toISOString();
+      let existing: { id: number } | undefined;
 
-        tx.transaction((rowTx) => {
-          upsertBusinessProfileFallback(rowTx, row, now);
+      tx.transaction((rowTx) => {
+        upsertBusinessProfilePriority(rowTx, {
+          bizNoNormalized: row.bizNoNormalized,
+          bizNoDisplay: row.bizNoDisplay ?? null,
+          businessName: row.businessName ?? null,
+          representativeName: row.representativeName ?? null,
+          address: row.address ?? null,
+          phone: null,
+          profileSource: EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
+          lastSyncedAt: null,
+        }, now);
 
-          const business = rowTx
-            .select({ id: businesses.id })
-            .from(businesses)
-            .where(eq(businesses.bizNoNormalized, row.bizNoNormalized))
-            .get();
+        const business = rowTx
+          .select({ id: businesses.id })
+          .from(businesses)
+          .where(eq(businesses.bizNoNormalized, row.bizNoNormalized))
+          .get();
 
-          existing = rowTx
-            .select({ id: contractRecords.id })
-            .from(contractRecords)
-            .where(
-              and(
-                eq(contractRecords.sourceDataset, row.sourceDataset),
-                eq(contractRecords.sourceRowHash, row.sourceRowHash),
-              ),
-            )
-            .get();
+        existing = rowTx
+          .select({ id: contractRecords.id })
+          .from(contractRecords)
+          .where(
+            and(
+              eq(contractRecords.sourceDataset, row.sourceDataset),
+              eq(contractRecords.sourceRowHash, row.sourceRowHash),
+            ),
+          )
+          .get();
 
-          rowTx
-            .insert(contractRecords)
-            .values({
+        rowTx
+          .insert(contractRecords)
+          .values({
+            businessId: business?.id ?? null,
+            sourceDataset: row.sourceDataset,
+            sourceRowHash: row.sourceRowHash,
+            businessCategory: row.businessCategory ?? "unknown",
+            noticeNo: row.noticeNo,
+            noticeOrder: row.noticeOrder,
+            noticeName: row.noticeName,
+            contractNo: row.contractNo,
+            unifiedContractNo: row.unifiedContractNo,
+            contractName: row.contractName,
+            contractDate: row.contractDate,
+            currentContractAmount: row.currentContractAmount,
+            totalContractAmount: row.totalContractAmount,
+            demandAgencyCode: row.demandAgencyCode,
+            demandAgencyName: row.demandAgencyName,
+            contractAgencyCode: row.contractAgencyCode,
+            contractAgencyName: row.contractAgencyName,
+            contractMethod: row.contractMethod,
+            winningMethod: row.winningMethod,
+            businessNameAtContract: row.businessNameAtContract,
+            bizNoNormalized: row.bizNoNormalized,
+            contractDetailUrl: row.contractDetailUrl,
+            noticeDetailUrl: row.noticeDetailUrl,
+            rawSourceUrl: row.rawSourceUrl,
+            sourceStatus: "local_only",
+            lastImportedAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [contractRecords.sourceDataset, contractRecords.sourceRowHash],
+            set: {
               businessId: business?.id ?? null,
-              sourceDataset: row.sourceDataset,
-              sourceRowHash: row.sourceRowHash,
               businessCategory: row.businessCategory ?? "unknown",
               noticeNo: row.noticeNo,
               noticeOrder: row.noticeOrder,
@@ -176,49 +149,17 @@ export function upsertParsedRows(db: Db, rows: ParsedContractCsvRow[]): ImportRe
               contractDetailUrl: row.contractDetailUrl,
               noticeDetailUrl: row.noticeDetailUrl,
               rawSourceUrl: row.rawSourceUrl,
-              sourceStatus: "local_only",
               lastImportedAt: now,
               updatedAt: now,
-            })
-            .onConflictDoUpdate({
-              target: [contractRecords.sourceDataset, contractRecords.sourceRowHash],
-              set: {
-                businessId: business?.id ?? null,
-                businessCategory: row.businessCategory ?? "unknown",
-                noticeNo: row.noticeNo,
-                noticeOrder: row.noticeOrder,
-                noticeName: row.noticeName,
-                contractNo: row.contractNo,
-                unifiedContractNo: row.unifiedContractNo,
-                contractName: row.contractName,
-                contractDate: row.contractDate,
-                currentContractAmount: row.currentContractAmount,
-                totalContractAmount: row.totalContractAmount,
-                demandAgencyCode: row.demandAgencyCode,
-                demandAgencyName: row.demandAgencyName,
-                contractAgencyCode: row.contractAgencyCode,
-                contractAgencyName: row.contractAgencyName,
-                contractMethod: row.contractMethod,
-                winningMethod: row.winningMethod,
-                businessNameAtContract: row.businessNameAtContract,
-                bizNoNormalized: row.bizNoNormalized,
-                contractDetailUrl: row.contractDetailUrl,
-                noticeDetailUrl: row.noticeDetailUrl,
-                rawSourceUrl: row.rawSourceUrl,
-                lastImportedAt: now,
-                updatedAt: now,
-              },
-            })
-            .run();
-        });
+            },
+          })
+          .run();
+      });
 
-        if (existing === undefined) {
-          result.insertedCount += 1;
-        } else {
-          result.updatedCount += 1;
-        }
-      } catch {
-        result.errorCount += 1;
+      if (existing === undefined) {
+        result.insertedCount += 1;
+      } else {
+        result.updatedCount += 1;
       }
     }
   });

@@ -1,7 +1,11 @@
 import { parseBusinessNumber } from "@/lib/domain/business-number";
 import { createSourceRowHash } from "@/lib/domain/source-row-hash";
 
-import { EXCELLENT_PRODUCT_HEADER_ALIASES, TARGET_PRODUCT_CLASSIFICATION_PREFIX } from "./constants";
+import {
+  EXCELLENT_PRODUCTS_SOURCE_DATASET,
+  EXCELLENT_PRODUCT_HEADER_ALIASES,
+  TARGET_PRODUCT_CLASSIFICATION_PREFIX,
+} from "./constants";
 import type {
   ExcellentProductCsvParseResult,
   ExcellentProductCsvRow,
@@ -388,7 +392,10 @@ function parseDataRow(
     certificationDetailsRaw,
     sanctionType,
     sourceRowHash,
-    sourceDataset: `csv:${sourceFileName}`,
+    // The entire snapshot shares a single stable dataset identifier so
+    // reconciliation and the unique (source_dataset, source_row_hash)
+    // index treat rows from different CSV files as one logical dataset.
+    sourceDataset: EXCELLENT_PRODUCTS_SOURCE_DATASET,
     sourceFileName,
     sourceImportedAt: importedAt,
     rawData: raw,
