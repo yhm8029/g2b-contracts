@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { Db } from "@/lib/db/client";
 import { companyIndustries, factoryLocations } from "@/lib/db/schema";
@@ -117,10 +117,20 @@ export async function syncBuildingControlCompanies(
         // Delete first so stale values disappear when the provider returns a
         // changed or empty list on a later successful sync.
         tx.delete(companyIndustries)
-          .where(eq(companyIndustries.bizNoNormalized, company.bizNoNormalized))
+          .where(
+            and(
+              eq(companyIndustries.bizNoNormalized, company.bizNoNormalized),
+              eq(companyIndustries.source, INDUSTRY_SOURCE),
+            ),
+          )
           .run();
         tx.delete(factoryLocations)
-          .where(eq(factoryLocations.bizNoNormalized, company.bizNoNormalized))
+          .where(
+            and(
+              eq(factoryLocations.bizNoNormalized, company.bizNoNormalized),
+              eq(factoryLocations.source, SHOPPING_SOURCE),
+            ),
+          )
           .run();
 
         const industryRows = dedupeIndustries(industries);

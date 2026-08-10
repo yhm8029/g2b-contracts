@@ -206,7 +206,7 @@ describe("excellent product enrichment", () => {
       "OLD",
       "Stale Industry",
       "active",
-      "shopping-mall",
+      EXCELLENT_PRODUCTS_API_SOURCE_NAME,
     );
     const clients = clientsFor({
       fetchCompanyIndustries: vi.fn()
@@ -260,6 +260,71 @@ describe("excellent product enrichment", () => {
         .prepare("select industry_code as industryCode, industry_name as industryName, status from company_industries where biz_no_normalized = ?")
         .all("1111111111"),
     ).toEqual([{ industryCode: "NEW", industryName: "New Industry", status: "active" }]);
+  });
+
+  it("preserves unrelated source rows while replacing owned industry and factory rows", async () => {
+    replaceExcellentProductsSnapshot(db, [row("1111111111", "Company A", "a1")], "snapshot.csv");
+    sqlite.prepare("insert into factory_locations (biz_no_normalized, location, source) values (?, ?, ?)").run(
+      "1111111111",
+      "legacy factory",
+      "legacy-source",
+    );
+    sqlite.prepare("insert into factory_locations (biz_no_normalized, location, source) values (?, ?, ?)").run(
+      "1111111111",
+      "owned stale factory",
+      "shopping-mall",
+    );
+    sqlite.prepare("insert into company_industries (biz_no_normalized, industry_code, industry_name, status, source) values (?, ?, ?, ?, ?)").run(
+      "1111111111",
+      "LEG",
+      "Legacy Industry",
+      "active",
+      "legacy-industry-source",
+    );
+    sqlite.prepare("insert into company_industries (biz_no_normalized, industry_code, industry_name, status, source) values (?, ?, ?, ?, ?)").run(
+      "1111111111",
+      "OLD",
+      "Owned Stale Industry",
+      "active",
+      EXCELLENT_PRODUCTS_API_SOURCE_NAME,
+    );
+    const clients = clientsFor({
+      fetchCompanyIndustries: vi.fn(async () => [{ indstrytyCd: "NEW", indstrytyNm: "Refreshed Industry", status: "active" }]),
+      fetchThirdPartyProducts: vi.fn(async () => [
+        {
+          prdctClsfcNo: "39121801",
+          dtilPrdctClsfcNo: "3912180101",
+          prdctNm: null,
+          prdctIdntNoNm: null,
+          prdctSpec: null,
+          cntrctCorpNm: null,
+          headOfficeLocation: null,
+          factoryLocation: "Refreshed Factory",
+        },
+      ]),
+    });
+
+    await syncBuildingControlCompanies(db, clients);
+    expect(
+      sqlite
+        .prepare(
+          "select location, source from factory_locations where biz_no_normalized = ? order by source, location",
+        )
+        .all("1111111111"),
+    ).toEqual([
+      { location: "legacy factory", source: "legacy-source" },
+      { location: "Refreshed Factory", source: "shopping-mall" },
+    ]);
+    expect(
+      sqlite
+        .prepare(
+          "select industry_code as industryCode, industry_name as industryName, status, source from company_industries where biz_no_normalized = ? order by source, industry_code",
+        )
+        .all("1111111111"),
+    ).toEqual([
+      { industryCode: "LEG", industryName: "Legacy Industry", status: "active", source: "legacy-industry-source" },
+      { industryCode: "NEW", industryName: "Refreshed Industry", status: "active", source: EXCELLENT_PRODUCTS_API_SOURCE_NAME },
+    ]);
   });
 
   it("stores no factory row when only a head office is returned", async () => {
