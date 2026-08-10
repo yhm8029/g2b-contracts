@@ -290,7 +290,7 @@ describe("fetchThirdPartyProducts", () => {
               dtilPrdctClsfcNo: "3912180101",
               prdctNm: "빌딩자동제어장치",
               prdctIdntNoNm: "BAC-A100",
-              prdctSpec: "AC 220V, RS-485",
+              prdctSpecNm: "AC 220V, RS-485",
               cntrctCorpNm: COMPANY_NAME,
             }),
           ],
@@ -387,6 +387,167 @@ describe("fetchThirdPartyProducts", () => {
       } else {
         process.env.DATA_GO_KR_SERVICE_KEY = previous;
       }
+    }
+  });
+
+  it("accepts the legacy prdctSpec field as an alias when prdctSpecNm is missing", async () => {
+    const restore = setupServiceKey();
+    mockFetchSequence([
+      () =>
+        envelopeBody(
+          [
+            productProviderItem({
+              prdctSpec: "AC 220V, RS-485",
+            }),
+          ],
+          1,
+        ),
+    ]);
+
+    try {
+      const products = await fetchThirdPartyProducts(COMPANY_NAME);
+      expect(products[0].prdctSpec).toBe("AC 220V, RS-485");
+    } finally {
+      restore();
+    }
+  });
+
+  it("prefers prdctSpecNm over the legacy prdctSpec alias when both are present", async () => {
+    const restore = setupServiceKey();
+    mockFetchSequence([
+      () =>
+        envelopeBody(
+          [
+            productProviderItem({
+              prdctSpecNm: "OFFICIAL SPEC",
+              prdctSpec: "LEGACY SPEC",
+            }),
+          ],
+          1,
+        ),
+    ]);
+
+    try {
+      const products = await fetchThirdPartyProducts(COMPANY_NAME);
+      expect(products[0].prdctSpec).toBe("OFFICIAL SPEC");
+    } finally {
+      restore();
+    }
+  });
+
+  it("redacts the configured service key from the non-00 resultMsg", async () => {
+    const previous = process.env.DATA_GO_KR_SERVICE_KEY;
+    process.env.DATA_GO_KR_SERVICE_KEY = "FAKE_KEY_ABCDE_12345";
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        response: {
+          header: {
+            resultCode: "30",
+            resultMsg: "PROVIDER ERROR: FAKE_KEY_ABCDE_12345 leaked into message",
+          },
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const caught = await fetchThirdPartyProducts(COMPANY_NAME).catch(
+        (error: unknown) => error,
+      );
+      expect(caught).toBeInstanceOf(G2bStandardContractError);
+      const error = caught as G2bStandardContractError;
+      expect(error.message).toContain("[REDACTED]");
+      expect(error.message).not.toContain("FAKE_KEY_ABCDE_12345");
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) {
+        delete process.env.DATA_GO_KR_SERVICE_KEY;
+      } else {
+        process.env.DATA_GO_KR_SERVICE_KEY = previous;
+      }
+    }
+  });
+
+  it("redacts the configured service key from the nkoneps ResponseError envelope and classifies auth messages", async () => {
+    const previous = process.env.DATA_GO_KR_SERVICE_KEY;
+    process.env.DATA_GO_KR_SERVICE_KEY = "FAKE_KEY_NKONEPS_99999";
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        "nkoneps.com.response.ResponseError": {
+          header: {
+            resultCode: "30",
+            resultMsg: "SERVICE KEY UNAUTHORIZED: FAKE_KEY_NKONEPS_99999",
+          },
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const caught = await fetchThirdPartyProducts(COMPANY_NAME).catch(
+        (error: unknown) => error,
+      );
+      expect(caught).toBeInstanceOf(G2bStandardContractError);
+      const error = caught as G2bStandardContractError;
+      expect(error.code).toBe("unauthorized_service_key");
+      expect(error.message).toContain("[REDACTED]");
+      expect(error.message).not.toContain("FAKE_KEY_NKONEPS_99999");
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) {
+        delete process.env.DATA_GO_KR_SERVICE_KEY;
+      } else {
+        process.env.DATA_GO_KR_SERVICE_KEY = previous;
+      }
+    }
+  });
+
+  it("classifies nkoneps ResponseError messages with auth keywords as unauthorized_service_key", async () => {
+    const restore = setupServiceKey();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        "nkoneps.com.response.ResponseError": {
+          header: {
+            resultCode: "30",
+            resultMsg: "SERVICE KEY UNAUTHORIZED",
+          },
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await expect(fetchThirdPartyProducts(COMPANY_NAME)).rejects.toMatchObject(
+        {
+          code: "unauthorized_service_key",
+        },
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      restore();
+    }
+  });
+
+  it("throws provider_error when totalCount indicates more rows but a fetched page is empty", async () => {
+    const restore = setupServiceKey();
+    const firstPage = [productProviderItem({ prdctNm: "제품1" })];
+    mockFetchSequence([
+      () => envelopeBody({ item: firstPage }, "5"),
+      () => envelopeBody({ item: [] }, "5"),
+    ]);
+
+    try {
+      await expect(fetchThirdPartyProducts(COMPANY_NAME)).rejects.toMatchObject(
+        {
+          code: "provider_error",
+          message: expect.stringContaining("more rows were still expected"),
+        },
+      );
+    } finally {
+      restore();
     }
   });
 
