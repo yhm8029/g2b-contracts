@@ -190,6 +190,7 @@ function parseCsvRecords(content: string): { records: CsvRow[]; error: string | 
   let field = "";
   let inQuotes = false;
   let physicalRow = 1;
+  let recordStartRow = 1;
   let started = false;
 
   let quoteStartRow = 1;
@@ -200,7 +201,7 @@ function parseCsvRecords(content: string): { records: CsvRow[]; error: string | 
     // Even if the record is empty (all blank fields), keep it so we can
     // count rows and report column-count errors consistently. Blank-line
     // handling is done at a higher level.
-    records.push({ physicalRow, fields });
+    records.push({ physicalRow: recordStartRow, fields });
     fields = [];
   };
 
@@ -231,6 +232,7 @@ function parseCsvRecords(content: string): { records: CsvRow[]; error: string | 
       physicalRow += 1;
       if (!inQuotes) {
         pushRecord();
+        recordStartRow = physicalRow;
         started = false;
       } else {
         // Preserve the exact CR/LF sequence inside the field so that
