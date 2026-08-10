@@ -30,9 +30,17 @@ describe("building-control excellent-products frontend behavior", () => {
 
   it("keeps CSV disabled until loaded and disables duplicate sync clicks", () => {
     expect(componentSource).toMatch(/syncLoading|isSyncing/);
-    expect(componentSource).toContain("disabled={isSyncing}");
+    expect(componentSource).toContain("disabled={isBusy}");
     expect(componentSource).toContain("resultsLoaded");
     expect(componentSource).toContain("최신 정보 갱신");
+  });
+
+  it("sequences lookup and sync/reload requests so stale results cannot win", () => {
+    expect(componentSource).toContain("requestGeneration");
+    expect(componentSource).toContain("generation !== requestGeneration.current");
+    expect(componentSource).toContain("await result.json()");
+    expect(componentSource).toContain("deriveExcellentProductsSyncWarning");
+    expect(componentSource).toContain("await loadProducts");
   });
 
   it("keeps the existing contract lookup on the home page and links to the dedicated page", () => {

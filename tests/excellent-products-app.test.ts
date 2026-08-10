@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildExcellentProductRowKey,
+  deriveExcellentProductsSyncWarning,
   filterBuildingControlProducts,
   sortBuildingControlProducts,
 } from "@/components/ExcellentProductsApp";
@@ -130,5 +131,15 @@ describe("building-control excellent-products UI contract", () => {
     expect(left).toEqual(leftCopy);
     expect(right).toEqual(rightCopy);
     expect(fallback).toEqual(fallbackCopy);
+  });
+
+  it("derives a generic count-only warning for partial sync results", () => {
+    expect(deriveExcellentProductsSyncWarning({ errors: [] })).toBeNull();
+    expect(deriveExcellentProductsSyncWarning({ errors: [{ message: "SECRET_API_KEY=do-not-show" }] }))
+      .toContain("1");
+    expect(deriveExcellentProductsSyncWarning({ errors: [{ message: "SECRET_API_KEY=do-not-show" }] }))
+      .not.toContain("SECRET_API_KEY");
+    expect(deriveExcellentProductsSyncWarning({ errors: [{}, {}, {}] }))
+      .toContain("3");
   });
 });

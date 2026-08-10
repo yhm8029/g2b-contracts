@@ -19,6 +19,15 @@ export type ExcellentProductSortKey =
   | "recognitionPeriod";
 export type ExcellentProductSortDirection = "asc" | "desc";
 
+export function deriveExcellentProductsSyncWarning(
+  result: { errors?: readonly unknown[] } | null | undefined,
+): string | null {
+  const errorCount = Array.isArray(result?.errors) ? result.errors.length : 0;
+  return errorCount > 0
+    ? `일부 업체의 최신 정보 갱신에 실패했습니다. ${errorCount}건은 기존 정보가 유지됩니다.`
+    : null;
+}
+
 export function buildExcellentProductRowKey(
   item: Pick<
     ExcellentProductViewItem,
@@ -101,14 +110,16 @@ export function ExcellentProductsApp() {
   const [sortKey, setSortKey] = useState<ExcellentProductSortKey>("companyName");
   const [sortDirection, setSortDirection] = useState<ExcellentProductSortDirection>("asc");
   const [isSyncing, setIsSyncing] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
   const syncInFlight = useRef(false);
+  const requestGeneration = useRef(0);
 
   const visibleItems = useMemo(() => {
     const filtered = filterBuildingControlProducts(response?.items ?? [], companyNameQuery);
     return sortBuildingControlProducts(filtered, sortKey, sortDirection);
   }, [companyNameQuery, response?.items, sortDirection, sortKey]);
 
-  async function loadProducts() {
+  async function loadProducts(generation: number): Promise<boolean> {
     setStatus("loading");
     setError(null);
     try {
@@ -117,28 +128,42 @@ export function ExcellentProductsApp() {
       });
       if (!result.ok) throw new Error(await readError(result, "우수업체 조회에 실패했습니다."));
       const payload = (await result.json()) as BuildingControlExcellentProductsResponse;
+      if (generation !== requestGeneration.current) return false;
       setResponse(payload);
       setStatus("loaded");
+      return true;
     } catch (caught: unknown) {
+      if (generation !== requestGeneration.current) return false;
       setStatus("error");
       setError(caught instanceof Error ? caught.message : "우수업체 조회에 실패했습니다.");
+      return false;
     }
   }
 
   async function handleLookup() {
-    await loadProducts();
+    setWarning(null);
+    const generation = ++requestGeneration.current;
+    await loadProducts(generation);
   }
 
   async function handleSync() {
     if (syncInFlight.current) return;
     syncInFlight.current = true;
+    const syncGeneration = ++requestGeneration.current;
     setIsSyncing(true);
     setError(null);
+    setWarning(null);
     try {
       const result = await fetch(EXCELLENT_PRODUCTS_SYNC_ENDPOINT, { method: "POST" });
       if (!result.ok) throw new Error(await readError(result, "최신 정보 갱신에 실패했습니다."));
-      await loadProducts();
+      const syncPayload = (await result.json()) as { errors?: unknown[] };
+      if (syncGeneration !== requestGeneration.current) return;
+      const reloadGeneration = ++requestGeneration.current;
+      const reloadSucceeded = await loadProducts(reloadGeneration);
+      if (!reloadSucceeded || reloadGeneration !== requestGeneration.current) return;
+      setWarning(deriveExcellentProductsSyncWarning(syncPayload));
     } catch (caught: unknown) {
+      if (syncGeneration !== requestGeneration.current) return;
       setStatus("error");
       setError(caught instanceof Error ? caught.message : "최신 정보 갱신에 실패했습니다.");
     } finally {
@@ -156,6 +181,7 @@ export function ExcellentProductsApp() {
     setSortDirection("asc");
   }
 
+  const isBusy = status === "loading" || isSyncing;
   const resultsLoaded = status === "loaded";
 
   return (
@@ -183,10 +209,10 @@ export function ExcellentProductsApp() {
             />
           </label>
           <div className="excellent-products-actions">
-            <button className="primary-button" onClick={handleLookup} type="button">
+            <button className="primary-button" disabled={isBusy} onClick={handleLookup} type="button">
               조달우수업체 전체 조회
             </button>
-            <button className="secondary-button" disabled={isSyncing} onClick={handleSync} type="button">
+            <button className="secondary-button" disabled={isBusy} onClick={handleSync} type="button">
               {isSyncing ? "최신 정보 갱신 중…" : "최신 정보 갱신"}
             </button>
             {resultsLoaded ? (
@@ -201,6 +227,7 @@ export function ExcellentProductsApp() {
 
         {status === "loading" ? <p className="excellent-products-status" role="status">조회 중입니다…</p> : null}
         {error ? <p className="excellent-products-error" role="alert">{error}</p> : null}
+        {warning ? <p className="excellent-products-warning" role="status">{warning}</p> : null}
         {resultsLoaded ? (
           <div className="excellent-products-summary" aria-live="polite">
             <span>업체 수 <strong>{response?.companyCount ?? 0}</strong></span>
