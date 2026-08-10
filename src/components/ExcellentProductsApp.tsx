@@ -19,6 +19,20 @@ export type ExcellentProductSortKey =
   | "recognitionPeriod";
 export type ExcellentProductSortDirection = "asc" | "desc";
 
+export function buildExcellentProductRowKey(
+  item: Pick<
+    ExcellentProductViewItem,
+    "bizNoNormalized" | "designationNo" | "productClassificationNormalized" | "productSpec"
+  >,
+): string {
+  return JSON.stringify([
+    item.bizNoNormalized,
+    item.designationNo,
+    item.productClassificationNormalized,
+    item.productSpec ?? null,
+  ]);
+}
+
 const TABLE_HEADERS = [
   "No.",
   "지정번호",
@@ -221,7 +235,9 @@ export function ExcellentProductsApp() {
                 </tr>
               </thead>
               <tbody>
-                {visibleItems.map((item, index) => <ExcellentProductRow index={index} item={item} key={`${item.designationNo}-${item.bizNoNormalized}`} />)}
+                {visibleItems.map((item, index) => (
+                  <ExcellentProductRow index={index} item={item} key={buildExcellentProductRowKey(item)} />
+                ))}
               </tbody>
             </table>
           </div>

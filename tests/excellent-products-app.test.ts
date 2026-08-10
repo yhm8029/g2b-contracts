@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildExcellentProductRowKey,
   filterBuildingControlProducts,
   sortBuildingControlProducts,
 } from "@/components/ExcellentProductsApp";
@@ -102,5 +103,32 @@ describe("building-control excellent-products UI contract", () => {
     const sorted = sortBuildingControlProducts(source, "companyName");
     expect(sorted.map((entry) => entry.designationNo)).toEqual(["20", "2", "10"]);
     expect(source.map((entry) => entry.designationNo)).toEqual(["20", "10", "2"]);
+  });
+
+  it("uses bizNo/designation/classification/productSpec for stable unique React keys", () => {
+    const shared = {
+      designationNo: "EQ-2026-001",
+      bizNoNormalized: "1234567890",
+      productClassificationNo: "39121801-01",
+      productClassificationNormalized: "3912180101",
+    } as const;
+
+    const left = item({ ...shared, productSpec: "BC-1" });
+    const right = item({ ...shared, productSpec: "BC-2" });
+    const fallback = item({ ...shared, productSpec: null });
+
+    expect(buildExcellentProductRowKey(left)).not.toBe(buildExcellentProductRowKey(right));
+    expect(buildExcellentProductRowKey(left)).not.toBe(buildExcellentProductRowKey(fallback));
+    expect(buildExcellentProductRowKey(right)).not.toBe(buildExcellentProductRowKey(fallback));
+
+    const leftCopy = { ...left };
+    const rightCopy = { ...right };
+    const fallbackCopy = { ...fallback };
+    const keySet = new Set([buildExcellentProductRowKey(left), buildExcellentProductRowKey(right), buildExcellentProductRowKey(fallback)]);
+
+    expect(keySet.size).toBe(3);
+    expect(left).toEqual(leftCopy);
+    expect(right).toEqual(rightCopy);
+    expect(fallback).toEqual(fallbackCopy);
   });
 });
