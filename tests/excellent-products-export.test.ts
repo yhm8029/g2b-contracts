@@ -87,7 +87,7 @@ function buildItem(overrides: Partial<ExcellentProductViewItem> = {}): Excellent
     designationEndDate: "2027-01-14",
     certificationDetailsRaw: "K마크",
     factoryLocations: ["경기도 화성시 공장로 10"],
-    industries: ["전기 공사업 (F4211)"],
+    industries: ["전기 공사업"],
   };
 
   return { ...base, ...overrides };
@@ -140,7 +140,7 @@ describe("excellentProductsToCsv", () => {
       "BCU-100",
       "K마크",
       "경기도 화성시 공장로 10",
-      "전기 공사업 (F4211)",
+      "전기 공사업",
     ]);
   });
 
@@ -148,13 +148,13 @@ describe("excellentProductsToCsv", () => {
     const csv = excellentProductsToCsv([
       buildItem({
         factoryLocations: ["경기도 화성시 공장로 10", "충청북도 청주시 산단로 5"],
-        industries: ["전기 공사업 (F4211)", "전동기 제조업 (C2811)"],
+        industries: ["전기 공사업", "전동기 제조업"],
       }),
     ]);
     const [, record] = parseCsvRecords(csv.slice(1));
 
     expect(record[14]).toBe("경기도 화성시 공장로 10; 충청북도 청주시 산단로 5");
-    expect(record[15]).toBe("전기 공사업 (F4211); 전동기 제조업 (C2811)");
+    expect(record[15]).toBe("전기 공사업; 전동기 제조업");
   });
 
   it("labels missing phone, factory, and license data explicitly", () => {

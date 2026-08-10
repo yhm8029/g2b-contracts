@@ -261,21 +261,6 @@ function sortedValues(values: Set<string> | undefined): string[] {
   return [...values].sort((left, right) => left.localeCompare(right, "ko"));
 }
 
-/** Render one industry row as the license label shown in 면허 현황. */
-function formatIndustryLabel(industryName: string, industryCode: string): string {
-  const name = industryName.trim();
-  const code = industryCode.trim();
-
-  if (name.length === 0) {
-    return code;
-  }
-  if (code.length === 0) {
-    return name;
-  }
-
-  return `${name} (${code})`;
-}
-
 /**
  * Read the building-control excellent products currently stored in the
  * local database. No external API is called.
@@ -356,7 +341,6 @@ export function getBuildingControlExcellentProducts(
       : db
           .select({
             bizNoNormalized: companyIndustries.bizNoNormalized,
-            industryCode: companyIndustries.industryCode,
             industryName: companyIndustries.industryName,
           })
           .from(companyIndustries)
@@ -366,10 +350,12 @@ export function getBuildingControlExcellentProducts(
   // Production sites come from `factory_locations` only. Head-office
   // addresses are never stored there and never surface as a factory.
   const factoriesByBusiness = groupByBusiness(factoryRows);
+  // 면허 현황 displays the trimmed industry name only; the industry code
+  // stays in the database but never leaks into the response or its fallback.
   const industriesByBusiness = groupByBusiness(
     industryRows.map((row) => ({
       bizNoNormalized: row.bizNoNormalized,
-      value: formatIndustryLabel(row.industryName, row.industryCode),
+      value: row.industryName,
     })),
   );
 
