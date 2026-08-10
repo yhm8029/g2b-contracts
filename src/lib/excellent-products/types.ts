@@ -39,7 +39,11 @@ export type ExcellentProductCsvRow = {
   sanctionType: string | null;
   /** Stable SHA-256 hash of the canonical row keys. */
   sourceRowHash: string;
-  /** Dataset identifier for traceability (e.g. csv:filename.csv). */
+  /**
+   * Stable dataset identifier shared by the whole snapshot
+   * (`EXCELLENT_PRODUCTS_SOURCE_DATASET`), independent of the CSV file
+   * name so consecutive imports reconcile against one logical dataset.
+   */
   sourceDataset: string;
   /** Source file name. */
   sourceFileName: string;
@@ -54,4 +58,59 @@ export type ExcellentProductCsvParseResult = {
   errors: string[];
   totalRowCount: number;
   skippedCount: number;
+};
+
+/**
+ * One row of the 16-column building-control excellent products view.
+ *
+ * Product designations are the cardinality root: each designation stays a
+ * separate item even when several belong to the same business. Company
+ * fields resolve from the priority-managed `businesses` profile first and
+ * fall back to the exact CSV values captured at import time; missing data
+ * stays `null` and is never substituted from another source.
+ */
+export type ExcellentProductViewItem = {
+  /** Designation certificate number (지정번호). */
+  designationNo: string;
+  /** Business registration number normalized to 10 digits. */
+  bizNoNormalized: string;
+  /** Resolved company name (상호명). */
+  companyName: string;
+  /** Resolved representative name (대표자명), or null when unknown. */
+  representativeName: string | null;
+  /** Resolved phone number (전화번호), or null when unknown. */
+  phone: string | null;
+  /** Resolved address (주소), or null when unknown. */
+  address: string | null;
+  /** Product name (품명). */
+  productName: string;
+  /** Product specification (규격모델). */
+  productSpec: string | null;
+  /** Raw classification token as stored (물품분류번호). */
+  productClassificationNo: string;
+  /** Normalized classification number (digits only). */
+  productClassificationNormalized: string;
+  /** Classification name (물품분류명). */
+  productClassificationName: string | null;
+  /** Designation start date (발급일자). */
+  designationStartDate: string | null;
+  /** Designation end date (인정(연장)기간). */
+  designationEndDate: string | null;
+  /** Certification details exactly as captured from the source. */
+  certificationDetailsRaw: string | null;
+  /** Deduplicated, sorted factory locations (생산지). Never head offices. */
+  factoryLocations: string[];
+  /** Deduplicated, sorted industry/license labels (면허 현황). */
+  industries: string[];
+};
+
+/** Response payload of the dedicated building-control lookup. */
+export type BuildingControlExcellentProductsResponse = {
+  /** Always the fixed `39121801` classification prefix. */
+  classification: string;
+  /** Number of distinct normalized business numbers in the result. */
+  companyCount: number;
+  /** Number of result rows (designations). */
+  designationCount: number;
+  items: ExcellentProductViewItem[];
 };
