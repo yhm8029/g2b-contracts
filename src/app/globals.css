@@ -1238,6 +1238,13 @@ tbody tr.selected {
   color: var(--danger);
 }
 
+.excellent-products-warning {
+  background: #fff8e6;
+  color: #815d00;
+  margin: 0;
+  padding: 12px 14px;
+}
+
 .excellent-products-summary {
   display: flex;
   flex-wrap: wrap;
