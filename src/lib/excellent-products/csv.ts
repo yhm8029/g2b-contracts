@@ -71,7 +71,12 @@ const DATE_PATTERNS: Array<{ pattern: RegExp; build: (m: RegExpExecArray) => str
   },
 ];
 
-const CLASSIFICATION_TOKEN_PATTERN = /(\d{10}|\d{8})/;
+// Match the classification token directly from the source cell so that
+// later digits in the human-readable name never join the code. Accepts both
+// a 10-digit no-separator form (e.g. "3912180101") and the 8-digit form
+// optionally followed by punctuation/spacing and exactly two more digits
+// (e.g. "39121801-01" or "39121801 01").
+const CLASSIFICATION_TOKEN_SOURCE_PATTERN = /^(?:(\d{10})|(\d{8})(?:[\s\-:·]+(\d{2}))?)(?!\d)/;
 
 /**
  * Parse a 조달청 우수제품 지정 내역 CSV buffer into normalized snapshot rows.
@@ -85,7 +90,10 @@ export function parseExcellentProductsCsv(
   sourceFileName: string,
 ): ExcellentProductCsvParseResult {
   const stripped = stripBom(content);
-  const records = parseCsvRecords(stripped);
+  const { records, error: parseError } = parseCsvRecords(stripped);
+  if (parseError !== null) {
+    return { rows: [], errors: [parseError], totalRowCount: 0, skippedCount: 0 };
+  }
   const nonBlankRecords = records.filter((record) => !isBlankRecord(record.fields));
 
   if (nonBlankRecords.length === 0) {
@@ -176,13 +184,15 @@ function stripBom(content: string): string {
   return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
 }
 
-function parseCsvRecords(content: string): CsvRow[] {
+function parseCsvRecords(content: string): { records: CsvRow[]; error: string | null } {
   const records: CsvRow[] = [];
   let fields: string[] = [];
   let field = "";
   let inQuotes = false;
   let physicalRow = 1;
   let started = false;
+
+  let quoteStartRow = 1;
 
   const pushRecord = () => {
     fields.push(field);
@@ -202,20 +212,34 @@ function parseCsvRecords(content: string): CsvRow[] {
         field += '"';
         index += 1;
       } else {
+        if (!inQuotes) {
+          quoteStartRow = physicalRow;
+        }
         inQuotes = !inQuotes;
       }
       started = true;
       continue;
     }
 
-    if (!inQuotes && (character === "\n" || character === "\r")) {
-      // Consume CRLF as a single line break.
-      if (character === "\r" && content[index + 1] === "\n") {
+    if (character === "\n" || character === "\r") {
+      // Consume CRLF as a single line break regardless of quote state so
+      // physical row counts track every newline in the source file.
+      const isCRLF = character === "\r" && content[index + 1] === "\n";
+      if (isCRLF) {
         index += 1;
       }
-      pushRecord();
       physicalRow += 1;
-      started = false;
+      if (!inQuotes) {
+        pushRecord();
+        started = false;
+      } else {
+        // Preserve the exact CR/LF sequence inside the field so that
+        // quoted multi-line content (e.g. certification details) round-trips unchanged.
+        field += character;
+        if (isCRLF) {
+          field += "\n";
+        }
+      }
       continue;
     }
 
@@ -234,7 +258,14 @@ function parseCsvRecords(content: string): CsvRow[] {
     pushRecord();
   }
 
-  return records;
+  if (inQuotes) {
+    return {
+      records,
+      error: `Unterminated quoted field starting at line ${quoteStartRow}.`,
+    };
+  }
+
+  return { records, error: null };
 }
 
 function isBlankRecord(fields: string[]): boolean {
@@ -327,7 +358,7 @@ function parseDataRow(
   const phoneCsv = optionalField(raw, "phone");
   const addressCsv = optionalField(raw, "address");
   const sanctionType = optionalField(raw, "sanction");
-  const certificationDetailsRaw = optionalField(raw, "certification");
+  const certificationDetailsRaw = certificationField(raw);
   const designationStartDate = normalizeOptionalDate(getField(raw, "issueDate"));
   const designationEndDate = normalizeOptionalDate(getField(raw, "endDate"));
 
@@ -386,6 +417,13 @@ function optionalField(raw: Record<string, string>, key: AliasKey): string | nul
   return value.length > 0 ? value : null;
 }
 
+function certificationField(raw: Record<string, string>): string | null {
+  const value = getField(raw, "certification");
+  // Preserve the exact CSV-unquoted content (including leading/trailing
+  // whitespace and line breaks) but collapse all-whitespace values to null.
+  return value.trim().length > 0 ? value : null;
+}
+
 function trimToString(value: string): string {
   return value.trim();
 }
@@ -416,19 +454,18 @@ function parseClassification(raw: Record<string, string>): ClassificationResult 
     return { ok: false, error: "Missing product classification number." };
   }
 
-  // Drop punctuation so a 10-digit code that was split by "-" still resolves
-  // to a single numeric token.
-  const digitsOnly = combinedField.replace(/[^\d]/g, "");
-  const match = digitsOnly.match(/^(\d{10}|\d{8})/);
+  // Match the classification token directly from the source cell so that
+  // later digits in the human-readable name never join the code. The
+  // negative lookahead at the end guarantees the token terminates at a
+  // non-digit (or at end-of-string), so e.g. "39121801 model20" parses
+  // as "39121801" and never accidentally consumes the trailing "20".
+  const match = combinedField.match(CLASSIFICATION_TOKEN_SOURCE_PATTERN);
   if (!match) {
     return { ok: false, error: "Missing product classification number." };
   }
 
-  const digits = match[1];
-  // Try to rebuild the original separator layout (e.g. "39121801-01") by
-  // walking the source cell and inserting the separating characters that
-  // appear between the 8th and 9th digit.
-  const rawToken = extractRawClassificationToken(combinedField, digits);
+  const digits = match[1] ?? match[2] + (match[3] ?? "");
+  const rawToken = match[0];
   const derivedName = deriveClassificationName(combinedField, digits);
   return {
     ok: true,
@@ -436,30 +473,6 @@ function parseClassification(raw: Record<string, string>): ClassificationResult 
     normalized: digits,
     name: nameField.length > 0 ? nameField : derivedName,
   };
-}
-
-function extractRawClassificationToken(combined: string, digits: string): string {
-  // Walk the source string and pick out the digits that compose the
-  // classification code, preserving any separator characters that appeared
-  // between the 8th and 9th digit (or right after the last digit).
-  let consumed = 0;
-  let buffer = "";
-  let afterSplit = false;
-  for (const character of combined) {
-    if (consumed >= digits.length) {
-      break;
-    }
-    if (/\d/.test(character)) {
-      buffer += character;
-      consumed += 1;
-      if (consumed === 8) {
-        afterSplit = true;
-      }
-    } else if (afterSplit && /[\s\-:·]/.test(character)) {
-      buffer += character;
-    }
-  }
-  return buffer;
 }
 
 function deriveClassificationName(combined: string, digits: string): string | null {

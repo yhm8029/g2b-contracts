@@ -405,6 +405,95 @@ describe("parseExcellentProductsCsv - quoted fields and BOM", () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toMatch(/Row 2: Expected 13 columns but found 12\./);
   });
+
+  it("reports the correct physical line for errors after a multi-line quoted field", () => {
+    const headers = buildOfficialHeaderRow();
+    const goodRow = [
+      "표준규격",
+      "39121801-01 빌딩자동제어장치",
+      "홍길동",
+      "스마트빌딩",
+      "123-45-67890",
+      "02-1234-5678",
+      "서울",
+      "빌딩자동제어장치",
+      "EQ-2024-001",
+      "K마크\n상세",
+      "없음",
+      "2024-01-15",
+      "2026-01-14",
+    ];
+    const certColumn = `"${goodRow[9].replace(/"/g, '""')}"`;
+    const goodRowStr = goodRow
+      .map((v, i) => (i === 9 ? certColumn : v))
+      .join(",");
+
+    const badRow =
+      "표준규격,39121801-01,홍길동,스마트빌딩,123-45-67890,02-1234-5678,서울,품명,EQ-2024-002,,,2024-01-15";
+
+    const csv = [headers, goodRowStr, badRow].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "multiline.csv");
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatch(/Row 4: Expected 13 columns but found 12\./);
+  });
+
+  it("preserves exact leading/trailing whitespace and line breaks in certificationDetailsRaw", () => {
+    const headers = buildOfficialHeaderRow();
+    const row = [
+      "표준규격",
+      "39121801-01 빌딩자동제어장치",
+      "홍길동",
+      "스마트빌딩",
+      "123-45-67890",
+      "02-1234-5678",
+      "서울",
+      "빌딩자동제어장치",
+      "EQ-2024-001",
+      "  K마크\n상세  ",
+      "없음",
+      "2024-01-15",
+      "2026-01-14",
+    ];
+    const certColumn = `"${row[9].replace(/"/g, '""')}"`;
+    const rebuilt = [
+      headers,
+      row.map((v, i) => (i === 9 ? certColumn : v)).join(","),
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(rebuilt, "cert-ws.csv");
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].certificationDetailsRaw).toBe("  K마크\n상세  ");
+  });
+
+  it("returns null for certificationDetailsRaw when the unquoted value is all whitespace", () => {
+    const csv = [
+      buildOfficialHeaderRow(),
+      buildBaseRow({
+        우수조달지정증서번호: "EQ-CERT-BLANK-001",
+        인증내역: "   \n  ",
+      }),
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "cert-blank.csv");
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].certificationDetailsRaw).toBe(null);
+  });
+
+  it("returns a clear parse error for an unclosed quoted field", () => {
+    const csv = [
+      buildOfficialHeaderRow(),
+      '"표준규격,39121801-01,홍길동,스마트빌딩,123-45-67890,02-1234-5678,서울,품명,EQ-2024-001,K마크,특허,2024-01-15,2026-01-14',
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "unclosed.csv");
+
+    expect(result.rows).toEqual([]);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatch(/Unterminated quoted field/);
+  });
 });
 
 describe("parseExcellentProductsCsv - business number and date normalization", () => {
@@ -523,6 +612,69 @@ describe("parseExcellentProductsCsv - combined classification parsing", () => {
     expect(result.rows[0].productClassificationNo).toBe("39121801-01");
     expect(result.rows[0].productClassificationNormalized).toBe("3912180101");
     expect(result.rows[0].productClassificationName).toBe("빌딩자동제어장치");
+  });
+
+  it("extracts 8-digit classification code when the name contains 모델20", () => {
+    const csv = [
+      buildOfficialHeaderRow(),
+      buildBaseRow({
+        물품분류: "39121801 빌딩자동제어장치 모델20",
+      }),
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "model20.csv");
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].productClassificationNo).toBe("39121801");
+    expect(result.rows[0].productClassificationNormalized).toBe("39121801");
+    expect(result.rows[0].productClassificationName).toBe("빌딩자동제어장치 모델20");
+  });
+
+  it("extracts 39121801-01 from a classification cell with 모델20 in the name", () => {
+    const csv = [
+      buildOfficialHeaderRow(),
+      buildBaseRow({
+        물품분류: "39121801-01 빌딩자동제어장치 모델20",
+      }),
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "model20b.csv");
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].productClassificationNo).toBe("39121801-01");
+    expect(result.rows[0].productClassificationNormalized).toBe("3912180101");
+    expect(result.rows[0].productClassificationName).toBe("빌딩자동제어장치 모델20");
+  });
+
+  it("accepts 3912180101 (10 digits, no separator) with name digits later in the cell", () => {
+    const csv = [
+      buildOfficialHeaderRow(),
+      buildBaseRow({
+        물품분류: "3912180101 빌딩자동제어장치 모델20",
+      }),
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "model20c.csv");
+    expect(result.errors).toEqual([]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].productClassificationNo).toBe("3912180101");
+    expect(result.rows[0].productClassificationNormalized).toBe("3912180101");
+    expect(result.rows[0].productClassificationName).toBe("빌딩자동제어장치 모델20");
+  });
+
+  it("accepts 3912180101 (no separator) without any name suffix", () => {
+    const csv = [
+      buildOfficialHeaderRow(),
+      buildBaseRow({
+        물품분류: "3912180101",
+      }),
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "plain10.csv");
+    expect(result.errors).toEqual([]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].productClassificationNo).toBe("3912180101");
+    expect(result.rows[0].productClassificationNormalized).toBe("3912180101");
+    // No name text appears in the cell, so the derived name is null.
+    expect(result.rows[0].productClassificationName).toBe(null);
   });
 
   it("errors when a row has no classification code", () => {
