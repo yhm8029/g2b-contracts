@@ -38,7 +38,10 @@ describe("initializeSqliteSchema", () => {
     expect(tables.map((row) => row.name)).toEqual([
       "api_enrichment_logs",
       "businesses",
+      "company_industries",
       "contract_records",
+      "excellent_products",
+      "factory_locations",
       "import_runs",
     ]);
 
@@ -56,6 +59,13 @@ describe("initializeSqliteSchema", () => {
         "contract_records_unified_contract_no_idx",
         "contract_records_biz_no_contract_date_idx",
         "contract_records_source_dataset_row_hash_unique",
+        "company_industries_biz_no_idx",
+        "company_industries_unique",
+        "excellent_products_biz_no_idx",
+        "excellent_products_classification_idx",
+        "excellent_products_source_dataset_row_hash_unique",
+        "factory_locations_biz_no_idx",
+        "factory_locations_unique",
       ]),
     );
   });
