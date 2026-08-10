@@ -34,7 +34,7 @@ export type ShoppingMallProductInfo = {
   prdctNm: string | null;
   /** Product identification name (e.g. model + spec text). */
   prdctIdntNoNm: string | null;
-  /** Free-form product specification string. */
+  /** Official product specification name (canonical source prdctSpecNm). */
   prdctSpec: string | null;
   /** Company name used by the third-party contract. */
   cntrctCorpNm: string | null;
@@ -49,6 +49,9 @@ type RawShoppingMallProduct = {
   dtilPrdctClsfcNo?: unknown;
   prdctNm?: unknown;
   prdctIdntNoNm?: unknown;
+  /** Official product specification name (canonical). */
+  prdctSpecNm?: unknown;
+  /** Legacy alias for prdctSpecNm. */
   prdctSpec?: unknown;
   cntrctCorpNm?: unknown;
   hdoffceLocplc?: unknown;
@@ -112,6 +115,12 @@ async function fetchAllPages(
 
     const pageItems = body.items;
     if (pageItems.length === 0) {
+      if (allItems.length < totalCount) {
+        throw new G2bStandardContractError(
+          "provider_error",
+          `G2B shopping-mall product ${GET_THIRD_PARTY_PRODUCT_OPERATION} page ${pageNo} returned no items while ${totalCount - allItems.length} more rows were still expected.`,
+        );
+      }
       break;
     }
 
@@ -136,8 +145,8 @@ function parseShoppingMallResponseBody(response: unknown): ShoppingMallResponseB
     const resultCode = asString(header.resultCode) ?? "unknown";
     const resultMsg = asString(header.resultMsg) ?? "Unknown provider error.";
     throw new G2bStandardContractError(
-      "provider_error",
-      `G2B shopping-mall product provider error ${resultCode}: ${resultMsg}`,
+      classifyErrorCode(resultMsg),
+      `G2B shopping-mall product provider error ${resultCode}: ${redactG2bSecrets(resultMsg)}`,
     );
   }
 
@@ -169,7 +178,7 @@ function parseShoppingMallResponseBody(response: unknown): ShoppingMallResponseB
   if (resultCode !== "00") {
     throw new G2bStandardContractError(
       classifyErrorCode(resultMsg),
-      `G2B shopping-mall product provider error ${resultCode}: ${resultMsg ?? "Unknown provider error."}`,
+      `G2B shopping-mall product provider error ${resultCode}: ${redactG2bSecrets(resultMsg ?? "Unknown provider error.")}`,
     );
   }
 
@@ -193,7 +202,7 @@ function parseProductItem(raw: Record<string, unknown>): ShoppingMallProductInfo
     dtilPrdctClsfcNo: asString(typed.dtilPrdctClsfcNo),
     prdctNm: asString(typed.prdctNm),
     prdctIdntNoNm: asString(typed.prdctIdntNoNm),
-    prdctSpec: asString(typed.prdctSpec),
+    prdctSpec: asString(typed.prdctSpecNm) ?? asString(typed.prdctSpec),
     cntrctCorpNm: asString(typed.cntrctCorpNm),
     // The head office and the factory location are intentionally parsed
     // independently: never let one fall back to the other. A row that

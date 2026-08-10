@@ -50,6 +50,9 @@ type RawCompanyBasicInfo = {
 type RawCompanyIndustryInfo = {
   indstrytyCd?: unknown;
   indstrytyNm?: unknown;
+  /** Official industry status name (canonical). */
+  indstrytyStatsNm?: unknown;
+  /** Legacy alias for indstrytyStatsNm. */
   status?: unknown;
 };
 
@@ -127,6 +130,12 @@ async function fetchAllPages(
 
     const pageItems = body.items;
     if (pageItems.length === 0) {
+      if (allItems.length < totalCount) {
+        throw new G2bStandardContractError(
+          "provider_error",
+          `G2B user-info ${operationLabel} page ${pageNo} returned no items while ${totalCount - allItems.length} more rows were still expected.`,
+        );
+      }
       break;
     }
 
@@ -154,8 +163,8 @@ function parseUserInfoResponseBody(
     const resultCode = asString(header.resultCode) ?? "unknown";
     const resultMsg = asString(header.resultMsg) ?? "Unknown provider error.";
     throw new G2bStandardContractError(
-      "provider_error",
-      `G2B user-info provider error ${resultCode}: ${resultMsg}`,
+      classifyErrorCode(resultMsg),
+      `G2B user-info provider error ${resultCode}: ${redactG2bSecrets(resultMsg)}`,
     );
   }
 
@@ -187,7 +196,7 @@ function parseUserInfoResponseBody(
   if (resultCode !== "00") {
     throw new G2bStandardContractError(
       classifyErrorCode(resultMsg),
-      `G2B user-info provider error ${resultCode}: ${resultMsg ?? "Unknown provider error."}`,
+      `G2B user-info provider error ${resultCode}: ${redactG2bSecrets(resultMsg ?? "Unknown provider error.")}`,
     );
   }
 
@@ -219,7 +228,7 @@ function parseIndustryItem(raw: Record<string, unknown>): CompanyIndustryInfo {
   return {
     indstrytyCd: asString(typed.indstrytyCd),
     indstrytyNm: asString(typed.indstrytyNm),
-    status: asString(typed.status),
+    status: asString(typed.indstrytyStatsNm) ?? asString(typed.status),
   };
 }
 
@@ -245,6 +254,9 @@ function combineAddress(base: string | null, detail: string | null): string | nu
   }
   if (base.endsWith(detail)) {
     return base;
+  }
+  if (detail.startsWith(base)) {
+    return detail;
   }
   return `${base} ${detail}`;
 }
