@@ -143,11 +143,37 @@ describe("excellent product enrichment", () => {
     expect(sqlite.prepare("select count(*) as count from factory_locations where biz_no_normalized = ?").get("1111111111")).toEqual({ count: 1 });
   });
 
+  it("uses the CSV company name for shopping-mall lookup", async () => {
+    replaceExcellentProductsSnapshot(
+      db,
+      [row("1111111111", "CSV Alpha", "a1"), row("2222222222", "CSV Beta", "b1")],
+      "snapshot.csv",
+    );
+    sqlite
+      .prepare("update businesses set business_name = ?, profile_source = ? where biz_no_normalized = ?")
+      .run("API Alpha", EXCELLENT_PRODUCTS_API_SOURCE_NAME, "1111111111");
+
+    const clients = clientsFor();
+    await syncBuildingControlCompanies(db, clients);
+
+    expect(clients.fetchThirdPartyProducts).toHaveBeenCalledTimes(2);
+    expect(clients.fetchThirdPartyProducts).toHaveBeenNthCalledWith(1, "CSV Alpha");
+    expect(clients.fetchThirdPartyProducts).toHaveBeenNthCalledWith(2, "CSV Beta");
+  });
+
   it("preserves a failed company and continues, while retaining CSV fallback fields", async () => {
     replaceExcellentProductsSnapshot(db, [row("1111111111", "회사 A", "a1"), row("2222222222", "회사 B", "b1")], "snapshot.csv");
     sqlite.prepare("update businesses set business_name = ?, profile_source = ? where biz_no_normalized = ?").run("CSV 이름", EXCELLENT_PRODUCTS_IMPORT_SOURCE_NAME, "1111111111");
     sqlite.prepare("insert into factory_locations (biz_no_normalized, location, source) values (?, ?, ?)").run("2222222222", "기존 공장", "shopping-mall");
 
+    sqlite.prepare("insert into factory_locations (biz_no_normalized, location, source) values (?, ?, ?)").run("1111111111", "Existing Factory", "shopping-mall");
+    sqlite.prepare("insert into company_industries (biz_no_normalized, industry_code, industry_name, status, source) values (?, ?, ?, ?, ?)").run(
+      "1111111111",
+      "OLD",
+      "Existing Industry",
+      "active",
+      "shopping-mall",
+    );
     const clients = clientsFor({
       fetchCompanyBasicInfo: vi.fn(async (bizNo) => {
         if (bizNo === "1111111111") throw new Error("serviceKey=super-secret");
@@ -160,9 +186,103 @@ describe("excellent product enrichment", () => {
     expect(result.updatedCompanies).toBe(1);
     expect(result.errors).toEqual([{ bizNoNormalized: "1111111111", message: "serviceKey=[REDACTED]" }]);
     expect(sqlite.prepare("select location from factory_locations where biz_no_normalized = ?").all("2222222222")).toEqual([{ location: "공장 A" }]);
+    expect(sqlite.prepare("select location from factory_locations where biz_no_normalized = ?").all("1111111111")).toEqual([
+      { location: "Existing Factory" },
+    ]);
+    expect(
+      sqlite
+        .prepare("select industry_code as industryCode, industry_name as industryName, status from company_industries where biz_no_normalized = ?")
+        .all("1111111111"),
+    ).toEqual([{ industryCode: "OLD", industryName: "Existing Industry", status: "active" }]);
     expect(sqlite.prepare("select business_name as name, profile_source as source from businesses where biz_no_normalized = ?").get("1111111111")).toEqual({ name: "CSV 이름", source: EXCELLENT_PRODUCTS_IMPORT_SOURCE_NAME });
   });
 
+
+  it("removes stale factory and industry rows when repeated successful syncs return changed outputs", async () => {
+    replaceExcellentProductsSnapshot(db, [row("1111111111", "Company A", "a1")], "snapshot.csv");
+    sqlite.prepare("insert into factory_locations (biz_no_normalized, location, source) values (?, ?, ?)").run("1111111111", "stale factory", "shopping-mall");
+    sqlite.prepare("insert into company_industries (biz_no_normalized, industry_code, industry_name, status, source) values (?, ?, ?, ?, ?)").run(
+      "1111111111",
+      "OLD",
+      "Stale Industry",
+      "active",
+      "shopping-mall",
+    );
+    const clients = clientsFor({
+      fetchCompanyIndustries: vi.fn()
+        .mockResolvedValueOnce([{ indstrytyCd: "OLD", indstrytyNm: "Old Industry", status: "active" }])
+        .mockResolvedValueOnce([{ indstrytyCd: "NEW", indstrytyNm: "New Industry", status: "active" }]),
+      fetchThirdPartyProducts: vi.fn()
+        .mockResolvedValueOnce([
+          {
+            prdctClsfcNo: "39121801",
+            dtilPrdctClsfcNo: "3912180101",
+            prdctNm: null,
+            prdctIdntNoNm: null,
+            prdctSpec: null,
+            cntrctCorpNm: null,
+            headOfficeLocation: null,
+            factoryLocation: "Old Factory",
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            prdctClsfcNo: "39121801",
+            dtilPrdctClsfcNo: "3912180102",
+            prdctNm: null,
+            prdctIdntNoNm: null,
+            prdctSpec: null,
+            cntrctCorpNm: null,
+            headOfficeLocation: null,
+            factoryLocation: "New Factory",
+          },
+        ]),
+    });
+
+    const first = await syncBuildingControlCompanies(db, clients);
+    expect(first).toEqual({ processedCompanies: 1, updatedCompanies: 1, errors: [] });
+    expect(sqlite.prepare("select location as location from factory_locations where biz_no_normalized = ?").all("1111111111")).toEqual([
+      { location: "Old Factory" },
+    ]);
+    expect(
+      sqlite
+        .prepare("select industry_code as industryCode, industry_name as industryName, status from company_industries where biz_no_normalized = ?")
+        .all("1111111111"),
+    ).toEqual([{ industryCode: "OLD", industryName: "Old Industry", status: "active" }]);
+
+    const second = await syncBuildingControlCompanies(db, clients);
+    expect(second).toEqual({ processedCompanies: 1, updatedCompanies: 1, errors: [] });
+    expect(sqlite.prepare("select location as location from factory_locations where biz_no_normalized = ?").all("1111111111")).toEqual([
+      { location: "New Factory" },
+    ]);
+    expect(
+      sqlite
+        .prepare("select industry_code as industryCode, industry_name as industryName, status from company_industries where biz_no_normalized = ?")
+        .all("1111111111"),
+    ).toEqual([{ industryCode: "NEW", industryName: "New Industry", status: "active" }]);
+  });
+
+  it("stores no factory row when only a head office is returned", async () => {
+    replaceExcellentProductsSnapshot(db, [row("1111111111", "CSV One", "a1")], "snapshot.csv");
+    const clients = clientsFor({
+      fetchCompanyIndustries: vi.fn(async () => []),
+      fetchThirdPartyProducts: vi.fn(async () => [
+        {
+          prdctClsfcNo: "39121801",
+          dtilPrdctClsfcNo: "3912180101",
+          prdctNm: null,
+          prdctIdntNoNm: null,
+          prdctSpec: null,
+          cntrctCorpNm: null,
+          headOfficeLocation: "Head office only",
+          factoryLocation: null,
+        },
+      ]),
+    });
+
+    await syncBuildingControlCompanies(db, clients);
+    expect(sqlite.prepare("select count(*) as count from factory_locations where biz_no_normalized = ?").get("1111111111")).toEqual({ count: 0 });
+  });
   it("does not call clients when the snapshot has no products", async () => {
     const clients = clientsFor();
     expect(await syncBuildingControlCompanies(db, clients)).toEqual({
