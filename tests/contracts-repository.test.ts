@@ -231,11 +231,18 @@ describe("contract repository", () => {
     }
   });
 
-  it("rolls back the entire import when a contract row fails", () => {
+  it("does not leave a business-only partial write when a contract row fails", () => {
     const { sqlite, db } = createTempDb();
     const sourceFileName = "sample-contracts.csv";
     const csv = readFileSync(join(process.cwd(), "data", sourceFileName), "utf8");
     const parsed = parseContractCsv(csv, sourceFileName);
+    const validRow = {
+      ...parsed.validRows[0],
+      sourceRowHash: "valid-sibling",
+      bizNoNormalized: "1112223334",
+      bizNoDisplay: "111-22-23334",
+      businessName: "Valid Sibling Co",
+    } satisfies ParsedContractCsvRow;
     const malformedRow = {
       ...parsed.validRows[0],
       sourceRowHash: "malformed-row",
@@ -248,7 +255,14 @@ describe("contract repository", () => {
     expect(parsed.errors).toEqual([]);
 
     try {
-      expect(() => importParsedRows(db, [malformedRow], "malformed.csv")).toThrow();
+      const result = importParsedRows(db, [validRow, malformedRow], "malformed.csv");
+
+      expect(result).toMatchObject({
+        rowCount: 2,
+        insertedCount: 1,
+        updatedCount: 0,
+        errorCount: 1,
+      });
 
       const business = sqlite
         .prepare("select id from businesses where biz_no_normalized = ?")
@@ -260,12 +274,26 @@ describe("contract repository", () => {
         .get("malformed-row");
       expect(contract).toBeUndefined();
 
+      const siblingBusiness = sqlite
+        .prepare("select id from businesses where biz_no_normalized = ?")
+        .get("1112223334");
+      expect(siblingBusiness).toBeDefined();
+
+      const siblingContract = sqlite
+        .prepare("select contract_name from contract_records where source_row_hash = ?")
+        .get("valid-sibling");
+      expect(siblingContract).toBeDefined();
+
       const importRun = sqlite
         .prepare(
-          "select id from import_runs where source_file_name = ?",
+          "select error_count, inserted_count, status from import_runs where source_file_name = ?",
         )
         .get("malformed.csv");
-      expect(importRun).toBeUndefined();
+      expect(importRun).toMatchObject({
+        error_count: 1,
+        inserted_count: 1,
+        status: "completed_with_errors",
+      });
     } finally {
       sqlite.close();
     }
