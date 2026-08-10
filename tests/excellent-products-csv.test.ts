@@ -6,6 +6,7 @@ import {
   parseExcellentProductsCsv,
 } from "@/lib/excellent-products/csv";
 import type { ExcellentProductCsvParseResult } from "@/lib/excellent-products/types";
+import { EXCELLENT_PRODUCTS_SOURCE_DATASET } from "@/lib/excellent-products/constants";
 
 const OFFICIAL_HEADERS = [
   "물품규격내용",
@@ -610,7 +611,7 @@ describe("parseExcellentProductsCsv - row metadata", () => {
     expect(result.rows).toHaveLength(1);
 
     const row = result.rows[0];
-    expect(row.sourceDataset).toBe("csv:metadata.csv");
+    expect(row.sourceDataset).toBe(EXCELLENT_PRODUCTS_SOURCE_DATASET);
     expect(row.sourceFileName).toBe("metadata.csv");
     expect(typeof row.sourceImportedAt).toBe("string");
     expect(new Date(row.sourceImportedAt).toString()).not.toBe("Invalid Date");

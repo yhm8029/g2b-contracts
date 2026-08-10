@@ -25,3 +25,61 @@ export const EXCELLENT_PRODUCT_HEADER_ALIASES = {
   issueDate: ["지정시작일자", "발급일자"],
   endDate: ["지정연장일자", "인정(연장)기간", "지정종료일자"],
 } as const satisfies Record<string, readonly string[]>;
+
+/**
+ * Stable identifier for the building-control excellent products snapshot.
+ *
+ * The CSV parser tags every row with this constant so the entire snapshot
+ * shares a single source dataset across imports, regardless of the source
+ * CSV file name. `sourceFileName` continues to record the file that
+ * produced each row for traceability.
+ */
+export const EXCELLENT_PRODUCTS_SOURCE_DATASET =
+  "building-control-excellent-products";
+
+/**
+ * Source name used for `import_runs.source_name` when an excellent
+ * products snapshot replaces the previous dataset.
+ */
+export const EXCELLENT_PRODUCTS_IMPORT_SOURCE_NAME = "excellent-products-csv";
+
+/**
+ * Source identifier used for the contract CSV import (lowest profile
+ * priority). `importParsedRows` records `import_runs` rows with this name.
+ */
+export const EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME = "csv";
+
+/**
+ * Source identifier used for official user-info / company enrichment
+ * (highest profile priority). Reserved so future enrichment flows can
+ * tag their `businesses.profile_source` writes consistently.
+ */
+export const EXCELLENT_PRODUCTS_API_SOURCE_NAME = "user-info";
+
+/**
+ * Priority order used when reconciling business profile fields. Higher
+ * numbers always win: a non-null value from a higher-priority source
+ * replaces a lower-priority existing value, but a `null` never erases
+ * a stored non-null value.
+ *
+ * Unknown source strings are treated as the lowest priority so legacy
+ * data without a `profile_source` cannot override fresh enrichment.
+ */
+export const BUSINESS_PROFILE_SOURCE_PRIORITY: Readonly<Record<string, number>> = {
+  [EXCELLENT_PRODUCTS_API_SOURCE_NAME]: 3,
+  [EXCELLENT_PRODUCTS_IMPORT_SOURCE_NAME]: 2,
+  [EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME]: 1,
+};
+
+/**
+ * Return the priority rank for a profile source identifier. Unknown or
+ * null sources resolve to `0` so they always lose against a known source.
+ */
+export function getBusinessProfileSourcePriority(
+  source: string | null | undefined,
+): number {
+  if (source === null || source === undefined) {
+    return 0;
+  }
+  return BUSINESS_PROFILE_SOURCE_PRIORITY[source] ?? 0;
+}
