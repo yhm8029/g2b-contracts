@@ -406,6 +406,34 @@ describe("parseExcellentProductsCsv - quoted fields and BOM", () => {
     expect(result.errors[0]).toMatch(/Row 2: Expected 13 columns but found 12\./);
   });
 
+  it("reports the physical start row of a malformed second row when followed by a trailing newline", () => {
+    const csv = [
+      buildOfficialHeaderRow(),
+      "표준규격,39121801-01,홍길동,스마트빌딩,123-45-67890,02-1234-5678,서울,품명,EQ-2024-001,,,2024-01-15",
+      "",
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "short-trailing.csv");
+
+    expect(result.rows).toEqual([]);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatch(/Row 2: Expected 13 columns but found 12\./);
+  });
+
+  it("reports the physical start row of a malformed row that follows a blank physical line", () => {
+    const csv = [
+      buildOfficialHeaderRow(),
+      "",
+      "표준규격,39121801-01,홍길동,스마트빌딩,123-45-67890,02-1234-5678,서울,품명,EQ-2024-001,,,2024-01-15",
+    ].join("\n");
+
+    const result = parseExcellentProductsCsv(csv, "short-blank-prefix.csv");
+
+    expect(result.rows).toEqual([]);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatch(/Row 3: Expected 13 columns but found 12\./);
+  });
+
   it("reports the correct physical line for errors after a multi-line quoted field", () => {
     const headers = buildOfficialHeaderRow();
     const goodRow = [
