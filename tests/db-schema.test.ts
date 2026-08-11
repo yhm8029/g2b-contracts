@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSqliteConnection, getDatabasePath } from "@/lib/db/client";
 import { initializeSqliteSchema } from "@/lib/db/init";
 
@@ -38,7 +38,10 @@ describe("initializeSqliteSchema", () => {
     expect(tables.map((row) => row.name)).toEqual([
       "api_enrichment_logs",
       "businesses",
+      "company_industries",
       "contract_records",
+      "excellent_products",
+      "factory_locations",
       "import_runs",
     ]);
 
@@ -56,6 +59,13 @@ describe("initializeSqliteSchema", () => {
         "contract_records_unified_contract_no_idx",
         "contract_records_biz_no_contract_date_idx",
         "contract_records_source_dataset_row_hash_unique",
+        "company_industries_biz_no_idx",
+        "company_industries_unique",
+        "excellent_products_biz_no_idx",
+        "excellent_products_classification_idx",
+        "excellent_products_source_dataset_row_hash_unique",
+        "factory_locations_biz_no_idx",
+        "factory_locations_unique",
       ]),
     );
   });
@@ -139,6 +149,64 @@ describe("createSqliteConnection", () => {
     const foreignKeys = sqlite.pragma("foreign_keys", { simple: true });
 
     expect(foreignKeys).toBe(1);
+    sqlite.close();
+  });
+});
+
+describe("initializeSqliteSchema - column ALTER race recovery", () => {
+  it("still adds profile columns when an ALTER throws but a parallel migration raced ahead", () => {
+    const dir = mkdtempSync(join(tmpdir(), "g2b-db-race-"));
+    const sqlite = new Database(join(dir, "race.sqlite"));
+
+    sqlite.exec(
+      [
+        "CREATE TABLE businesses (",
+        "id INTEGER PRIMARY KEY,",
+        "biz_no_normalized TEXT NOT NULL,",
+        "biz_no_display TEXT,",
+        "business_name TEXT,",
+        "representative_name TEXT,",
+        "address TEXT,",
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,",
+        "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
+        ");",
+      ].join(" "),
+    );
+
+    // Pre-create one of the legacy columns so the ALTER raises a
+    // duplicate-column error that the migration helper must absorb.
+    sqlite.exec("ALTER TABLE businesses ADD COLUMN phone TEXT");
+
+    // Capture the real exec so the simulated parallel migration can
+    // apply its own ALTER without re-entering the spy.
+    const realExec = Database.prototype.exec;
+    const execSpy = vi.spyOn(sqlite, "exec").mockImplementation((sql) => {
+      if (
+        typeof sql === "string" &&
+        sql === "ALTER TABLE businesses ADD COLUMN profile_source TEXT"
+      ) {
+        // Simulate a parallel migration that adds the column before the
+        // duplicate-column error reaches the migration helper.
+        realExec.call(sqlite, "ALTER TABLE businesses ADD COLUMN profile_source TEXT");
+        throw new Error("duplicate column name: profile_source");
+      }
+      return realExec.call(sqlite, sql);
+    });
+
+    try {
+      expect(() => initializeSqliteSchema(sqlite)).not.toThrow();
+    } finally {
+      execSpy.mockRestore();
+    }
+
+    const columns = sqlite
+      .prepare("pragma table_info(businesses)")
+      .all() as { name: string }[];
+    const columnNames = columns.map((column) => column.name);
+    expect(columnNames).toEqual(
+      expect.arrayContaining(["phone", "profile_source", "last_synced_at"]),
+    );
+
     sqlite.close();
   });
 });

@@ -1,5 +1,51 @@
 import type Database from "better-sqlite3";
 
+const BUSINESSES_LEGACY_COLUMNS: ReadonlyArray<{
+  column: string;
+  definition: string;
+}> = [
+  { column: "phone", definition: "ALTER TABLE businesses ADD COLUMN phone TEXT" },
+  {
+    column: "profile_source",
+    definition: "ALTER TABLE businesses ADD COLUMN profile_source TEXT",
+  },
+  {
+    column: "last_synced_at",
+    definition: "ALTER TABLE businesses ADD COLUMN last_synced_at TEXT",
+  },
+];
+
+function ensureBusinessProfileColumns(db: Database.Database): void {
+  const existingColumns = new Set(
+    (db.prepare("pragma table_info(businesses)").all() as { name: string }[]).map(
+      (column) => column.name,
+    ),
+  );
+
+  for (const { column, definition } of BUSINESSES_LEGACY_COLUMNS) {
+    if (existingColumns.has(column)) {
+      continue;
+    }
+    try {
+      db.exec(definition);
+      existingColumns.add(column);
+    } catch (error) {
+      // The ALTER may have raced with a concurrent migration. Re-read the
+      // column list and only swallow the error when the column is in fact
+      // present now; otherwise rethrow so callers do not silently keep an
+      // outdated schema.
+      const refreshedColumns = new Set(
+        (db.prepare("pragma table_info(businesses)").all() as { name: string }[]).map(
+          (entry) => entry.name,
+        ),
+      );
+      if (!refreshedColumns.has(column)) {
+        throw error;
+      }
+    }
+  }
+}
+
 export function initializeSqliteSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS businesses (
@@ -91,5 +137,69 @@ export function initializeSqliteSchema(db: Database.Database): void {
       status TEXT NOT NULL,
       notes TEXT
     );
+    CREATE TABLE IF NOT EXISTS excellent_products (
+      id INTEGER PRIMARY KEY,
+      biz_no_normalized TEXT NOT NULL,
+      designation_no TEXT NOT NULL,
+      company_name_csv TEXT NOT NULL,
+      representative_name_csv TEXT,
+      phone_csv TEXT,
+      address_csv TEXT,
+      product_name TEXT NOT NULL,
+      product_spec TEXT,
+      product_classification_no TEXT NOT NULL,
+      product_classification_normalized TEXT NOT NULL,
+      product_classification_name TEXT,
+      designation_start_date TEXT,
+      designation_end_date TEXT,
+      certification_details_raw TEXT,
+      sanction_type TEXT,
+      source_dataset TEXT NOT NULL,
+      source_row_hash TEXT NOT NULL,
+      source_file_name TEXT,
+      source_imported_at TEXT NOT NULL,
+      raw_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS excellent_products_biz_no_idx
+      ON excellent_products (biz_no_normalized);
+    CREATE INDEX IF NOT EXISTS excellent_products_classification_idx
+      ON excellent_products (product_classification_normalized);
+    CREATE UNIQUE INDEX IF NOT EXISTS excellent_products_source_dataset_row_hash_unique
+      ON excellent_products (source_dataset, source_row_hash);
+
+    CREATE TABLE IF NOT EXISTS factory_locations (
+      id INTEGER PRIMARY KEY,
+      biz_no_normalized TEXT NOT NULL,
+      location TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS factory_locations_biz_no_idx
+      ON factory_locations (biz_no_normalized);
+    CREATE UNIQUE INDEX IF NOT EXISTS factory_locations_unique
+      ON factory_locations (biz_no_normalized, location, source);
+
+    CREATE TABLE IF NOT EXISTS company_industries (
+      id INTEGER PRIMARY KEY,
+      biz_no_normalized TEXT NOT NULL,
+      industry_code TEXT NOT NULL,
+      industry_name TEXT NOT NULL,
+      status TEXT,
+      source TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS company_industries_biz_no_idx
+      ON company_industries (biz_no_normalized);
+    CREATE UNIQUE INDEX IF NOT EXISTS company_industries_unique
+      ON company_industries (biz_no_normalized, industry_code, industry_name, source);
   `);
+
+  ensureBusinessProfileColumns(db);
 }

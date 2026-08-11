@@ -9,6 +9,10 @@ import type {
 import type { Db } from "@/lib/db/client";
 import { apiEnrichmentLogs, businesses, contractRecords, importRuns } from "@/lib/db/schema";
 import { parseBusinessNumber } from "@/lib/domain/business-number";
+import {
+  EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
+  upsertBusinessProfilePriority,
+} from "@/lib/excellent-products/profile";
 import type { ParsedContractCsvRow } from "@/lib/import/csv";
 
 type ImportRunStatus = "completed" | "completed_with_errors" | "failed";
@@ -26,7 +30,7 @@ export function importParsedRows(
   db: Db,
   rows: ParsedContractCsvRow[],
   sourceFileName: string,
-  sourceName = "csv",
+  sourceName = EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
 ): ImportResult {
   const startedAt = new Date().toISOString();
   const result = upsertParsedRows(db, rows);
@@ -62,27 +66,16 @@ export function upsertParsedRows(db: Db, rows: ParsedContractCsvRow[]): ImportRe
         let existing: { id: number } | undefined;
 
         tx.transaction((rowTx) => {
-          rowTx
-            .insert(businesses)
-            .values({
-              bizNoNormalized: row.bizNoNormalized,
-              bizNoDisplay: row.bizNoDisplay,
-              businessName: row.businessName,
-              representativeName: row.representativeName,
-              address: row.address,
-              updatedAt: now,
-            })
-            .onConflictDoUpdate({
-              target: businesses.bizNoNormalized,
-              set: {
-                bizNoDisplay: row.bizNoDisplay,
-                businessName: row.businessName,
-                representativeName: row.representativeName,
-                address: row.address,
-                updatedAt: now,
-              },
-            })
-            .run();
+          upsertBusinessProfilePriority(rowTx, {
+            bizNoNormalized: row.bizNoNormalized,
+            bizNoDisplay: row.bizNoDisplay ?? null,
+            businessName: row.businessName ?? null,
+            representativeName: row.representativeName ?? null,
+            address: row.address ?? null,
+            phone: null,
+            profileSource: EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
+            lastSyncedAt: null,
+          }, now);
 
           const business = rowTx
             .select({ id: businesses.id })
