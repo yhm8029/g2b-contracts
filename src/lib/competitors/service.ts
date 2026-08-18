@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+﻿import type Database from "better-sqlite3";
 
 import { SqliteCompetitorQueryCache } from "./cache";
 import {
@@ -7,7 +7,7 @@ import {
   type CompetitorContractCoverage,
   type CompetitorContractSleep,
 } from "./contracts";
-import { searchCompetitorThirdPartyDeliveries } from "./third-party-deliveries";
+import { deleteCompetitorThirdPartyDeliveryCacheInRange, searchCompetitorThirdPartyDeliveries } from "./third-party-deliveries";
 import {
   buildCompetitorSalesOverview,
   COMPETITOR_SALES_REGISTRY,
@@ -25,6 +25,7 @@ export type CompetitorOverviewServiceInput = {
   now?: () => Date;
   signal?: AbortSignal;
   cacheOnly?: boolean;
+  refreshRecent?: boolean;
 };
 
 export async function getCompetitorSalesOverview(
@@ -32,6 +33,15 @@ export async function getCompetitorSalesOverview(
 ): Promise<CompetitorSalesOverview & { coverage: CompetitorContractCoverage }> {
   const now = (input.now ?? (() => new Date()))();
   const period = resolveCompetitorSalesPeriod(input.query, now);
+  const queryCache = new SqliteCompetitorQueryCache(input.sqlite);
+  const registryKey = buildRegistryKey(COMPETITOR_SALES_REGISTRY.map((competitor) => competitor.bizNo));
+  await maybeInvalidateRecentCaches({
+    enabled: input.refreshRecent === true && !input.cacheOnly,
+    period,
+    queryCache,
+    sqlite: input.sqlite,
+    registryKey,
+  });
   const [contractOutcome, deliveryOutcome] = await Promise.allSettled([
     searchCompetitorContracts(
       {
@@ -41,7 +51,7 @@ export async function getCompetitorSalesOverview(
       },
       {
         serviceKey: input.serviceKey,
-        queryCache: new SqliteCompetitorQueryCache(input.sqlite),
+        queryCache,
         fetchImpl: input.fetchImpl,
         sleep: input.sleep,
         now: input.now,
@@ -92,4 +102,36 @@ function mergeCoverage(...coverages: CompetitorContractCoverage[]): CompetitorCo
       left.dateFrom.localeCompare(right.dateFrom) || left.dateTo.localeCompare(right.dateTo),
     ),
   };
+}
+
+const RECENT_REFRESH_LOOKBACK_DAYS = 13;
+
+async function maybeInvalidateRecentCaches(input: {
+  enabled: boolean;
+  period: { dateFrom: string; dateTo: string };
+  queryCache: SqliteCompetitorQueryCache;
+  sqlite: Database.Database;
+  registryKey: string;
+}): Promise<void> {
+  if (!input.enabled) return;
+  const candidateFrom = shiftUtcDays(input.period.dateTo, -RECENT_REFRESH_LOOKBACK_DAYS);
+  const dateFrom = candidateFrom < input.period.dateFrom ? input.period.dateFrom : candidateFrom;
+  const dateTo = input.period.dateTo;
+  input.queryCache.deleteIntersecting({ bizNoNormalized: input.registryKey, dateFrom, dateTo });
+  deleteCompetitorThirdPartyDeliveryCacheInRange(input.sqlite, input.registryKey, dateFrom, dateTo);
+}
+
+function buildRegistryKey(bizNos: readonly string[]): string {
+  const normalized = new Set<string>();
+  for (const bizNo of bizNos) {
+    const digits = bizNo.replace(/\D/g, "");
+    if (digits) normalized.add(digits);
+  }
+  return [...normalized].sort().join(",");
+}
+
+function shiftUtcDays(date: string, days: number): string {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
 }

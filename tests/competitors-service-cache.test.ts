@@ -1,20 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   search: vi.fn(),
   deliveries: vi.fn(),
   build: vi.fn(),
   resolvePeriod: vi.fn(),
+  deleteIntersecting: vi.fn(),
+  deleteThirdPartyCacheInRange: vi.fn(),
 }));
 
 vi.mock("@/lib/competitors/cache", () => ({
-  SqliteCompetitorQueryCache: class SqliteCompetitorQueryCache {},
+  SqliteCompetitorQueryCache: class SqliteCompetitorQueryCache {
+    deleteIntersecting = mocks.deleteIntersecting;
+  },
 }));
 vi.mock("@/lib/competitors/contracts", () => ({
   searchCompetitorContracts: mocks.search,
 }));
 vi.mock("@/lib/competitors/third-party-deliveries", () => ({
   searchCompetitorThirdPartyDeliveries: mocks.deliveries,
+  deleteCompetitorThirdPartyDeliveryCacheInRange: mocks.deleteThirdPartyCacheInRange,
 }));
 vi.mock("@/lib/competitors/overview", () => ({
   COMPETITOR_SALES_REGISTRY: [{ bizNo: "1234567890" }],
@@ -140,6 +145,55 @@ describe("competitor overview service cache mode", () => {
       coverage: { complete: true, fresh: true, missingRanges: [] },
     });
     expect(await outcome).toEqual({ status: "rejected", error: failure });
+  });
+
+  it("invalidates both caches for the 13-day recent window before searches when refreshRecent is true", async () => {
+    const { getCompetitorSalesOverview } = await import("@/lib/competitors/service");
+
+    await getCompetitorSalesOverview({
+      query: { period: "year", year: 2026 },
+      serviceKey: "test-key",
+      sqlite: {} as never,
+      refreshRecent: true,
+      now: () => new Date("2026-07-22T00:00:00.000Z"),
+    });
+
+    expect(mocks.deleteIntersecting).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteIntersecting).toHaveBeenCalledWith({
+      bizNoNormalized: "1234567890",
+      dateFrom: "2026-07-09",
+      dateTo: "2026-07-22",
+    });
+    expect(mocks.deleteThirdPartyCacheInRange).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteThirdPartyCacheInRange).toHaveBeenCalledWith(
+      {},
+      "1234567890",
+      "2026-07-09",
+      "2026-07-22",
+    );
+
+    const deleteIntersectingOrder = mocks.deleteIntersecting.mock.invocationCallOrder[0]!;
+    const deleteRangeOrder = mocks.deleteThirdPartyCacheInRange.mock.invocationCallOrder[0]!;
+    const searchOrder = mocks.search.mock.invocationCallOrder[0]!;
+    const deliveriesOrder = mocks.deliveries.mock.invocationCallOrder[0]!;
+    expect(deleteIntersectingOrder).toBeLessThan(searchOrder);
+    expect(deleteIntersectingOrder).toBeLessThan(deliveriesOrder);
+    expect(deleteRangeOrder).toBeLessThan(searchOrder);
+    expect(deleteRangeOrder).toBeLessThan(deliveriesOrder);
+  });
+
+  it("skips cache invalidation when refreshRecent is not set", async () => {
+    const { getCompetitorSalesOverview } = await import("@/lib/competitors/service");
+
+    await getCompetitorSalesOverview({
+      query: { period: "year", year: 2026 },
+      serviceKey: "test-key",
+      sqlite: {} as never,
+      now: () => new Date("2026-07-22T00:00:00.000Z"),
+    });
+
+    expect(mocks.deleteIntersecting).not.toHaveBeenCalled();
+    expect(mocks.deleteThirdPartyCacheInRange).not.toHaveBeenCalled();
   });
 });
 
