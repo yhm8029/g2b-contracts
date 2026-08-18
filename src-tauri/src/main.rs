@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -13,6 +15,9 @@ use std::time::{Duration, Instant};
 use tauri::{Manager, RunEvent};
 
 type SidecarState = Arc<Mutex<Option<Child>>>;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, PartialEq)]
 struct PortablePaths {
@@ -134,7 +139,8 @@ fn spawn_server(paths: &PortablePaths, port: u16) -> Result<Child, String> {
         .parent()
         .ok_or_else(|| "server parent directory missing".to_string())?;
 
-    Command::new(&paths.node)
+    let mut command = Command::new(&paths.node);
+    command
         .arg(&paths.server)
         .current_dir(server_directory)
         .env("NODE_ENV", "production")
@@ -143,7 +149,12 @@ fn spawn_server(paths: &PortablePaths, port: u16) -> Result<Child, String> {
         .env("DATABASE_URL", &paths.database)
         .envs(read_app_env(&paths.config)?)
         .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
+        .stderr(Stdio::from(stderr));
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    command
         .spawn()
         .map_err(|error| format!("failed to spawn local server: {error}"))
 }
