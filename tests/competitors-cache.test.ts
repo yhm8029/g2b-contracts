@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_COMPETITOR_QUERY_CACHE_TTL_MS,
   type CompetitorContractQueryCache,
+  type CompetitorContractQueryCacheKey,
   SqliteCompetitorQueryCache,
 } from "@/lib/competitors/cache";
 import { initializeSqliteSchema } from "@/lib/db/init";
@@ -131,5 +132,42 @@ describe("competitor query SQLite cache", () => {
     expect(cache.getStoredIntervals(key)).toEqual([]);
     expect(sqlite.prepare("SELECT COUNT(*) AS count FROM competitor_contract_query_cache").get()).toEqual({ count: 0 });
     expect(sqlite.prepare("SELECT COUNT(*) AS count FROM competitor_contract_interval_cache").get()).toEqual({ count: 0 });
+  });
+
+  it("deletes intersecting rows across both tables while preserving non-overlapping entries and unrelated businesses", () => {
+    const sqlite = memoryDb();
+    const cache: CompetitorContractQueryCache = new SqliteCompetitorQueryCache(sqlite, { now: () => 1_000 });
+    const result = {
+      fetchedAt: "2026-07-22T00:00:00.000Z",
+      rows: [],
+      summary: { contractCount: 0, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: null },
+    };
+    const other: CompetitorContractQueryCacheKey = {
+      bizNoNormalized: "3333333333,4444444444",
+      dateFrom: "2026-07-10",
+      dateTo: "2026-07-20",
+    };
+
+    cache.set(key, result);
+    cache.set({ ...key, dateFrom: "2026-07-01", dateTo: "2026-07-15" }, result);
+    cache.set({ ...key, dateFrom: "2026-06-15", dateTo: "2026-06-30" }, result);
+    cache.set(other, result);
+    cache.setInterval!({ ...key, dateFrom: "2026-07-01", dateTo: "2026-07-07" }, result);
+    cache.setInterval!({ ...key, dateFrom: "2026-07-20", dateTo: "2026-07-25" }, result);
+    cache.setInterval!({ ...key, dateFrom: "2026-08-01", dateTo: "2026-08-10" }, result);
+    cache.setInterval!(other, result);
+
+    cache.deleteIntersecting!({ ...key, dateFrom: "2026-07-05", dateTo: "2026-07-22" });
+
+    const queryRows = sqlite.prepare("SELECT biz_no_normalized, date_from, date_to FROM competitor_contract_query_cache ORDER BY biz_no_normalized, date_from, date_to").all() as Array<{ biz_no_normalized: string; date_from: string; date_to: string }>;
+    expect(queryRows).toEqual([
+      { biz_no_normalized: "1111111111,2222222222", date_from: "2026-06-15", date_to: "2026-06-30" },
+      { biz_no_normalized: "3333333333,4444444444", date_from: "2026-07-10", date_to: "2026-07-20" },
+    ]);
+    const intervalRows = sqlite.prepare("SELECT biz_no_normalized, date_from, date_to FROM competitor_contract_interval_cache ORDER BY biz_no_normalized, date_from").all() as Array<{ biz_no_normalized: string; date_from: string; date_to: string }>;
+    expect(intervalRows).toEqual([
+      { biz_no_normalized: "1111111111,2222222222", date_from: "2026-08-01", date_to: "2026-08-10" },
+      { biz_no_normalized: "3333333333,4444444444", date_from: "2026-07-10", date_to: "2026-07-20" },
+    ]);
   });
 });

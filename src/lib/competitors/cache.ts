@@ -30,6 +30,7 @@ export interface CompetitorContractQueryCache {
   getFreshIntervals?(key: CompetitorContractQueryCacheKey): CompetitorContractCachedInterval[];
   getStoredIntervals?(key: CompetitorContractQueryCacheKey): CompetitorContractStoredInterval[];
   setInterval?(key: CompetitorContractQueryCacheKey, result: CompetitorContractSearchResult): void;
+  deleteIntersecting?(key: CompetitorContractQueryCacheKey): void;
 }
 
 export const DEFAULT_COMPETITOR_QUERY_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
@@ -163,5 +164,16 @@ export class SqliteCompetitorQueryCache implements CompetitorContractQueryCache 
       DELETE FROM competitor_contract_interval_cache
       WHERE biz_no_normalized = ? AND date_from = ? AND date_to = ?
     `).run(bizNoNormalized, dateFrom, dateTo);
+  }
+
+  deleteIntersecting(key: CompetitorContractQueryCacheKey): void {
+    this.sqlite.prepare(`
+      DELETE FROM competitor_contract_query_cache
+      WHERE biz_no_normalized = ? AND date_from <= ? AND date_to >= ?
+    `).run(key.bizNoNormalized, key.dateTo, key.dateFrom);
+    this.sqlite.prepare(`
+      DELETE FROM competitor_contract_interval_cache
+      WHERE biz_no_normalized = ? AND date_from <= ? AND date_to >= ?
+    `).run(key.bizNoNormalized, key.dateTo, key.dateFrom);
   }
 }
