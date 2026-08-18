@@ -79,3 +79,11 @@ CSV export는 Excel 호환 UTF-8 BOM과 RFC 4180 quoting을 사용하며, 다음
 - `npm run excellent-products:sync`: 현재 snapshot의 대상 사업자만 공식 API로 갱신합니다. `DATA_GO_KR_SERVICE_KEY`가 필요합니다.
 - `npm test`: Vitest 테스트를 실행합니다.
 - `npm run build`: Next.js 운영 빌드를 생성합니다.
+
+## Tauri 무설치 버전
+
+`npm run build:portable`을 실행하면 `dist/나라장터 경쟁사 영업성과` 폴더가 생성됩니다. 폴더 안의 `나라장터 경쟁사 영업성과.exe`를 실행합니다.
+
+조회 데이터, 설정, 로그는 각각 EXE 옆의 `data`, `config`, `logs`에 저장되므로 폴더째 이동하거나 삭제할 수 있습니다. 공공데이터포털 키는 `config/app.env`의 `DATA_GO_KR_SERVICE_KEY`에만 설정합니다.
+
+화면의 새로고침 버튼은 최근 14일 캐시를 비우고 API를 다시 조회한 뒤 결과를 SQLite에 저장합니다. 원격 사용 중지 기능은 포함하지 않습니다.

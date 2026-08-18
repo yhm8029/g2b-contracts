@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:portable": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-tauri-portable.ps1",
     "test": "vitest run",
     "test:portable": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/run-portable-tests.ps1",
     "db:init": "tsx scripts/db-init.ts",

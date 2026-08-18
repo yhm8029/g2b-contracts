@@ -8,3 +8,6 @@ data/*.sqlite-wal
 *.log
 *.tsbuildinfo
 .runtime/
+dist/
+src-tauri/target/
+src-tauri/gen/

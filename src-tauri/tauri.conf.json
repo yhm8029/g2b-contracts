@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "나라장터 경쟁사 영업성과",
+  "identifier": "kr.co.nara.competitor-sales",
+  "build": {
+    "frontendDist": "frontend"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "경쟁사 영업 성과",
+        "width": 1280,
+        "height": 820,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

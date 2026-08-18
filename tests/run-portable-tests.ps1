@@ -6,5 +6,7 @@ $ErrorActionPreference = 'Stop'
 
 & (Join-Path $PSScriptRoot 'portable-launcher.Tests.ps1')
 & (Join-Path $PSScriptRoot 'portable-installer.Tests.ps1')
+& (Join-Path $PSScriptRoot 'portable-server.Tests.ps1')
+& (Join-Path $PSScriptRoot 'tauri-portable.Tests.ps1')
 
 Write-Output 'portable_tests=passed'

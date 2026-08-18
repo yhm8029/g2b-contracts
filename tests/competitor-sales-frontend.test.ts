@@ -40,12 +40,13 @@ describe("competitor sales loading state", () => {
 
 describe("competitor sales Excel export control", () => {
   it("renders an active export as a link and an incomplete export as a focusable disabled button", () => {
-    expect(componentSource).toContain('import { ChevronDown, Download, ExternalLink, LoaderCircle } from "lucide-react";');
+    expect(componentSource).toContain('import { ChevronDown, Download, ExternalLink, LoaderCircle, RefreshCw } from "lucide-react";');
     expect(componentSource).toContain("const exportHref = canExportCompetitorOverview(overview, isLoading, selection)");
     expect(componentSource).toContain("buildCompetitorExportUrl(selection)");
     expect(componentSource).toMatch(/exportHref \? \([\s\S]*?<a[\s\S]*?href=\{exportHref\}[\s\S]*?aria-label=\{exportLabel\}[\s\S]*?title=\{exportLabel\}/);
     expect(componentSource).toMatch(/: \([\s\S]*?<button[\s\S]*?aria-disabled="true"[\s\S]*?aria-label=\{exportLabel\}[\s\S]*?title=\{exportLabel\}[\s\S]*?type="button"/);
-    expect(componentSource).not.toMatch(/<button[\s\S]*?\sdisabled(?:=|\s|>)/);
+    const disabledExportButton = componentSource.match(/<button\b(?=[^>]*\bclassName="competitor-sales-export is-disabled")[^>]*>/)?.[0];
+    expect(disabledExportButton).not.toMatch(/\sdisabled(?:=|\s|>)/);
   });
 
   it("explains why the disabled export command cannot be used", () => {
