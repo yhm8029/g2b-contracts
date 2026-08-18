@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Download, ExternalLink, LoaderCircle } from "lucide-react";
+import { ChevronDown, Download, ExternalLink, LoaderCircle, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
@@ -78,12 +78,13 @@ export function switchPeriodSelection(
 
 export function buildOverviewQuery(
   selection: PeriodSelection,
-  options: { cacheOnly?: boolean } = {},
+  options: { cacheOnly?: boolean; refresh?: boolean } = {},
 ) {
   const params = new URLSearchParams({ period: selection.period, year: String(selection.year) });
   if (selection.period === "month") params.set("month", String(selection.month));
   if (selection.period === "quarter") params.set("quarter", String(selection.quarter));
   if (options.cacheOnly) params.set("cacheOnly", "1");
+  if (options.refresh) params.set("refresh", "1");
   return params.toString();
 }
 
@@ -147,9 +148,16 @@ export function CompetitorSalesApp() {
   const [openCompanyId, setOpenCompanyId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const requestSequence = useRef(0);
+  const refreshController = useRef<AbortController | null>(null);
+  const refreshSequence = useRef(0);
 
   useEffect(() => {
+    refreshController.current?.abort();
+    refreshController.current = null;
+    refreshSequence.current += 1;
+    setIsRefreshing(false);
     const controller = new AbortController();
     const sequence = requestSequence.current + 1;
     requestSequence.current = sequence;
@@ -223,6 +231,34 @@ export function CompetitorSalesApp() {
     updateSelection({ period: "quarter", year, quarter: clampQuarter(year, selection.quarter, current) });
   }
 
+  function handleRefresh() {
+    if (isRefreshing) return;
+    refreshController.current?.abort();
+    const controller = new AbortController();
+    refreshController.current = controller;
+    const sequence = refreshSequence.current + 1;
+    refreshSequence.current = sequence;
+    setIsRefreshing(true);
+
+    void (async () => {
+      try {
+        const refreshed = await loadOverview(selection, controller.signal, { refresh: true });
+        if (sequence !== refreshSequence.current) return;
+        setOverview(refreshed);
+        setError(null);
+      } catch (caught: unknown) {
+        if (isAbortError(caught) || sequence !== refreshSequence.current) return;
+        setError(caught instanceof Error ? caught.message : "경쟁사 영업 성과를 불러오지 못했습니다.");
+      } finally {
+        if (sequence === refreshSequence.current) setIsRefreshing(false);
+      }
+    })();
+  }
+
+  useEffect(() => () => {
+    refreshController.current?.abort();
+  }, []);
+
   return (
     <main className="competitor-sales-page">
       <header className="competitor-sales-heading">
@@ -235,6 +271,7 @@ export function CompetitorSalesApp() {
           <div>
             <h2>경쟁사 영업 성과</h2>
             <p>{periodContext(selection, overview?.period)}</p>
+            <p className="competitor-sales-collected-at">마지막 API 확인: {formatCollectedAt(overview?.collectedAt)}</p>
           </div>
           <div className="competitor-sales-controls">
             <div aria-label="집계 단위" className="competitor-sales-segmented" role="group">
@@ -277,6 +314,21 @@ export function CompetitorSalesApp() {
                 </select>
               </label>
             ) : null}
+            <button
+              aria-label={isRefreshing ? "최신 데이터 조회 중" : "최신 데이터 조회"}
+              className="competitor-sales-refresh"
+              disabled={isRefreshing || isLoading}
+              onClick={handleRefresh}
+              title={isRefreshing ? "최신 데이터 조회 중" : "최신 데이터 조회"}
+              type="button"
+            >
+              <RefreshCw
+                aria-hidden="true"
+                className={isRefreshing ? "competitor-sales-spin" : undefined}
+                size={14}
+              />
+              <span>최신 데이터</span>
+            </button>
             {exportHref ? (
               <a
                 aria-label={exportLabel}
@@ -430,7 +482,7 @@ export function hasCachedOverviewData(overview: {
 async function loadOverview(
   selection: PeriodSelection,
   signal: AbortSignal,
-  options: { cacheOnly?: boolean } = {},
+  options: { cacheOnly?: boolean; refresh?: boolean } = {},
 ): Promise<CompetitorSalesOverviewResponse> {
   let response: Response;
   try {
@@ -525,4 +577,18 @@ function getSeoulYearMonth(now: Date) {
 
 function isAbortError(value: unknown) {
   return value instanceof DOMException ? value.name === "AbortError" : value instanceof Error && value.name === "AbortError";
+}
+
+function formatCollectedAt(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }

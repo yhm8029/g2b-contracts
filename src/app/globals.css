@@ -918,6 +918,46 @@ tbody tr.selected {
   border-color: #abbacd;
 }
 
+.competitor-sales-refresh {
+  align-items: center;
+  appearance: none;
+  background: #ffffff;
+  border: 1px solid #abbacd;
+  border-radius: 5px;
+  color: #29425f;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 800;
+  gap: 5px;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+.competitor-sales-refresh:hover:not(:disabled) {
+  background: #f5f8fb;
+  border-color: #8ea3bb;
+}
+
+.competitor-sales-refresh:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.competitor-sales-refresh:focus-visible {
+  outline: 3px solid rgba(20, 92, 158, 0.28);
+  outline-offset: -3px;
+}
+
+.competitor-sales-collected-at {
+  color: #58708e;
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin: 4px 0 0;
+}
+
 .competitor-sales-loading,
 .competitor-sales-error {
   align-items: center;
@@ -1341,6 +1381,10 @@ tbody tr.selected {
   }
 
   .competitor-sales-export {
+    max-width: 100%;
+  }
+
+  .competitor-sales-refresh {
     max-width: 100%;
   }
 

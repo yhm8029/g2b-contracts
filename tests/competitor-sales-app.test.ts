@@ -39,6 +39,12 @@ describe("competitor sales period selection", () => {
     );
   });
 
+  it("adds refresh=1 to the manual overview query without cacheOnly", () => {
+    expect(buildOverviewQuery({ period: "month", year: 2026, month: 7 }, { refresh: true })).toBe(
+      "period=month&year=2026&month=7&refresh=1",
+    );
+  });
+
   it("lists years from the current Seoul year through 2020", () => {
     expect(getSeoulYearOptions(new Date("2026-07-22T03:00:00.000Z"))).toEqual([
       2026, 2025, 2024, 2023, 2022, 2021, 2020,
