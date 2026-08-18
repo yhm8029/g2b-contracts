@@ -86,6 +86,27 @@ describe("GET /api/competitors/overview", () => {
     await Promise.all([cached, full]);
   });
 
+  it("strictly accepts only refresh=1 and passes refresh mode to the service", async () => {
+    mocks.getOverview.mockResolvedValue({ status: "ready", companies: [] });
+    vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "test-key");
+    const { GET } = await import("@/app/api/competitors/overview/route");
+
+    const accepted = await GET(new NextRequest(
+      "http://localhost/api/competitors/overview?period=year&year=2026&refresh=1",
+    ));
+    const rejected = await GET(new NextRequest(
+      "http://localhost/api/competitors/overview?period=year&year=2026&refresh=true",
+    ));
+
+    expect(accepted.status).toBe(200);
+    expect(mocks.getOverview).toHaveBeenCalledWith(expect.objectContaining({
+      refreshRecent: true,
+      cacheOnly: false,
+    }));
+    expect(rejected.status).toBe(400);
+    expect(mocks.getOverview).toHaveBeenCalledOnce();
+  });
+
   it("rejects present-but-invalid parameters instead of treating them as absent", async () => {
     vi.stubEnv("DATA_GO_KR_SERVICE_KEY", "test-key");
     const { GET } = await import("@/app/api/competitors/overview/route");

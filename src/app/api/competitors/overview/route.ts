@@ -19,15 +19,18 @@ const INVALID_PERIOD = { error: "조회 기간이 올바르지 않습니다." };
 
 export async function GET(request: NextRequest) {
   const query = parseCompetitorSalesPeriodQuery(request.nextUrl.searchParams, {
-    extraAllowedKeys: ["cacheOnly"],
+    extraAllowedKeys: ["cacheOnly", "refresh"],
   });
   const cacheOnly = parseCacheOnly(request.nextUrl.searchParams);
-  if (query === null || cacheOnly === null) return NextResponse.json(INVALID_PERIOD, { status: 400 });
+  const refresh = parseRefresh(request.nextUrl.searchParams);
+  if (query === null || cacheOnly === null || refresh === null || (cacheOnly && refresh)) {
+    return NextResponse.json(INVALID_PERIOD, { status: 400 });
+  }
 
   const serviceKey = resolveCompetitorContractServiceKey();
   try {
     const overview = await waitForRequestAbort(
-      getSharedOverview(query, serviceKey, cacheOnly),
+      getSharedOverview(query, serviceKey, { cacheOnly, refresh }),
       request.signal,
     );
     return NextResponse.json(overview);
@@ -60,13 +63,13 @@ export async function GET(request: NextRequest) {
 function getSharedOverview(
   query: CompetitorSalesPeriodQuery,
   serviceKey: string,
-  cacheOnly: boolean,
+  options: { cacheOnly: boolean; refresh: boolean },
 ) {
-  const key = normalizedQueryKey(query, cacheOnly);
+  const key = normalizedQueryKey(query, options);
   const existing = inFlightOverviews.get(key);
   if (existing) return existing;
 
-  const shared = loadOverview(query, serviceKey, cacheOnly);
+  const shared = loadOverview(query, serviceKey, options);
   inFlightOverviews.set(key, shared);
   shared.then(
     () => removeSettledOverview(key, shared),
@@ -75,7 +78,11 @@ function getSharedOverview(
   return shared;
 }
 
-async function loadOverview(query: CompetitorSalesPeriodQuery, serviceKey: string, cacheOnly: boolean) {
+async function loadOverview(
+  query: CompetitorSalesPeriodQuery,
+  serviceKey: string,
+  options: { cacheOnly: boolean; refresh: boolean },
+) {
   const connection = createDb();
   try {
     initializeSqliteSchema(connection.sqlite);
@@ -83,7 +90,8 @@ async function loadOverview(query: CompetitorSalesPeriodQuery, serviceKey: strin
       query,
       serviceKey,
       sqlite: connection.sqlite,
-      cacheOnly,
+      cacheOnly: options.cacheOnly,
+      refreshRecent: options.refresh,
     });
   } finally {
     connection.sqlite.close();
@@ -97,13 +105,17 @@ function removeSettledOverview(
   if (inFlightOverviews.get(key) === shared) inFlightOverviews.delete(key);
 }
 
-function normalizedQueryKey(query: CompetitorSalesPeriodQuery, cacheOnly: boolean) {
+function normalizedQueryKey(
+  query: CompetitorSalesPeriodQuery,
+  options: { cacheOnly: boolean; refresh: boolean },
+) {
   return JSON.stringify({
     period: query.period,
     year: query.year,
     month: query.period === "month" ? query.month ?? null : null,
     quarter: query.period === "quarter" ? query.quarter ?? null : null,
-    cacheOnly,
+    cacheOnly: options.cacheOnly,
+    refresh: options.refresh,
   });
 }
 
@@ -138,6 +150,11 @@ function createAbortError() {
 function parseCacheOnly(params: URLSearchParams) {
   if (!params.has("cacheOnly")) return false;
   return params.get("cacheOnly") === "1" ? true : null;
+}
+
+function parseRefresh(params: URLSearchParams) {
+  if (!params.has("refresh")) return false;
+  return params.get("refresh") === "1" ? true : null;
 }
 
 function isAbortError(error: unknown) {
