@@ -258,6 +258,24 @@ function deleteMonthlyCacheRow(sqlite: Database.Database, registryKey: string, d
   `).run(registryKey, dateFrom, dateTo);
 }
 
+export function deleteCompetitorThirdPartyDeliveryCacheInRange(
+  sqlite: Database.Database,
+  registryKey: string,
+  dateFrom: string,
+  dateTo: string,
+): number {
+  const from = parseDashedDate(dateFrom, "dateFrom");
+  const to = parseDashedDate(dateTo, "dateTo");
+  if (from > to) {
+    throw new CompetitorContractInputError("dateFrom must be earlier than or equal to dateTo");
+  }
+  const result = sqlite.prepare(`
+    DELETE FROM competitor_third_party_delivery_monthly_cache
+    WHERE registry_key = ? AND date_from <= ? AND date_to >= ?
+  `).run(registryKey, to, from);
+  return Number(result.changes);
+}
+
 function missingRangeAfterCachedPrefix(range: DateRange, entry: CachedMonthlyRows | null): DateRange[] {
   if (!entry) return [range];
   if (entry.dateTo >= range.dateTo) return [];

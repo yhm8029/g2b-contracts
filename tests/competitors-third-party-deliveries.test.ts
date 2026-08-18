@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 
-import { searchCompetitorThirdPartyDeliveries } from "@/lib/competitors/third-party-deliveries";
+import {
+  deleteCompetitorThirdPartyDeliveryCacheInRange,
+  searchCompetitorThirdPartyDeliveries,
+} from "@/lib/competitors/third-party-deliveries";
 import { initializeSqliteSchema } from "@/lib/db/init";
 
 function providerResponse(items: Record<string, unknown>[], totalCount = items.length) {
@@ -387,5 +390,51 @@ describe("competitor third-party delivery search", () => {
         missingRanges: [{ dateFrom: "2026-06-01", dateTo: "2026-06-30" }],
       },
     });
+  });
+
+  it("deletes cached monthly ranges that intersect the supplied window while leaving other registries intact", () => {
+    const sqlite = new Database(":memory:");
+    initializeSqliteSchema(sqlite);
+
+    try {
+      const insert = sqlite.prepare(`
+        INSERT INTO competitor_third_party_delivery_monthly_cache
+          (registry_key, date_from, date_to, result_json, cached_at_ms, result_version)
+        VALUES (?, ?, ?, '{}', ?, ?)
+      `);
+      const now = Date.now();
+      const targetRegistry = "1234567890";
+      const otherRegistry = "9876543210";
+
+      insert.run(targetRegistry, "2026-04-01", "2026-04-30", now, "v3");
+      insert.run(targetRegistry, "2026-05-01", "2026-05-31", now, "v3");
+      insert.run(targetRegistry, "2026-06-01", "2026-06-30", now, "v3");
+      insert.run(targetRegistry, "2026-07-01", "2026-07-31", now, "v3");
+      insert.run(targetRegistry, "2026-08-01", "2026-08-31", now, "v3");
+      insert.run(otherRegistry, "2026-05-01", "2026-05-31", now, "v3");
+      insert.run(otherRegistry, "2026-07-01", "2026-07-31", now, "v3");
+
+      const deleted = deleteCompetitorThirdPartyDeliveryCacheInRange(
+        sqlite,
+        targetRegistry,
+        "2026-05-15",
+        "2026-07-15",
+      );
+
+      expect(deleted).toBe(3);
+
+      const remaining = sqlite.prepare(
+        `SELECT registry_key, date_from, date_to FROM competitor_third_party_delivery_monthly_cache ORDER BY registry_key, date_from`,
+      ).all() as Array<{ registry_key: string; date_from: string; date_to: string }>;
+
+      expect(remaining).toEqual([
+        { registry_key: targetRegistry, date_from: "2026-04-01", date_to: "2026-04-30" },
+        { registry_key: targetRegistry, date_from: "2026-08-01", date_to: "2026-08-31" },
+        { registry_key: otherRegistry, date_from: "2026-05-01", date_to: "2026-05-31" },
+        { registry_key: otherRegistry, date_from: "2026-07-01", date_to: "2026-07-31" },
+      ]);
+    } finally {
+      sqlite.close();
+    }
   });
 });
