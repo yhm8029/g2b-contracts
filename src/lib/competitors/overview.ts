@@ -1,7 +1,7 @@
 import type { CompetitorContractRow } from "./contracts";
 import { classifyAutomaticControlBemsContract, COMPETITOR_REGISTRY } from "./registry";
 
-export const COMPETITOR_SALES_RULE_VERSION = "v2";
+export const COMPETITOR_SALES_RULE_VERSION = "v3";
 const TARGET_ITEM_CODE = "3912180101";
 
 const COMPETITOR_DESIGNATION_START_DATES: Readonly<Record<string, string>> = {
@@ -169,6 +169,7 @@ export function buildCompetitorSalesOverview(input: {
   const registry = new Map(COMPETITOR_SALES_REGISTRY.map((competitor) => [competitor.bizNo, competitor]));
   const sourceGroups = new Map<string, CompetitorContractRow[]>();
   for (const row of input.rows) {
+    if (row.sourceDataset === "g2b-public-standard-contract" && (row.amendmentOrder ?? 0) > 0) continue;
     if (!registry.has(row.bizNoNormalized)) continue;
     const key = contractIdentity(row);
     const group = sourceGroups.get(key) ?? [];
