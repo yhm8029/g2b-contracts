@@ -1,7 +1,7 @@
 import type { CompetitorContractRow } from "./contracts";
-import { classifyAutomaticControlBemsContract, COMPETITOR_REGISTRY } from "./registry";
+import { COMPETITOR_REGISTRY } from "./registry";
 
-export const COMPETITOR_SALES_RULE_VERSION = "v3";
+export const COMPETITOR_SALES_RULE_VERSION = "v4";
 const TARGET_ITEM_CODE = "3912180101";
 
 const COMPETITOR_DESIGNATION_START_DATES: Readonly<Record<string, string>> = {
@@ -130,13 +130,7 @@ export function classifyCompetitorSalesContract(row: CompetitorContractRow) {
     return { related: false, positiveSignals: [], conflictingSignals: [] };
   }
   const itemCodes = [...new Set((row.itemCodes ?? []).map(normalizeItemCode).filter(Boolean))];
-  if (itemCodes.length > 0) {
-    return { related: itemCodes.includes(TARGET_ITEM_CODE), positiveSignals: [], conflictingSignals: [] };
-  }
-  return classifyAutomaticControlBemsContract({
-    ...row,
-    contractName: [row.contractName, ...(row.itemNames ?? [])].join(" "),
-  });
+  return { related: itemCodes.includes(TARGET_ITEM_CODE), positiveSignals: [], conflictingSignals: [] };
 }
 
 function isThirdPartyUnitPriceMasterCeiling(row: CompetitorContractRow) {

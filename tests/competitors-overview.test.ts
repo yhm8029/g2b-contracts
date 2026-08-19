@@ -33,17 +33,17 @@ describe("competitor sales overview", () => {
       quarter: null,
       dateFrom: "2026-06-01",
       dateTo: "2026-06-30",
-      cacheKey: "v3:month:2026-06-01:2026-06-30",
+      cacheKey: "v4:month:2026-06-01:2026-06-30",
     });
     expect(resolveCompetitorSalesPeriod({ period: "quarter", year: 2026, quarter: 2 }, now)).toMatchObject({
       dateFrom: "2026-04-01",
       dateTo: "2026-06-30",
-      cacheKey: "v3:quarter:2026-Q2:2026-04-01:2026-06-30",
+      cacheKey: "v4:quarter:2026-Q2:2026-04-01:2026-06-30",
     });
     expect(resolveCompetitorSalesPeriod({ period: "year", year: 2025 }, now)).toMatchObject({
       dateFrom: "2025-01-01",
       dateTo: "2025-12-31",
-      cacheKey: "v3:year:2025:2025-01-01:2025-12-31",
+      cacheKey: "v4:year:2025:2025-01-01:2025-12-31",
     });
   });
 
@@ -51,17 +51,17 @@ describe("competitor sales overview", () => {
     expect(resolveCompetitorSalesPeriod({ period: "month", year: 2026, month: 7 }, now)).toMatchObject({
       dateFrom: "2026-07-01",
       dateTo: "2026-07-22",
-      cacheKey: "v3:month:2026-07-01:2026-07-22",
+      cacheKey: "v4:month:2026-07-01:2026-07-22",
     });
     expect(resolveCompetitorSalesPeriod({ period: "quarter", year: 2026, quarter: 3 }, now)).toMatchObject({
       dateFrom: "2026-07-01",
       dateTo: "2026-07-22",
-      cacheKey: "v3:quarter:2026-Q3:2026-07-01:2026-07-22",
+      cacheKey: "v4:quarter:2026-Q3:2026-07-01:2026-07-22",
     });
     expect(resolveCompetitorSalesPeriod({ period: "year", year: 2026 }, now)).toMatchObject({
       dateFrom: "2026-01-01",
       dateTo: "2026-07-22",
-      cacheKey: "v3:year:2026:2026-01-01:2026-07-22",
+      cacheKey: "v4:year:2026:2026-01-01:2026-07-22",
     });
   });
 
@@ -87,10 +87,11 @@ describe("competitor sales overview", () => {
     );
   });
 
-  it("uses item codes first and falls back to BEMS classification only when codes are absent", () => {
+  it("matches only the exact 10-digit item code and ignores titles or BEMS keywords", () => {
     expect(classifyCompetitorSalesContract(contractRow({ itemCodes: ["3912180101"], contractName: "unrelated" })).related).toBe(true);
     expect(classifyCompetitorSalesContract(contractRow({ itemCodes: ["4010170101"], contractName: "BEMS installation" })).related).toBe(false);
-    expect(classifyCompetitorSalesContract(contractRow({ itemCodes: [], contractName: "City hall BEMS installation" })).related).toBe(true);
+    expect(classifyCompetitorSalesContract(contractRow({ itemCodes: [], contractName: "City hall BEMS installation" })).related).toBe(false);
+    expect(classifyCompetitorSalesContract(contractRow({ itemCodes: ["39121801"], contractName: "City hall BEMS installation" })).related).toBe(false);
   });
 
   it("excludes only public-standard third-party unit-price contract ceilings", () => {
