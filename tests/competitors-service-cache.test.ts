@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   resolvePeriod: vi.fn(),
   deleteIntersecting: vi.fn(),
   deleteThirdPartyCacheInRange: vi.fn(),
+  enrich: vi.fn(),
 }));
 
 vi.mock("@/lib/competitors/cache", () => ({
@@ -25,6 +26,9 @@ vi.mock("@/lib/competitors/overview", () => ({
   COMPETITOR_SALES_REGISTRY: [{ bizNo: "1234567890" }],
   resolveCompetitorSalesPeriod: mocks.resolvePeriod,
   buildCompetitorSalesOverview: mocks.build,
+}));
+vi.mock("@/lib/competitors/purchase-target-products", () => ({
+  enrichCompetitorStandardContractItemCodes: mocks.enrich,
 }));
 
 describe("competitor overview service cache mode", () => {
@@ -52,9 +56,17 @@ describe("competitor overview service cache mode", () => {
       coverage: { complete: true, fresh: false, missingRanges: [] },
     });
     mocks.build.mockReturnValue({ status: "ready", companies: [] });
+    mocks.enrich.mockImplementation((rows) => Promise.resolve(rows));
   });
 
   it("passes cache-only mode to contract search and preserves coverage in the response", async () => {
+    const standardRow = { id: "standard-row", bizNo: "1234567890" };
+    mocks.search.mockResolvedValue({
+      fetchedAt: "2026-07-20T00:00:00.000Z",
+      rows: [standardRow],
+      summary: { contractCount: 1, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: null },
+      coverage: { complete: true, fresh: false, missingRanges: [] },
+    });
     const { getCompetitorSalesOverview } = await import("@/lib/competitors/service");
 
     const result = await getCompetitorSalesOverview({
@@ -73,8 +85,17 @@ describe("competitor overview service cache mode", () => {
       expect.objectContaining({ dateFrom: "2026-01-01", dateTo: "2026-07-22", bizNos: ["1234567890"] }),
       expect.objectContaining({ cacheOnly: true }),
     );
+    expect(mocks.enrich).toHaveBeenCalledWith(
+      [standardRow],
+      expect.objectContaining({
+        sqlite: {},
+        serviceKey: "",
+        fetchImpl: undefined,
+        cacheOnly: true,
+      }),
+    );
     expect(mocks.build).toHaveBeenCalledWith(expect.objectContaining({
-      rows: [{ id: "delivery-row", sourceDataset: "g2b-shopping-mall-third-party-delivery" }],
+      rows: [standardRow, { id: "delivery-row", sourceDataset: "g2b-shopping-mall-third-party-delivery" }],
     }));
     expect(result).toEqual({
       status: "ready",
@@ -194,6 +215,34 @@ describe("competitor overview service cache mode", () => {
 
     expect(mocks.deleteIntersecting).not.toHaveBeenCalled();
     expect(mocks.deleteThirdPartyCacheInRange).not.toHaveBeenCalled();
+  });
+
+  it("passes enriched rows with item codes to overview construction", async () => {
+    const standardRow = { id: "standard-row", bizNo: "1234567890" };
+    const enrichedRow = { ...standardRow, itemCodes: ["3912180101"] };
+    mocks.search.mockResolvedValue({
+      fetchedAt: "2026-07-20T00:00:00.000Z",
+      rows: [standardRow],
+      summary: { contractCount: 1, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: null },
+      coverage: { complete: true, fresh: false, missingRanges: [] },
+    });
+    mocks.enrich.mockResolvedValueOnce([enrichedRow]);
+    const { getCompetitorSalesOverview } = await import("@/lib/competitors/service");
+
+    await getCompetitorSalesOverview({
+      query: { period: "year", year: 2026 },
+      serviceKey: "test-key",
+      sqlite: {} as never,
+      now: () => new Date("2026-07-22T00:00:00.000Z"),
+    });
+
+    expect(mocks.enrich).toHaveBeenCalledWith([standardRow], expect.any(Object));
+    expect(mocks.build).toHaveBeenCalledWith(expect.objectContaining({
+      rows: expect.arrayContaining([enrichedRow]),
+    }));
+    expect(mocks.build.mock.invocationCallOrder[0]!).toBeGreaterThan(
+      mocks.enrich.mock.invocationCallOrder[0]!,
+    );
   });
 });
 
