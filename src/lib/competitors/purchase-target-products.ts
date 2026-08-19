@@ -57,12 +57,14 @@ export async function fetchG2bPurchaseTargetItemCodes({
   bidNtceOrd,
   fetchImpl,
   signal,
+  timeoutMs,
 }: {
   serviceKey: string;
   bidNtceNo: string;
   bidNtceOrd: string;
   fetchImpl?: CompetitorContractFetch;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<string[]> {
   const url = buildG2bPurchaseTargetProductsUrl({
     serviceKey,
@@ -70,7 +72,38 @@ export async function fetchG2bPurchaseTargetItemCodes({
     bidNtceOrd,
   });
   const f = fetchImpl ?? (fetch as CompetitorContractFetch);
-  const response = await f(url.toString(), { signal });
+  let response: Response;
+  if (timeoutMs !== undefined && timeoutMs > 0) {
+    const localController = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onExternalAbort = () => {
+      if (!localController.signal.aborted) {
+        localController.abort();
+      }
+    };
+    if (signal) {
+      if (signal.aborted) {
+        localController.abort();
+      } else {
+        signal.addEventListener("abort", onExternalAbort);
+      }
+    }
+    try {
+      timer = setTimeout(() => {
+        if (!localController.signal.aborted) {
+          localController.abort();
+        }
+      }, timeoutMs);
+      response = await f(url.toString(), { signal: localController.signal });
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (signal) {
+        signal.removeEventListener("abort", onExternalAbort);
+      }
+    }
+  } else {
+    response = await f(url.toString(), { signal });
+  }
   if (!response.ok) {
     throw new Error(
       `HTTP ${response.status} fetching purchase target products for ${bidNtceNo}/${bidNtceOrd}`,
@@ -202,6 +235,7 @@ export async function enrichCompetitorStandardContractItemCodes(
     signal,
     cacheOnly = false,
     now = () => new Date(),
+    timeBudgetMs = 20000,
   }: {
     serviceKey: string;
     sqlite: Database.Database;
@@ -209,6 +243,7 @@ export async function enrichCompetitorStandardContractItemCodes(
     signal?: AbortSignal;
     cacheOnly?: boolean;
     now?: () => Date;
+    timeBudgetMs?: number;
   },
 ): Promise<CompetitorContractRow[]> {
   const nowMs = now().getTime();
@@ -235,8 +270,29 @@ export async function enrichCompetitorStandardContractItemCodes(
 
   let cursor = 0;
   const itemCodesByKey = new Map<string, string[]>();
+  const budgetController = new AbortController();
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+  const budgetStartedAt = Date.now();
+  let stopped = false;
+  const onBudgetAbort = () => {
+    if (!budgetController.signal.aborted) {
+      budgetController.abort();
+    }
+    stopped = true;
+  };
+  if (signal) {
+    if (signal.aborted) {
+      onBudgetAbort();
+    } else {
+      signal.addEventListener("abort", onBudgetAbort);
+    }
+  }
+  budgetTimer = setTimeout(() => {
+    onBudgetAbort();
+  }, timeBudgetMs);
   const worker = async (): Promise<void> => {
     while (true) {
+      if (stopped) return;
       const idx = cursor++;
       if (idx >= keys.length) return;
       const key = keys[idx];
@@ -252,13 +308,19 @@ export async function enrichCompetitorStandardContractItemCodes(
         continue;
       }
       if (cacheOnly || !serviceKey) continue;
+      const remaining = timeBudgetMs - (Date.now() - budgetStartedAt);
+      if (remaining <= 0) {
+        onBudgetAbort();
+        return;
+      }
       try {
         const codes = await fetchG2bPurchaseTargetItemCodes({
           serviceKey,
           bidNtceNo: noticeNo,
           bidNtceOrd: order,
           fetchImpl,
-          signal,
+          signal: budgetController.signal,
+          timeoutMs: Math.min(10000, remaining),
         });
         writeCache(sqlite, noticeNo, order, codes, nowMs);
         const merged = mergeCodes(existingCodes, codes);
@@ -270,7 +332,14 @@ export async function enrichCompetitorStandardContractItemCodes(
   };
 
   const count = Math.min(MAX_CONCURRENCY, keys.length);
-  await Promise.all(Array.from({ length: count }, () => worker()));
+  try {
+    await Promise.all(Array.from({ length: count }, () => worker()));
+  } finally {
+    if (budgetTimer !== undefined) clearTimeout(budgetTimer);
+    if (signal) {
+      signal.removeEventListener("abort", onBudgetAbort);
+    }
+  }
   return rows.map((row) => {
     if (row.sourceDataset !== "g2b-public-standard-contract") return row;
     if (row.itemCodes !== undefined && row.itemCodes.length > 0) return row;

@@ -79,6 +79,38 @@ describe("fetchG2bPurchaseTargetItemCodes", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("aborts a never-resolving fetch after timeoutMs", async () => {
+    vi.useFakeTimers();
+    try {
+      let capturedSignal: AbortSignal | undefined;
+      const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
+        capturedSignal = init?.signal as AbortSignal | undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          capturedSignal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          }, { once: true });
+        });
+      });
+
+      const request = fetchG2bPurchaseTargetItemCodes({
+        serviceKey: "K",
+        bidNtceNo: "NT-001",
+        bidNtceOrd: "001",
+        fetchImpl,
+        timeoutMs: 2_000,
+      });
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(capturedSignal?.aborted).toBe(false);
+      const rejection = expect(request).rejects.toMatchObject({ name: "AbortError" });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await rejection;
+      expect(capturedSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("passes AbortSignal to fetch", async () => {
     const fetchImpl = vi.fn(async () => purchaseTargetResponse([]));
     const controller = new AbortController();
@@ -103,6 +135,42 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
 
   beforeEach(() => {
     sqlite = new Database(":memory:");
+  });
+
+  it("stops queued enrichment when the whole-operation time budget elapses", async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: AbortSignal[] = [];
+      const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        if (signal) signals.push(signal);
+        return new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          }, { once: true });
+        });
+      });
+      const rows = Array.from({ length: 8 }, (_, index) => makeRow({
+        id: `row-${index}`,
+        noticeNo: `NT-${index}`,
+      }));
+
+      const request = enrichCompetitorStandardContractItemCodes(rows, {
+        serviceKey: "K",
+        fetchImpl,
+        sqlite,
+        timeBudgetMs: 1_000,
+      });
+
+      expect(fetchImpl.mock.calls.length).toBeGreaterThan(0);
+      expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(4);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(request).resolves.toEqual(rows);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(fetchImpl.mock.calls.length).toBeLessThan(rows.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("extracts bidPbancOrd from noticeDetailUrl and gets itemCodes", async () => {

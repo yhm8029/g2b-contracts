@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   build: vi.fn(),
   resolvePeriod: vi.fn(),
   deleteIntersecting: vi.fn(),
+  getStored: vi.fn(),
+  setInterval: vi.fn(),
   deleteThirdPartyCacheInRange: vi.fn(),
   enrich: vi.fn(),
 }));
@@ -13,6 +15,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/competitors/cache", () => ({
   SqliteCompetitorQueryCache: class SqliteCompetitorQueryCache {
     deleteIntersecting = mocks.deleteIntersecting;
+    getStored = mocks.getStored;
+    setInterval = mocks.setInterval;
   },
 }));
 vi.mock("@/lib/competitors/contracts", () => ({
@@ -34,6 +38,7 @@ vi.mock("@/lib/competitors/purchase-target-products", () => ({
 describe("competitor overview service cache mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getStored.mockReturnValue(null);
     mocks.resolvePeriod.mockReturnValue({
       period: "year",
       year: 2026,
@@ -215,6 +220,49 @@ describe("competitor overview service cache mode", () => {
 
     expect(mocks.deleteIntersecting).not.toHaveBeenCalled();
     expect(mocks.deleteThirdPartyCacheInRange).not.toHaveBeenCalled();
+  });
+
+  it("preserves historical prefix before invalidating the recent refresh window", async () => {
+    mocks.getStored.mockReturnValue({
+      result: {
+        fetchedAt: "2026-07-20T00:00:00.000Z",
+        rows: [
+          { id: "old-1", contractDate: "2026-01-15" },
+          { id: "old-2", contractDate: "2026-07-08" },
+          { id: "boundary", contractDate: "2026-07-09" },
+          { id: "recent", contractDate: "2026-07-20" },
+        ],
+        summary: { contractCount: 4, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: "2026-07-20" },
+        coverage: { complete: true, fresh: true, missingRanges: [] },
+      },
+      fresh: true,
+    });
+    const { getCompetitorSalesOverview } = await import("@/lib/competitors/service");
+
+    await getCompetitorSalesOverview({
+      query: { period: "year", year: 2026 },
+      serviceKey: "test-key",
+      sqlite: {} as never,
+      refreshRecent: true,
+      now: () => new Date("2026-07-22T00:00:00.000Z"),
+    });
+
+    expect(mocks.getStored).toHaveBeenCalledWith({
+      bizNoNormalized: "1234567890",
+      dateFrom: "2026-01-01",
+      dateTo: "2026-07-22",
+    });
+    expect(mocks.setInterval).toHaveBeenCalledTimes(1);
+    const [prefixKey, prefixResult] = mocks.setInterval.mock.calls[0]!;
+    expect(prefixKey).toEqual({
+      bizNoNormalized: "1234567890",
+      dateFrom: "2026-01-01",
+      dateTo: "2026-07-08",
+    });
+    expect(prefixResult.rows.map((row: { id: string }) => row.id)).toEqual(["old-1", "old-2"]);
+    expect(mocks.setInterval.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.deleteIntersecting.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("passes enriched rows with item codes to overview construction", async () => {

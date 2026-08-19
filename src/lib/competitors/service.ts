@@ -126,6 +126,43 @@ async function maybeInvalidateRecentCaches(input: {
   const candidateFrom = shiftUtcDays(input.period.dateTo, -RECENT_REFRESH_LOOKBACK_DAYS);
   const dateFrom = candidateFrom < input.period.dateFrom ? input.period.dateFrom : candidateFrom;
   const dateTo = input.period.dateTo;
+  const cached = input.queryCache.getStored({
+    bizNoNormalized: input.registryKey,
+    dateFrom: input.period.dateFrom,
+    dateTo,
+  });
+  const prefixDateTo = shiftUtcDays(dateFrom, -1);
+  if (cached && prefixDateTo >= input.period.dateFrom) {
+    const rows = cached.result.rows.filter(
+      (row) => row.contractDate !== null && row.contractDate >= input.period.dateFrom && row.contractDate <= prefixDateTo,
+    );
+    let totalAmount = 0;
+    let noticeLinkedCount = 0;
+    let latestContractDate: string | null = null;
+    for (const row of rows) {
+      if (row.contractDate === null) continue;
+      if (typeof row.currentContractAmount === "number" && Number.isFinite(row.currentContractAmount)) {
+        totalAmount += row.currentContractAmount;
+      }
+      if (row.noticeNo) noticeLinkedCount += 1;
+      if (latestContractDate === null || row.contractDate > latestContractDate) {
+        latestContractDate = row.contractDate;
+      }
+    }
+    input.queryCache.setInterval(
+      {
+        bizNoNormalized: input.registryKey,
+        dateFrom: input.period.dateFrom,
+        dateTo: prefixDateTo,
+      },
+      {
+        ...cached.result,
+        rows,
+        summary: { contractCount: rows.length, totalAmount, noticeLinkedCount, latestContractDate },
+        coverage: { complete: true, fresh: true, missingRanges: [] },
+      },
+    );
+  }
   input.queryCache.deleteIntersecting({ bizNoNormalized: input.registryKey, dateFrom, dateTo });
   deleteCompetitorThirdPartyDeliveryCacheInRange(input.sqlite, input.registryKey, dateFrom, dateTo);
 }
