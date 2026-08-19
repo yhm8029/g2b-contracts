@@ -9,6 +9,17 @@ const MAX_CONCURRENCY = 4;
 const SEP = "\u0000";
 const DEFAULT_ORDER = "000";
 
+export interface CompetitorItemEnrichmentResult {
+  rows: CompetitorContractRow[];
+  complete: boolean;
+  unresolvedCount: number;
+}
+
+const G2B_CONTRACT_SEARCH_ENDPOINT = "https://apis.data.go.kr/1230000/ao/CntrctInfoService/getCntrctInfoListThngPPSSrch",
+  G2B_CONTRACT_DETAIL_ENDPOINT = "https://apis.data.go.kr/1230000/ao/CntrctInfoService/getCntrctInfoListThngDetail",
+  G2B_TARGET_PRODUCT_CLASS = "39121801",
+  G2B_CANONICAL_DETAILED_CLASS = "3912180101";
+
 function normalizeTenDigits(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const digits = String(value).replace(/[^0-9]/g, "");
@@ -49,6 +60,83 @@ function extractItems(body: unknown): unknown[] {
   if (Array.isArray(inner)) return inner;
   if (inner) return [inner];
   return [container];
+}
+
+function parseDecisionContractNumber(contractDetailUrl?: string): string | null {
+  if (!contractDetailUrl) return null;
+  const queryIndex = contractDetailUrl.indexOf("?");
+  if (queryIndex < 0) return null;
+  const params = new URLSearchParams(contractDetailUrl.slice(queryIndex + 1));
+  const ctrtNo = params.get("ctrtNo")?.trim();
+  if (!ctrtNo) return null;
+  const order = params.get("ctrtChgOrd")?.trim() || "00";
+  return ctrtNo + order;
+}
+
+async function fetchG2bJson(url: string, fetchImpl: CompetitorContractFetch, signal?: AbortSignal): Promise<unknown> {
+  const response = await fetchImpl(url, { signal });
+  if (!response.ok) {
+    throw new Error(`G2B request failed: ${response.status}`);
+  }
+  const body = (await response.json()) as Record<string, unknown>;
+  const responseObj = body?.response as Record<string, unknown> | undefined;
+  const header = responseObj?.header as Record<string, unknown> | undefined;
+  const resultCode = header?.resultCode;
+  if (resultCode !== "00" && resultCode !== "0") {
+    throw new Error(`G2B API resultCode: ${String(resultCode)}`);
+  }
+  return body;
+}
+
+async function fetchG2bContractItemCodes(params: {
+  serviceKey: string;
+  dcsnCntrctNo: string;
+  fetchImpl: CompetitorContractFetch;
+  signal?: AbortSignal;
+}): Promise<string[]> {
+  const { serviceKey, dcsnCntrctNo, fetchImpl, signal } = params;
+  const searchUrl = new URL(G2B_CONTRACT_SEARCH_ENDPOINT);
+  searchUrl.searchParams.set("inqryDiv", "2");
+  searchUrl.searchParams.set("dcsnCntrctNo", dcsnCntrctNo);
+  searchUrl.searchParams.set("numOfRows", "100");
+  searchUrl.searchParams.set("pageNo", "1");
+  searchUrl.searchParams.set("type", "json");
+  searchUrl.searchParams.set("serviceKey", serviceKey);
+  const searchBody = await fetchG2bJson(searchUrl.toString(), fetchImpl, signal);
+  const searchItems = extractItems(searchBody);
+  if (searchItems.length === 0) {
+    throw new Error(
+      "G2B contract search returned no matching contract; treating as transient upstream replication lag",
+    );
+  }
+  const untyIds = new Set<string>();
+  for (const raw of searchItems) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    const value = typeof item?.untyCntrctNo === "string" ? item.untyCntrctNo.trim() : "";
+    if (value) untyIds.add(value);
+  }
+  const canonicalCodes = new Set<string>();
+  for (const untyCntrctNo of untyIds) {
+    const detailUrl = new URL(G2B_CONTRACT_DETAIL_ENDPOINT);
+    detailUrl.searchParams.set("inqryDiv", "2");
+    detailUrl.searchParams.set("untyCntrctNo", untyCntrctNo);
+    detailUrl.searchParams.set("numOfRows", "999");
+    detailUrl.searchParams.set("pageNo", "1");
+    detailUrl.searchParams.set("type", "json");
+    detailUrl.searchParams.set("serviceKey", serviceKey);
+    const detailBody = await fetchG2bJson(detailUrl.toString(), fetchImpl, signal);
+    const detailItems = extractItems(detailBody);
+    for (const raw of detailItems) {
+      if (!raw || typeof raw !== "object") continue;
+      const item = raw as Record<string, unknown>;
+      const digits = typeof item?.prdctClsfcNo === "string" ? item.prdctClsfcNo.replace(/\D/g, "") : "";
+      if (digits.length === 8 && digits === G2B_TARGET_PRODUCT_CLASS) {
+        canonicalCodes.add(G2B_CANONICAL_DETAILED_CLASS);
+      }
+    }
+  }
+  return [...canonicalCodes];
 }
 
 export async function fetchG2bPurchaseTargetItemCodes({
@@ -245,31 +333,46 @@ export async function enrichCompetitorStandardContractItemCodes(
     now?: () => Date;
     timeBudgetMs?: number;
   },
-): Promise<CompetitorContractRow[]> {
+): Promise<CompetitorItemEnrichmentResult> {
   const nowMs = now().getTime();
   ensureCacheTable(sqlite);
-  const groups = new Map<string, CompetitorContractRow[]>();
+  const groups = new Map<string, { descriptor: { kind: "notice"; noticeNo: string; order: string } | { kind: "contract"; dcsn: string }; rows: CompetitorContractRow[] }>();
   const existingCodesByKey = new Map<string, string[]>();
+  let unresolvedCount = 0;
   for (const row of rows) {
     if (row.sourceDataset !== "g2b-public-standard-contract") continue;
-    const noticeNo = row.noticeNo;
-    if (!noticeNo) continue;
-    const order = extractOrderFromUrl(row.noticeDetailUrl);
-    const key = noticeNo + SEP + order;
+    if (row.itemCodes !== undefined && row.itemCodes.length > 0) continue;
+    let key: string;
+    let descriptor: { kind: "notice"; noticeNo: string; order: string } | { kind: "contract"; dcsn: string };
+    if (row.noticeNo) {
+      const order = extractOrderFromUrl(row.noticeDetailUrl);
+      key = row.noticeNo + SEP + order;
+      descriptor = { kind: "notice", noticeNo: row.noticeNo, order };
+    } else {
+      const dcsn = parseDecisionContractNumber(row.contractDetailUrl);
+      if (!dcsn) {
+        unresolvedCount++;
+        continue;
+      }
+      key = `contract:${dcsn}${SEP}000`;
+      descriptor = { kind: "contract", dcsn };
+    }
     existingCodesByKey.set(
       key,
       mergeCodes(existingCodesByKey.get(key) ?? [], row.itemCodes ?? []),
     );
-    if (row.itemCodes !== undefined && row.itemCodes.length > 0) continue;
     const existing = groups.get(key);
-    if (existing) existing.push(row);
-    else groups.set(key, [row]);
+    if (existing) existing.rows.push(row);
+    else groups.set(key, { descriptor, rows: [row] });
   }
   const keys = [...groups.keys()];
-  if (keys.length === 0) return rows;
+  if (keys.length === 0) {
+    return { rows, complete: unresolvedCount === 0, unresolvedCount };
+  }
 
   let cursor = 0;
   const itemCodesByKey = new Map<string, string[]>();
+  const resolvedKeys = new Set<string>();
   const budgetController = new AbortController();
   let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   const budgetStartedAt = Date.now();
@@ -287,24 +390,29 @@ export async function enrichCompetitorStandardContractItemCodes(
       signal.addEventListener("abort", onBudgetAbort);
     }
   }
-  budgetTimer = setTimeout(() => {
+  if (timeBudgetMs <= 0) {
     onBudgetAbort();
-  }, timeBudgetMs);
+  } else {
+    budgetTimer = setTimeout(() => {
+      onBudgetAbort();
+    }, timeBudgetMs);
+  }
   const worker = async (): Promise<void> => {
     while (true) {
       if (stopped) return;
       const idx = cursor++;
       if (idx >= keys.length) return;
       const key = keys[idx];
-      const sepIdx = key.indexOf(SEP);
-      const noticeNo = key.slice(0, sepIdx);
-      const order = key.slice(sepIdx + 1);
+      const { descriptor } = groups.get(key)!;
       const existingCodes = existingCodesByKey.get(key) ?? [];
-      const cached = readCache(sqlite, noticeNo, order);
+      const cached = descriptor.kind === "notice"
+        ? readCache(sqlite, descriptor.noticeNo, descriptor.order)
+        : readCache(sqlite, `contract:${descriptor.dcsn}`, "000");
       const fresh = cached ? nowMs - cached.cachedAtMs < TTL_MS : false;
       if (cached && (fresh || cacheOnly)) {
         const merged = mergeCodes(existingCodes, cached.codes);
         if (merged.length > 0) itemCodesByKey.set(key, merged);
+        resolvedKeys.add(key);
         continue;
       }
       if (cacheOnly || !serviceKey) continue;
@@ -314,17 +422,29 @@ export async function enrichCompetitorStandardContractItemCodes(
         return;
       }
       try {
-        const codes = await fetchG2bPurchaseTargetItemCodes({
-          serviceKey,
-          bidNtceNo: noticeNo,
-          bidNtceOrd: order,
-          fetchImpl,
-          signal: budgetController.signal,
-          timeoutMs: Math.min(10000, remaining),
-        });
-        writeCache(sqlite, noticeNo, order, codes, nowMs);
+        let codes: string[];
+        if (descriptor.kind === "notice") {
+          codes = await fetchG2bPurchaseTargetItemCodes({
+            serviceKey,
+            bidNtceNo: descriptor.noticeNo,
+            bidNtceOrd: descriptor.order,
+            fetchImpl,
+            signal: budgetController.signal,
+            timeoutMs: Math.min(10000, remaining),
+          });
+          writeCache(sqlite, descriptor.noticeNo, descriptor.order, codes, nowMs);
+        } else {
+          codes = await fetchG2bContractItemCodes({
+            serviceKey,
+            dcsnCntrctNo: descriptor.dcsn,
+            fetchImpl: fetchImpl ?? (fetch as CompetitorContractFetch),
+            signal: budgetController.signal,
+          });
+          writeCache(sqlite, `contract:${descriptor.dcsn}`, "000", codes, nowMs);
+        }
         const merged = mergeCodes(existingCodes, codes);
         if (merged.length > 0) itemCodesByKey.set(key, merged);
+        resolvedKeys.add(key);
       } catch {
         // upstream failure: row unchanged, no cache write
       }
@@ -340,12 +460,26 @@ export async function enrichCompetitorStandardContractItemCodes(
       signal.removeEventListener("abort", onBudgetAbort);
     }
   }
-  return rows.map((row) => {
-    if (row.sourceDataset !== "g2b-public-standard-contract") return row;
+  // count unresolved groups
+  for (const [key, group] of groups) {
+    if (!resolvedKeys.has(key)) {
+      unresolvedCount += group.rows.length;
+    }
+  }
+  const resultRows = rows.map((row) => {
     if (row.itemCodes !== undefined && row.itemCodes.length > 0) return row;
-    if (!row.noticeNo) return row;
-    const key = row.noticeNo + SEP + extractOrderFromUrl(row.noticeDetailUrl);
-    const itemCodes = itemCodesByKey.get(key);
-    return itemCodes && itemCodes.length > 0 ? { ...row, itemCodes } : row;
+    if (row.sourceDataset !== "g2b-public-standard-contract") return row;
+    let key: string;
+    if (row.noticeNo) {
+      const order = extractOrderFromUrl(row.noticeDetailUrl);
+      key = row.noticeNo + SEP + order;
+    } else {
+      const dcsn = parseDecisionContractNumber(row.contractDetailUrl);
+      if (!dcsn) return row;
+      key = `contract:${dcsn}${SEP}000`;
+    }
+    const codes = itemCodesByKey.get(key);
+    return codes && codes.length > 0 ? { ...row, itemCodes: codes } : row;
   });
+  return { rows: resultRows, complete: unresolvedCount === 0, unresolvedCount };
 }

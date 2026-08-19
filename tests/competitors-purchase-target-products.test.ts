@@ -165,7 +165,14 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
       expect(fetchImpl.mock.calls.length).toBeGreaterThan(0);
       expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(4);
       await vi.advanceTimersByTimeAsync(1_000);
-      await expect(request).resolves.toEqual(rows);
+      const result = await request;
+      expect(result).toEqual({
+        rows,
+        complete: false,
+        unresolvedCount: expect.any(Number),
+      });
+      expect(result.complete).toBe(false);
+      expect(result.unresolvedCount).toBeGreaterThan(0);
       expect(signals.every((signal) => signal.aborted)).toBe(true);
       expect(fetchImpl.mock.calls.length).toBeLessThan(rows.length);
     } finally {
@@ -184,7 +191,7 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
       sqlite,
     });
 
-    expect(result[0]?.itemCodes).toEqual(["3912180101"]);
+    expect(result.rows[0]?.itemCodes).toEqual(["3912180101"]);
     const url = String(fetchImpl.mock.calls[0]?.[0]);
     expect(url).toContain("bidNtceNo=NT-001");
     expect(url).toContain("bidNtceOrd=001");
@@ -201,7 +208,7 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
     );
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(result.map((row) => row.itemCodes)).toEqual([["3912180101"], ["3912180101"]]);
+    expect(result.rows.map((row) => row.itemCodes)).toEqual([["3912180101"], ["3912180101"]]);
   });
 
   it("does not fetch or modify third-party rows", async () => {
@@ -215,8 +222,8 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
     });
 
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(result[0]).toEqual(row);
-    expect(result[0]?.itemCodes).toBeUndefined();
+    expect(result.rows[0]).toEqual(row);
+    expect(result.rows[0]?.itemCodes).toBeUndefined();
   });
 
   it("persists positive cache in sqlite and reuses it in cache-only mode", async () => {
@@ -239,7 +246,7 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(cacheOnlyFetch).not.toHaveBeenCalled();
-    expect(result[0]?.itemCodes).toEqual(["3912180101"]);
+    expect(result.rows[0]?.itemCodes).toEqual(["3912180101"]);
   });
 
   it("persists an empty successful result and reuses it in cache-only mode", async () => {
@@ -258,9 +265,117 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
       cacheOnly: true,
     });
 
-    expect(first[0]?.itemCodes).toBeUndefined();
+    expect(first.rows[0]?.itemCodes).toBeUndefined();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(cacheOnlyFetch).not.toHaveBeenCalled();
-    expect(second[0]?.itemCodes).toBeUndefined();
+    expect(second.rows[0]?.itemCodes).toBeUndefined();
   });
+
+  it("enriches no-notice standard contract via contract number lookup", async () => {
+    const row = makeRow({
+      id: "row-no-notice",
+      noticeNo: undefined,
+      noticeDetailUrl: undefined,
+      contractDetailUrl:
+        "https://example.com/contract?ctrtNo=R26TA02080123&ctrtChgOrd=00",
+    },);
+    const fetchImpl = vi.fn(async (rawUrl: string) => {
+      const url = new URL(rawUrl);
+      if (url.pathname.endsWith("/getCntrctInfoListThngPPSSrch")) {
+        return new Response(
+          JSON.stringify({
+            response: {
+              header: { resultCode: "00", resultMsg: "OK" },
+              body: {
+                items: {
+                  item: { untyCntrctNo: "R26TE16824807" },
+                },
+              },
+            },
+          },),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.pathname.endsWith("/getCntrctInfoListThngDetail")) {
+        return new Response(
+          JSON.stringify({
+            response: {
+              header: { resultCode: "00", resultMsg: "OK" },
+              body: {
+                items: {
+                  item: { prdctClsfcNo: "39121801" },
+                },
+              },
+            },
+          },),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected URL: ${rawUrl}`);
+    },);
+    const result = await enrichCompetitorStandardContractItemCodes(
+      [row],
+      {
+        serviceKey: "K",
+        fetchImpl,
+        sqlite,
+      },
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result.rows[0]?.itemCodes).toEqual(["3912180101"]);
+    expect(result.complete).toBe(true);
+    expect(result.unresolvedCount).toBe(0);
+    const firstUrl = new URL(fetchImpl.mock.calls[0][0]);
+    const secondUrl = new URL(fetchImpl.mock.calls[1][0]);
+    expect(firstUrl.pathname).toBe(
+      "/1230000/ao/CntrctInfoService/getCntrctInfoListThngPPSSrch",
+    );
+    expect(firstUrl.searchParams.get("inqryDiv")).toBe("2");
+    expect(firstUrl.searchParams.get("dcsnCntrctNo")).toBe("R26TA0208012300");
+    expect(secondUrl.pathname).toBe(
+      "/1230000/ao/CntrctInfoService/getCntrctInfoListThngDetail",
+    );
+    expect(secondUrl.searchParams.get("inqryDiv")).toBe("2");
+    expect(secondUrl.searchParams.get("untyCntrctNo")).toBe("R26TE16824807");
+  },);
+
+  it("keeps empty no-notice contract searches unresolved without negative caching", async () => {
+    const row = makeRow({
+      id: "row-empty-no-notice",
+      noticeNo: undefined,
+      noticeDetailUrl: undefined,
+      contractDetailUrl:
+        "https://example.com/contract?ctrtNo=R26TA02080123&ctrtChgOrd=00",
+    },);
+    const fetchImpl = vi.fn(async (rawUrl: string) => {
+      const url = new URL(rawUrl);
+      if (url.pathname.endsWith("/getCntrctInfoListThngPPSSrch")) {
+        return new Response(
+          JSON.stringify({
+            response: {
+              header: { resultCode: "00", resultMsg: "OK" },
+              body: { totalCount: 0, items: { item: [] } },
+            },
+          },),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected URL: ${rawUrl}`);
+    },);
+    const result1 = await enrichCompetitorStandardContractItemCodes(
+      [row],
+      { serviceKey: "K", fetchImpl, sqlite },
+    );
+    const result2 = await enrichCompetitorStandardContractItemCodes(
+      [row],
+      { serviceKey: "K", fetchImpl, sqlite },
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result1.complete).toBe(false);
+    expect(result1.unresolvedCount).toBe(1);
+    expect(result1.rows[0]?.itemCodes).toBeUndefined();
+    expect(result2.complete).toBe(false);
+    expect(result2.unresolvedCount).toBe(1);
+    expect(result2.rows[0]?.itemCodes).toBeUndefined();
+  },);
 });

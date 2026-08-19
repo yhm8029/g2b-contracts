@@ -80,7 +80,7 @@ export async function getCompetitorSalesOverview(
   if (deliveryOutcome.status === "rejected") throw deliveryOutcome.reason;
   const result = contractOutcome.value;
   const deliveries = deliveryOutcome.value;
-  const enrichedRows = await enrichCompetitorStandardContractItemCodes(result.rows, {
+  const enrichment = await enrichCompetitorStandardContractItemCodes(result.rows, {
     serviceKey: input.serviceKey,
     sqlite: input.sqlite,
     fetchImpl: input.fetchImpl,
@@ -88,13 +88,20 @@ export async function getCompetitorSalesOverview(
     cacheOnly: input.cacheOnly,
     now: input.now,
   });
+  const enrichmentCoverage = enrichment.complete
+    ? { complete: true, fresh: true, missingRanges: [] }
+    : {
+        complete: false,
+        fresh: false,
+        missingRanges: [{ dateFrom: period.dateFrom, dateTo: period.dateTo }],
+      };
   const overview = buildCompetitorSalesOverview({
     period,
-    rows: [...enrichedRows, ...deliveries.rows],
+    rows: [...enrichment.rows, ...deliveries.rows],
     collectedAt: [result.fetchedAt, deliveries.fetchedAt].filter((value): value is string => Boolean(value)).sort().at(-1)
       ?? now.toISOString(),
   });
-  return { ...overview, coverage: mergeCoverage(result.coverage, deliveries.coverage) };
+  return { ...overview, coverage: mergeCoverage(result.coverage, deliveries.coverage, enrichmentCoverage) };
 }
 
 function mergeCoverage(...coverages: CompetitorContractCoverage[]): CompetitorContractCoverage {

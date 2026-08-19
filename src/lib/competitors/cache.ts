@@ -34,7 +34,7 @@ export interface CompetitorContractQueryCache {
 }
 
 export const DEFAULT_COMPETITOR_QUERY_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
-export const COMPETITOR_CONTRACT_QUERY_RESULT_VERSION = "latest-contract-v7";
+export const COMPETITOR_CONTRACT_QUERY_RESULT_VERSION = "latest-contract-v8";
 
 type CacheOptions = { ttlMs?: number; now?: () => number };
 

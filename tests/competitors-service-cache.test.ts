@@ -61,7 +61,7 @@ describe("competitor overview service cache mode", () => {
       coverage: { complete: true, fresh: false, missingRanges: [] },
     });
     mocks.build.mockReturnValue({ status: "ready", companies: [] });
-    mocks.enrich.mockImplementation((rows) => Promise.resolve(rows));
+    mocks.enrich.mockImplementation((rows) => Promise.resolve({ rows, complete: true, unresolvedCount: 0 }));
   });
 
   it("passes cache-only mode to contract search and preserves coverage in the response", async () => {
@@ -274,7 +274,7 @@ describe("competitor overview service cache mode", () => {
       summary: { contractCount: 1, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: null },
       coverage: { complete: true, fresh: false, missingRanges: [] },
     });
-    mocks.enrich.mockResolvedValueOnce([enrichedRow]);
+    mocks.enrich.mockResolvedValueOnce({ rows: [enrichedRow], complete: true, unresolvedCount: 0 });
     const { getCompetitorSalesOverview } = await import("@/lib/competitors/service");
 
     await getCompetitorSalesOverview({
@@ -291,6 +291,39 @@ describe("competitor overview service cache mode", () => {
     expect(mocks.build.mock.invocationCallOrder[0]!).toBeGreaterThan(
       mocks.enrich.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("annotates coverage with enrichment unmet ranges when standard and deliveries are complete and fresh", async () => {
+    const standardRow = { id: "standard-row", bizNo: "1234567890" };
+    mocks.search.mockResolvedValue({
+      fetchedAt: "2026-07-20T00:00:00.000Z",
+      rows: [standardRow],
+      summary: { contractCount: 1, totalAmount: 0, noticeLinkedCount: 0, latestContractDate: null },
+      coverage: { complete: true, fresh: true, missingRanges: [] },
+    });
+    mocks.deliveries.mockResolvedValue({
+      fetchedAt: "2026-07-21T00:00:00.000Z",
+      rows: [],
+      coverage: { complete: true, fresh: true, missingRanges: [] },
+    });
+    mocks.enrich.mockResolvedValueOnce({ rows: [standardRow], complete: false, unresolvedCount: 1 });
+    const { getCompetitorSalesOverview } = await import("@/lib/competitors/service");
+
+    const result = await getCompetitorSalesOverview({
+      query: { period: "year", year: 2026 },
+      serviceKey: "test-key",
+      sqlite: {} as never,
+      now: () => new Date("2026-07-22T00:00:00.000Z"),
+    });
+
+    expect(mocks.build).toHaveBeenCalledWith(expect.objectContaining({
+      rows: expect.arrayContaining([standardRow]),
+    }));
+    expect(result).toEqual({
+      status: "ready",
+      companies: [],
+      coverage: { complete: false, fresh: false, missingRanges: [{ dateFrom: "2026-01-01", dateTo: "2026-07-22" }] },
+    });
   });
 });
 

@@ -72,7 +72,7 @@ function requestedUrl(fetchImpl: ReturnType<typeof vi.fn>, callIndex: number) {
 
 describe("competitor contract search", () => {
   it("uses the contract-type-aware query-cache result version", () => {
-    expect(COMPETITOR_CONTRACT_QUERY_RESULT_VERSION).toBe("latest-contract-v7");
+    expect(COMPETITOR_CONTRACT_QUERY_RESULT_VERSION).toBe("latest-contract-v8");
   });
 
   it("keeps the stable row id when contract type enrichment is added", () => {

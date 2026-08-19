@@ -11,6 +11,7 @@ import type {
 
 const FIRST_COMPETITOR_YEAR = 2020;
 const wonFormatter = new Intl.NumberFormat("ko-KR");
+const MAX_OVERVIEW_COMPLETION_PASSES = 3;
 
 type PeriodUnit = CompetitorSalesPeriodQuery["period"];
 type PeriodSelection =
@@ -181,10 +182,15 @@ export function CompetitorSalesApp() {
           return;
         }
 
-        const completeOverview = await loadOverview(selection, controller.signal);
-        if (sequence !== requestSequence.current) return;
-        setOverview(completeOverview);
-        setOpenCompanyId(null);
+        for (let pass = 0; pass < MAX_OVERVIEW_COMPLETION_PASSES; pass += 1) {
+          const nextOverview = await loadOverview(selection, controller.signal);
+          if (sequence !== requestSequence.current) return;
+          setOverview(nextOverview);
+          setOpenCompanyId(null);
+          if (nextOverview.coverage.complete && nextOverview.coverage.fresh) {
+            break;
+          }
+        }
       } catch (caught: unknown) {
         if (isAbortError(caught) || sequence !== requestSequence.current) return;
         setError(caught instanceof Error ? caught.message : "경쟁사 영업 성과를 불러오지 못했습니다.");
@@ -246,6 +252,14 @@ export function CompetitorSalesApp() {
         if (sequence !== refreshSequence.current) return;
         setOverview(refreshed);
         setError(null);
+        if (!refreshed.coverage.complete || !refreshed.coverage.fresh) {
+          for (let pass = 1; pass < MAX_OVERVIEW_COMPLETION_PASSES; pass++) {
+            const nextOverview = await loadOverview(selection, controller.signal);
+            if (sequence !== refreshSequence.current) return;
+            setOverview(nextOverview);
+            if (nextOverview.coverage.complete && nextOverview.coverage.fresh) break;
+          }
+        }
       } catch (caught: unknown) {
         if (isAbortError(caught) || sequence !== refreshSequence.current) return;
         setError(caught instanceof Error ? caught.message : "경쟁사 영업 성과를 불러오지 못했습니다.");

@@ -31,10 +31,38 @@ describe("competitor sales loading state", () => {
     );
     expect(componentSource).toMatch(/if \(cachedOverview\.coverage\.complete && cachedOverview\.coverage\.fresh\) \{/);
     expect(componentSource).toMatch(
-      /loadOverview\(selection, controller\.signal\)[\s\S]*?setOverview\(completeOverview\)/,
+      /loadOverview\(selection, controller\.signal\)[\s\S]*?setOverview\(nextOverview\)/,
     );
     expect(componentSource).toContain("cacheCollectionStatus(overview?.coverage)");
     expect(componentSource).toContain('label={partialCache ? "저장된 결과 기준 계약금액" : "전체 계약금액"}');
+  });
+
+  it("continues incomplete overview enrichment in bounded passes", () => {
+    expect(componentSource).toMatch(
+      /const\s+MAX_OVERVIEW_COMPLETION_PASSES\s*=\s*3\b/,
+    );
+    expect(componentSource).toMatch(
+      /for\s*\([^)]*MAX_OVERVIEW_COMPLETION_PASSES[^)]*\)\s*\{[\s\S]*?loadOverview\(selection, controller\.signal\)[\s\S]*?setOverview\(nextOverview\)[\s\S]*?nextOverview\.coverage\.complete\s*&&\s*nextOverview\.coverage\.fresh/,
+    );
+  });
+
+  it("continues an incomplete manual refresh in bounded passes", () => {
+    const handleRefreshStart = componentSource.indexOf("function handleRefresh()");
+    const followingEffectStart = componentSource.indexOf("useEffect", handleRefreshStart);
+    const handleRefreshRegion = componentSource.slice(handleRefreshStart, followingEffectStart);
+
+    expect(handleRefreshRegion).toMatch(
+      /loadOverview\(selection, controller\.signal, \{ refresh: true \}\)/,
+    );
+    expect(handleRefreshRegion).toMatch(
+      /for\s*\([^)]*MAX_OVERVIEW_COMPLETION_PASSES[^)]*\)/,
+    );
+    expect(handleRefreshRegion).toMatch(
+      /loadOverview\(selection, controller\.signal\)[\s\S]*?setOverview\(nextOverview\)/,
+    );
+    expect(handleRefreshRegion).toMatch(
+      /nextOverview\.coverage\.complete\s*&&\s*nextOverview\.coverage\.fresh/,
+    );
   });
 });
 
