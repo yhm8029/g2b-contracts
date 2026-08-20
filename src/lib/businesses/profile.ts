@@ -2,18 +2,23 @@ import { eq } from "drizzle-orm";
 
 import type { Db } from "@/lib/db/client";
 import { businesses } from "@/lib/db/schema";
-import {
-  EXCELLENT_PRODUCTS_API_SOURCE_NAME,
-  EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
-  EXCELLENT_PRODUCTS_IMPORT_SOURCE_NAME,
-  getBusinessProfileSourcePriority,
-} from "./constants";
 
-export {
-  EXCELLENT_PRODUCTS_API_SOURCE_NAME,
-  EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
-  EXCELLENT_PRODUCTS_IMPORT_SOURCE_NAME,
-} from "./constants";
+export const CONTRACT_BUSINESS_PROFILE_SOURCE_NAME = "csv";
+
+const BUSINESS_PROFILE_SOURCE_PRIORITY: Readonly<Record<string, number>> = {
+  "user-info": 3,
+  "excellent-products-csv": 2,
+  "csv": 1,
+};
+
+function getBusinessProfileSourcePriority(
+  source: string | null | undefined,
+): number {
+  if (source === null || source === undefined) {
+    return 0;
+  }
+  return BUSINESS_PROFILE_SOURCE_PRIORITY[source] ?? 0;
+}
 
 /**
  * Input shape for the priority-aware business profile upsert.
@@ -71,8 +76,10 @@ export function resolveProfileValue(
  *
  * and the invariant that `null` never erases an existing non-null value.
  *
- * Used by both the excellent-products snapshot importer and the
- * contract CSV importer so the priority semantics stay consistent.
+ * The legacy `excellent-products-csv` priority string is retained only
+ * to preserve existing database profile precedence for rows already
+ * written by that importer; the helper itself is now used by the
+ * contract CSV importer.
  */
 export function upsertBusinessProfilePriority(
   tx: BusinessTx,

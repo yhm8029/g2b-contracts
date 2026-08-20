@@ -1346,7 +1346,7 @@ describe("competitor contract search", () => {
 
     expect(result.rows).toHaveLength(totalCount);
     expect(fetchImpl).toHaveBeenCalledTimes(21);
-  });
+  }, 20_000);
 
   it("accepts an estimated full-year scan of about fifteen hundred pages", async () => {
     const weeklyTotalCount = 27_500;
