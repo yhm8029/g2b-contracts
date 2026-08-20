@@ -313,7 +313,7 @@ describe("competitor sales overview", () => {
       id: "earlier-order",
       originalContractDate: "2026-06-01",
       amendmentOrder: 0,
-      sourceRowCount: 1,
+      sourceRowCount: 2,
     });
   });
 
@@ -348,20 +348,31 @@ describe("competitor sales overview", () => {
     expect(overview.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts.map((contract) => contract.id)).toEqual(["target-initial"]);
   });
 
-  it("counts only the original contract and excludes later amendments", () => {
+  it("counts originals separately from amendments, excluding amendments whose contract year precedes the period year", () => {
     const competitor = COMPETITOR_SALES_REGISTRY[0];
     const collectedAt = "2026-08-18T03:00:00.000Z";
     const currentNow = new Date(collectedAt);
     const original = contractRow({ id: "original-2025", bizNoNormalized: competitor.bizNo, contractNo: "R25TA01174324", contractDate: "2025-12-05", amendmentOrder: 0, totalContractAmount: 246_500_000, itemCodes: ["3912180101"] });
     const amendment = contractRow({ id: "amendment-2026", bizNoNormalized: competitor.bizNo, contractNo: "R25TA01174324", contractDate: "2026-08-10", amendmentOrder: 1, totalContractAmount: 240_659_000, itemCodes: ["3912180101"] });
-    const overview2025 = buildCompetitorSalesOverview({ period: resolveCompetitorSalesPeriod({ period: "year", year: 2025 }, currentNow), collectedAt, rows: [original] });
+    const overview2025 = buildCompetitorSalesOverview({ period: resolveCompetitorSalesPeriod({ period: "year", year: 2025 }, currentNow), collectedAt, rows: [original, amendment] });
     expect(overview2025.totalContractCount).toBe(1);
     expect(overview2025.totalAmount).toBe(246_500_000);
     expect(overview2025.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts.map((contract) => contract.id)).toEqual(["original-2025"]);
-    const overview2026 = buildCompetitorSalesOverview({ period: resolveCompetitorSalesPeriod({ period: "year", year: 2026 }, currentNow), collectedAt, rows: [amendment] });
+    const overview2026 = buildCompetitorSalesOverview({ period: resolveCompetitorSalesPeriod({ period: "year", year: 2026 }, currentNow), collectedAt, rows: [original, amendment] });
     expect(overview2026.totalContractCount).toBe(0);
     expect(overview2026.totalAmount).toBe(0);
-    expect(overview2026.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts).toEqual([]);
+    expect(overview2026.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts.map((contract) => contract.id) ?? []).toEqual([]);
+  });
+
+  it("uses the amendment as a fallback for the year when no original contract row is present", () => {
+    const competitor = COMPETITOR_SALES_REGISTRY[0];
+    const collectedAt = "2026-08-18T03:00:00.000Z";
+    const currentNow = new Date(collectedAt);
+    const amendmentOnly = contractRow({ id: "amendment-2026", bizNoNormalized: competitor.bizNo, contractNo: "R26TA01330444", contractDate: "2026-03-22", amendmentOrder: 1, totalContractAmount: 240_659_000, itemCodes: ["3912180101"] });
+    const overview2026 = buildCompetitorSalesOverview({ period: resolveCompetitorSalesPeriod({ period: "year", year: 2026 }, currentNow), collectedAt, rows: [amendmentOnly] });
+    expect(overview2026.totalContractCount).toBe(1);
+    expect(overview2026.totalAmount).toBe(240_659_000);
+    expect(overview2026.companies.find((company) => company.bizNo === competitor.bizNo)?.contracts.map((contract) => contract.id)).toEqual(["amendment-2026"]);
   });
 
   it("keeps unavailable collection states distinct from zero-result ready overviews", () => {

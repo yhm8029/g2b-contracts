@@ -155,6 +155,28 @@ function normalizeDemandAgencyName(value: string) {
   return value.normalize("NFKC").replace(/\s+/g, "");
 }
 
+function isContractOriginInPeriod(row: CompetitorContractRow, period: CompetitorSalesPeriod): boolean {
+  if (row.originalContractDate) {
+    const d = row.originalContractDate;
+    return d >= period.dateFrom && d <= period.dateTo;
+  }
+
+  const isAmendment = !(row.amendmentOrder == null || row.amendmentOrder === 0);
+
+  if (!isAmendment) {
+    if (!row.contractDate) return true;
+    const d = row.contractDate;
+    return d >= period.dateFrom && d <= period.dateTo;
+  }
+
+  const match = /^R(\d{2})/i.exec(row.contractNo);
+  if (!match) return true;
+
+  const yy = parseInt(match[1], 10);
+  const year = 2000 + yy;
+  return year === period.year;
+}
+
 export function buildCompetitorSalesOverview(input: {
   period: CompetitorSalesPeriod;
   rows: readonly CompetitorContractRow[];
@@ -163,7 +185,7 @@ export function buildCompetitorSalesOverview(input: {
   const registry = new Map(COMPETITOR_SALES_REGISTRY.map((competitor) => [competitor.bizNo, competitor]));
   const sourceGroups = new Map<string, CompetitorContractRow[]>();
   for (const row of input.rows) {
-    if (row.sourceDataset === "g2b-public-standard-contract" && (row.amendmentOrder ?? 0) > 0) continue;
+    if (!isContractOriginInPeriod(row, input.period)) continue;
     if (!registry.has(row.bizNoNormalized)) continue;
     const key = contractIdentity(row);
     const group = sourceGroups.get(key) ?? [];
@@ -174,7 +196,9 @@ export function buildCompetitorSalesOverview(input: {
   const sourceRowCounts = new Map<string, number>();
   const latestRows: CompetitorContractRow[] = [];
   for (const [contractKey, rows] of sourceGroups) {
-    const representative = [...rows].sort(compareRepresentativeRows)[0]!;
+    const originals = rows.filter((row) => (row.amendmentOrder ?? 0) === 0);
+    const candidateSet = originals.length > 0 ? originals : rows;
+    const representative = [...candidateSet].sort(compareRepresentativeRows)[0]!;
     latestRows.push(...rows.filter((row) => sameContractVersion(row, representative)));
     for (const row of rows) {
       const countKey = `${row.bizNoNormalized}:${contractKey}`;
