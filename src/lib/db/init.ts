@@ -1,10 +1,14 @@
 import type Database from "better-sqlite3";
+import { applyBuildingControlMigration } from "@/lib/db/building-control-migration";
 
 const BUSINESSES_LEGACY_COLUMNS: ReadonlyArray<{
   column: string;
   definition: string;
 }> = [
-  { column: "phone", definition: "ALTER TABLE businesses ADD COLUMN phone TEXT" },
+  {
+    column: "phone",
+    definition: "ALTER TABLE businesses ADD COLUMN phone TEXT",
+  },
   {
     column: "profile_source",
     definition: "ALTER TABLE businesses ADD COLUMN profile_source TEXT",
@@ -17,9 +21,9 @@ const BUSINESSES_LEGACY_COLUMNS: ReadonlyArray<{
 
 function ensureBusinessProfileColumns(db: Database.Database): void {
   const existingColumns = new Set(
-    (db.prepare("pragma table_info(businesses)").all() as { name: string }[]).map(
-      (column) => column.name,
-    ),
+    (
+      db.prepare("pragma table_info(businesses)").all() as { name: string }[]
+    ).map((column) => column.name),
   );
 
   for (const { column, definition } of BUSINESSES_LEGACY_COLUMNS) {
@@ -35,9 +39,11 @@ function ensureBusinessProfileColumns(db: Database.Database): void {
       // present now; otherwise rethrow so callers do not silently keep an
       // outdated schema.
       const refreshedColumns = new Set(
-        (db.prepare("pragma table_info(businesses)").all() as { name: string }[]).map(
-          (entry) => entry.name,
-        ),
+        (
+          db.prepare("pragma table_info(businesses)").all() as {
+            name: string;
+          }[]
+        ).map((entry) => entry.name),
       );
       if (!refreshedColumns.has(column)) {
         throw error;
@@ -47,7 +53,10 @@ function ensureBusinessProfileColumns(db: Database.Database): void {
 }
 
 export function initializeSqliteSchema(db: Database.Database): void {
-  db.exec(`
+  db.pragma("busy_timeout = 5000");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
     CREATE TABLE IF NOT EXISTS businesses (
       id INTEGER PRIMARY KEY,
       biz_no_normalized TEXT NOT NULL,
@@ -279,7 +288,15 @@ export function initializeSqliteSchema(db: Database.Database): void {
       ON company_industries (biz_no_normalized);
     CREATE UNIQUE INDEX IF NOT EXISTS company_industries_unique
       ON company_industries (biz_no_normalized, industry_code, industry_name, source);
-  `);
+    `);
 
-  ensureBusinessProfileColumns(db);
+    ensureBusinessProfileColumns(db);
+    applyBuildingControlMigration(db);
+    db.exec("COMMIT");
+  } catch (error) {
+    if (db.inTransaction) {
+      db.exec("ROLLBACK");
+    }
+    throw error;
+  }
 }

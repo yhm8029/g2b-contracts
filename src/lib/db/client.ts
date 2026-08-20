@@ -38,6 +38,7 @@ export function createSqliteConnection(path = getDatabasePath()) {
   const sqlite = new Database(databasePath);
   sqlite.pragma("foreign_keys = ON");
   sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("busy_timeout = 5000");
 
   return sqlite;
 }

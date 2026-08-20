@@ -287,7 +287,7 @@ git commit -m "feat: collect excellent designation history"
 - Create: `tests/building-control-repository.test.ts`
 - Modify: `tests/db-schema.test.ts`
 
-- [ ] **Step 1: Ask MiniMax-M3 for failing populated-upgrade and repository tests**
+- [x] **Step 1: Ask MiniMax-M3 for failing populated-upgrade and repository tests**
 
 The schema test must initialize a legacy database, insert a legacy row, run initialization twice, preserve that row, and assert these tables:
 
@@ -300,6 +300,10 @@ const requiredTables = [
   "excellent_designations",
   "excellent_designation_observations",
   "award_classifications",
+  "building_control_schema_migrations",
+  "building_control_source_generations",
+  "building_control_generation_memberships",
+  "building_control_manifest_sources",
   "building_control_sync_runs",
   "building_control_sync_leases",
   "building_control_coverage",
@@ -308,9 +312,9 @@ const requiredTables = [
 ] as const;
 ```
 
-Repository tests must prove lease exclusion, append-only revision/observation/classification facts, complete-window deactivation, failed-generation invisibility, manifest compare-and-swap activation, and a unique successful startup marker per Seoul date. A manifest pins one immutable generation ID for each required source; no report-facing read may consult a per-source "latest" row.
+Repository tests must prove lease exclusion with monotonically increasing fencing tokens, owner/fence validation on every mutation, append-only revision/observation/classification facts and generation memberships, failed-generation invisibility, manifest compare-and-swap activation, incompatible partial-schema rollback, and a unique successful startup marker per Seoul date. A manifest pins one immutable generation ID for each required source through five manifest-source rows; no report-facing read may consult a per-source "latest" row.
 
-- [ ] **Step 2: Run schema/repository tests and confirm failure**
+- [x] **Step 2: Run schema/repository tests and confirm failure**
 
 ```powershell
 npx vitest run tests/building-control-schema.test.ts tests/building-control-repository.test.ts tests/db-schema.test.ts
@@ -318,7 +322,9 @@ npx vitest run tests/building-control-schema.test.ts tests/building-control-repo
 
 Expected: FAIL on missing tables/repository exports.
 
-- [ ] **Step 3: Ask MiniMax-M3 to implement additive DDL, Drizzle declarations, and transactions**
+- [x] **Step 3: Ask MiniMax-M3 to implement additive DDL, Drizzle declarations, and transactions**
+
+Initialization must set `PRAGMA busy_timeout = 5000`, apply each migration inside `BEGIN IMMEDIATE` / `COMMIT`, roll back on any error, and record its version, name, checksum, and application time in `building_control_schema_migrations`. Repeated initialization validates required tables, columns, indexes, foreign keys, and checks. A populated legacy database and a deliberately incompatible partial schema must both be tested; failure must preserve legacy rows and leave no partially created Task 3 schema.
 
 The repository interface must be typed and transaction-based:
 
@@ -368,27 +374,61 @@ export type MarketManifestInput = {
 };
 
 export interface BuildingControlRepository {
-  acquireLease(owner: string, now: string, ttlSeconds: number): boolean;
-  renewLease(owner: string, now: string, ttlSeconds: number): boolean;
-  releaseLease(owner: string): void;
-  beginRun(input: SyncRunInput): number;
-  stageGeneration(input: StagedGeneration): number;
-  completeGeneration(input: PromotionInput): number;
-  stageClassificationFacts(input: ClassificationFactInput[]): number;
-  createManifest(input: MarketManifestInput): number;
-  activateManifest(
-    manifestId: number,
-    expectedActiveManifestId: number | null,
+  acquireLease(owner: string, now: string, ttlSeconds: number): number | null;
+  renewLease(owner: string, fence: number, now: string, ttlSeconds: number): boolean;
+  releaseLease(owner: string, fence: number): void;
+  beginRun(input: SyncRunInput, owner: string, fence: number): number;
+  stageGeneration(
+    input: StagedGeneration & {
+      expectedCount: number;
+      observedCount: number;
+      pageCount: number;
+      identitySetHash: string;
+      sourceHashes: Record<string, string>;
+    },
+    owner: string,
+    fence: number,
+  ): number;
+  completeGeneration(input: PromotionInput, owner: string, fence: number): number;
+  stageClassificationFacts(
+    input: ClassificationFactInput[],
+    owner: string,
+    fence: number,
+  ): number;
+  createManifest(
+    generationIds: Record<CoverageSource, number>,
+    owner: string,
+    fence: number,
+  ): number;
+  completeRunAndActivate(input: {
+    runId: number;
+    manifestId: number;
+    expectedActiveManifestId: number | null;
+    owner: string;
+    fence: number;
+    completedAt: string;
   ): boolean;
   readActiveManifest(): MarketManifest | null;
-  failRun(runId: number, redactedMessage: string): void;
+  failRun(runId: number, redactedMessage: string, owner: string, fence: number): void;
   hasSuccessfulStartupSync(seoulDate: string): boolean;
 }
 ```
 
-Use foreign keys, stable source hashes, raw JSON text, covering indexes for award date/business and designation business/interval, and `CHECK` constraints for status/category enums. One market sync run owns multiple child source generations returned by `stageGeneration`; source generations have no active pointer or source-level CAS. Classification facts are immutable and keyed by award revision plus designation observation/evidence hash; a provider correction creates a new fact and retains the prior fact. The singleton active-manifest pointer is the only CAS and changes in one transaction only after every pinned source and coverage unit validates. No existing tables are dropped or repurposed.
+`acquireLease` returns a monotonically increasing fencing token. Every mutating method validates the current unexpired owner/fence so a stale worker cannot stage or publish after another process acquires the lease.
 
-- [ ] **Step 4: Run schema and repository tests**
+Each source-generation row stores its run, source, state, date bounds, expected and observed counts, page count, identity-set hash, source-hashes JSON, and completion time. Every immutable source fact is connected through `building_control_generation_memberships`; there is no mutable source-level current pointer. Provider corrections retain prior rows because source hash participates in the immutable revision/observation key.
+
+Completion queries the source-specific fact table, compares its exact source-hash multiset with the staged identity-to-source-hash map, and creates memberships from the real fact primary keys in the same transaction. SQLite triggers allow inserts only into the matching staging source and make facts, memberships, coverage, manifests, and manifest-source rows immutable after creation. A source generation permits only a metadata-preserving `staging -> complete|failed` transition.
+
+A manifest has exactly five `building_control_manifest_sources` children, one per source, referencing a complete generation and its complete coverage row. `createManifest` accepts only generation IDs and recomputes coverage from stored generation cardinality; it rejects any source whose observed unique identity count is not exactly the expected count. The singleton active-manifest row stores nullable `manifest_id` plus an integer CAS version.
+
+Classification facts include award revision, designation generation, rules version, evaluated award date, nullable matched observation, and non-null evidence hash. This preserves which designation snapshot proved an `excellent`, `non_excellent`, or `incomplete` result.
+
+`completeRunAndActivate` performs one transaction that verifies the current lease fence, candidate run ownership, all five complete same-run generations and coverage rows, exact period/watermark/hash/count equality, expected active manifest, and cross-source notice/product/award/designation/classification provenance; then it activates the manifest, marks the run completed, and records the successful startup result. A partial unique index on completed startup `seoul_date` permits failed retries but prevents two durable startup successes for one Seoul date.
+
+Use foreign keys, stable source hashes, raw JSON text, covering indexes for award date/business and designation business/interval, and `CHECK` constraints for status/category enums. No existing tables are dropped or repurposed.
+
+- [x] **Step 4: Run schema and repository tests**
 
 ```powershell
 npx vitest run tests/building-control-schema.test.ts tests/building-control-repository.test.ts tests/db-schema.test.ts
@@ -396,7 +436,7 @@ npx vitest run tests/building-control-schema.test.ts tests/building-control-repo
 
 Expected: all selected tests PASS, including repeated initialization and populated upgrade.
 
-- [ ] **Step 5: Commit SQLite generations**
+- [x] **Step 5: Commit SQLite generations**
 
 ```powershell
 git add src/lib/db src/lib/building-control/repository.ts tests/building-control-schema.test.ts tests/building-control-repository.test.ts tests/db-schema.test.ts

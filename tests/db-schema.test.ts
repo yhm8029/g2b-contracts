@@ -33,25 +33,31 @@ describe("initializeSqliteSchema", () => {
     initializeSqliteSchema(db);
 
     const tables = db
-      .prepare("select name from sqlite_master where type = 'table' order by name")
+      .prepare(
+        "select name from sqlite_master where type = 'table' order by name",
+      )
       .all() as { name: string }[];
-    expect(tables.map((row) => row.name)).toEqual([
-      "api_enrichment_logs",
-      "businesses",
-      "company_industries",
-      "competitor_contract_interval_cache",
-      "competitor_contract_query_cache",
-      "competitor_third_party_delivery_monthly_cache",
-      "contract_records",
-      "excellent_products",
-      "factory_locations",
-      "import_runs",
-      "shopping_mall_delivery_request_info_cache",
-      "shopping_mall_delivery_request_info_cache_chunks",
-    ]);
+    expect(tables.map((row) => row.name)).toEqual(
+      expect.arrayContaining([
+        "api_enrichment_logs",
+        "businesses",
+        "company_industries",
+        "competitor_contract_interval_cache",
+        "competitor_contract_query_cache",
+        "competitor_third_party_delivery_monthly_cache",
+        "contract_records",
+        "excellent_products",
+        "factory_locations",
+        "import_runs",
+        "shopping_mall_delivery_request_info_cache",
+        "shopping_mall_delivery_request_info_cache_chunks",
+      ]),
+    );
 
     const indexes = db
-      .prepare("select name from sqlite_master where type = 'index' order by name")
+      .prepare(
+        "select name from sqlite_master where type = 'index' order by name",
+      )
       .all() as { name: string }[];
     expect(indexes.map((row) => row.name)).toEqual(
       expect.arrayContaining([
@@ -93,7 +99,9 @@ describe("initializeSqliteSchema", () => {
       name: string;
       notnull: number;
     }[];
-    const notNullByName = new Map(columns.map((column) => [column.name, column.notnull]));
+    const notNullByName = new Map(
+      columns.map((column) => [column.name, column.notnull]),
+    );
 
     expect(notNullByName.get("source_dataset")).toBe(1);
     expect(notNullByName.get("source_row_hash")).toBe(1);
@@ -113,11 +121,15 @@ describe("initializeSqliteSchema", () => {
 
     initializeSqliteSchema(db);
 
-    const columns = db.prepare("pragma table_info(api_enrichment_logs)").all() as {
+    const columns = db
+      .prepare("pragma table_info(api_enrichment_logs)")
+      .all() as {
       name: string;
       type: string;
     }[];
-    const responseStatus = columns.find((column) => column.name === "response_status");
+    const responseStatus = columns.find(
+      (column) => column.name === "response_status",
+    );
 
     expect(responseStatus?.type.toLowerCase()).toBe("text");
   });
@@ -128,7 +140,9 @@ describe("initializeSqliteSchema", () => {
 
     initializeSqliteSchema(db);
 
-    const contractForeignKeys = db.prepare("pragma foreign_key_list(contract_records)").all() as {
+    const contractForeignKeys = db
+      .prepare("pragma foreign_key_list(contract_records)")
+      .all() as {
       from: string;
       table: string;
       to: string;
@@ -139,7 +153,11 @@ describe("initializeSqliteSchema", () => {
 
     expect(contractForeignKeys).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ from: "business_id", table: "businesses", to: "id" }),
+        expect.objectContaining({
+          from: "business_id",
+          table: "businesses",
+          to: "id",
+        }),
       ]),
     );
     expect(enrichmentForeignKeys).toEqual(
@@ -200,7 +218,10 @@ describe("initializeSqliteSchema - column ALTER race recovery", () => {
       ) {
         // Simulate a parallel migration that adds the column before the
         // duplicate-column error reaches the migration helper.
-        realExec.call(sqlite, "ALTER TABLE businesses ADD COLUMN profile_source TEXT");
+        realExec.call(
+          sqlite,
+          "ALTER TABLE businesses ADD COLUMN profile_source TEXT",
+        );
         throw new Error("duplicate column name: profile_source");
       }
       return realExec.call(sqlite, sql);
@@ -212,9 +233,9 @@ describe("initializeSqliteSchema - column ALTER race recovery", () => {
       execSpy.mockRestore();
     }
 
-    const columns = sqlite
-      .prepare("pragma table_info(businesses)")
-      .all() as { name: string }[];
+    const columns = sqlite.prepare("pragma table_info(businesses)").all() as {
+      name: string;
+    }[];
     const columnNames = columns.map((column) => column.name);
     expect(columnNames).toEqual(
       expect.arrayContaining(["phone", "profile_source", "last_synced_at"]),
