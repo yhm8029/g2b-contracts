@@ -573,7 +573,170 @@ git commit -m "feat: collect building control notices and awards"
 
 ---
 
-### Task 5: Implement Resumable Atomic Synchronization
+### Task 5A: Add Sync Fact Staging, Quarantine, and Durable Checkpoints
+
+Task 5 cannot be implemented against the Task 3 repository interface as originally written. A non-empty generation can be completed only after real source facts exist, but the public repository exposes no typed fact writer. The completed Task 4 clients also return quarantined award rows that the current schema cannot retain. Finally, the complete-batch collectors hide page boundaries, so a caller cannot renew the lease or resume after a quota stop. Repair those boundaries before adding the orchestrator.
+
+**Files:**
+
+- Modify: `src/lib/db/building-control-migration.ts`
+- Modify: `src/lib/db/schema.ts`
+- Modify: `src/lib/building-control/repository.ts`
+- Modify: `src/lib/building-control/g2b/paging.ts`
+- Modify: `src/lib/building-control/g2b/notice-client.ts`
+- Modify: `src/lib/building-control/g2b/award-client.ts`
+- Modify: `src/lib/building-control/g2b/designation-history-client.ts`
+- Modify: `tests/building-control-schema.test.ts`
+- Modify: `tests/building-control-repository.test.ts`
+- Create: `tests/building-control-sync-checkpoints.test.ts`
+
+- [ ] **Step 1: Ask MiniMax-M3 for failing persistence and resume tests**
+
+Add RED tests for all of these boundaries:
+
+- Public repository methods, never raw SQL in the sync layer, stage notice, product, resolved award revision plus canonical award, quarantined award, and designation observation facts under a matching staging generation and current lease fence.
+- Fact writers return stable identity-to-database-ID maps needed by later product, canonical award, designation, and classification joins.
+- An award quarantine fact retains source hash, raw JSON, reason, page/index provenance, and every recoverable provider identity field. It never enters the canonical denominator.
+- A validated page and its next cursor/checkpoint commit in one fenced transaction. A crash before that transaction causes the page to be replayed; a crash after it resumes at the next page without duplicate facts.
+- A new lease fence may atomically adopt the latest matching resumable run after the old lease expires. A stale worker cannot update its checkpoint, facts, generation, or manifest.
+- Checkpoint payloads contain normalized public source facts and hashes only. Service keys, request URLs containing credentials, cookies, authorization headers, and session identifiers are rejected before persistence.
+- Failed or partial runs remain invisible through the active manifest. Hard failure finalizes the run as failed; quota exhaustion leaves the run resumable and releases the lease without marking any generation complete.
+
+- [ ] **Step 2: Add a versioned checkpoint/quarantine migration and typed repository API**
+
+Add an atomic migration after the Task 3 schema. Use these durable contracts:
+
+```ts
+export type SyncCheckpoint = {
+  runId: number;
+  source: CoverageSource;
+  requestKey: string;
+  cursorKind: "page" | "detail";
+  nextCursor: number;
+  pageSize: number;
+  totalCount: number | null;
+  observedCount: number;
+  state: "collecting" | "complete";
+  updatedAt: string;
+};
+
+export type StagedSourceIds = {
+  generationId: number;
+  idsBySourceIdentity: Record<string, number>;
+};
+```
+
+`building_control_sync_checkpoints` stores one row per `(run_id, source, request_key)` and `building_control_sync_checkpoint_pages` stores each validated cursor, stable total count, parsed public fact JSON, and SHA-256. A page/detail insert and checkpoint advance are one transaction. The repository exposes fenced `readCheckpoint`, `stageCheckpointPage`, `adoptResumableRun`, and `clearCompletedCheckpoints` methods.
+
+This is a real v2 migration, not an edit to the already-applied v1 DDL. The migration runner reads the ledger, validates canonical v1 before upgrade, applies v2 tables/indexes/triggers inside `BEGIN IMMEDIATE`, records a separate v2 name/checksum row, and then validates exact v2 schema. A fresh database applies v1 then v2 sequentially. Tests cover fresh v2 creation, upgrade of a populated real v1 database, injected/interrupted v2 rollback with no v2 ledger row, retry after the failure, and repeated initialization idempotence.
+
+`adoptResumableRun` requires an exact match on `date_from`, `date_to`, `seoul_date`, and a versioned collector plan ID. A checkpoint request key is the SHA-256 of source, official operation, canonical non-secret query parameters, bounds, page size, collector plan ID, and designation detail identity when applicable. A different Seoul date, page size, operation parameter, or collector plan never adopts the old run/checkpoint and starts at cursor 1.
+
+`building_control_award_quarantine` is append-only and belongs to an `award-registration` generation. Extend the award source membership calculation to include both resolved revisions and quarantined provider observations. Quarantine rows with a recoverable four-part identity use that identity; otherwise use the already approved page/index/source-hash fallback identity. `stageAwardSnapshot` performs product correlation and returns `promotionBlocked` plus reasons. A non-target irrelevant quarantine may be retained in a complete registration transport snapshot. An unresolved exact-target result, an identity that cannot be correlated safely, or an incomplete registration timestamp blocks sealing. As defense in depth, `completeGeneration`/manifest validation rejects a blocked award generation, and manifest validation rejects any `award_classifications.category = 'incomplete'` fact even if a caller bypasses the orchestrator.
+
+Expose typed, lease-fenced snapshot writers for the four non-classification sources. They create the staged generation and its facts in one transaction after all checkpoint pages for that source are complete:
+
+```ts
+stageNoticeSnapshot(input, owner, fence): StagedSourceIds;
+stageNoticeProductSnapshot(input, owner, fence): StagedSourceIds;
+stageAwardSnapshot(input, owner, fence): StagedSourceIds & {
+  canonicalAwardIdsByNotice: Record<string, number>;
+  canonicalRevisionIdsByNotice: Record<string, number>;
+  promotionBlocked: boolean;
+  promotionBlockReasons: readonly string[];
+};
+stageDesignationSnapshot(input, owner, fence): StagedSourceIds & {
+  observationIdsBySourceIdentity: Record<string, number>;
+};
+```
+
+Each writer derives source identities and SHA maps itself from normalized fields/raw hashes, rejects duplicates, validates all cross-source foreign keys against the same run, and leaves the generation in `staging`. Existing `completeGeneration` remains the only membership/coverage seal. Do not expose a database handle to `sync.ts`.
+
+- [ ] **Step 3: Expose resumable validated-page progress from clients**
+
+Keep the existing complete-batch APIs for callers and tests, but add a shared optional progress contract to the collectors:
+
+```ts
+export type SyncResumeSeed = {
+  cursorKind: "page" | "detail";
+  nextCursor: number;
+  pageSize: number;
+  totalCount: number | null;
+  seenIdentityHashes: readonly string[];
+};
+
+export type ValidatedSyncChunk<T> = {
+  source: CoverageSource;
+  requestKey: string;
+  cursorKind: "page" | "detail";
+  cursor: number;
+  pageSize: number;
+  totalCount: number;
+  facts: readonly T[];
+  identityHashes: readonly string[];
+  sourceHashes: Readonly<Record<string, string>>;
+};
+
+export type SyncProgressHooks = {
+  readResumeSeed(requestKey: string): Promise<SyncResumeSeed | null>;
+  onValidatedChunk<T>(chunk: ValidatedSyncChunk<T>): Promise<void>;
+};
+
+export type ResumableNoticeCollector = (input: {
+  dateFrom: string;
+  dateTo: string;
+  progress: SyncProgressHooks;
+}) => Promise<NoticeInventoryBatch>;
+export type ResumableAwardCollector = (input: {
+  dateFrom: string;
+  dateTo: string;
+  progress: SyncProgressHooks;
+}) => Promise<AwardRegistrationBatch>;
+export type ResumableDesignationCollector = (input: {
+  progress: SyncProgressHooks;
+}) => Promise<readonly DesignationObservationInput[]>;
+```
+
+Collectors invoke `onValidatedChunk` after envelope/cardinality/identity validation and before requesting the next cursor. On resume, duplicate detection is seeded from the identities already persisted for that checkpoint and the first resumed page must agree with the stored total/page size.
+
+Designation collection uses the same rule for all-status list pages and emits a stable per-designation detail progress item after each sequential detail response. Notice identity lookup returns the full `NoticeIdentityInventory`, not products alone, so an award dated in 2025 or later can stage a notice published before 2025.
+
+- [ ] **Step 4: Run focused and full persistence verification**
+
+```powershell
+npx vitest run tests/building-control-schema.test.ts tests/building-control-repository.test.ts tests/building-control-sync-checkpoints.test.ts tests/building-control-notices.test.ts tests/building-control-awards.test.ts tests/building-control-designations.test.ts
+npm test
+```
+
+Expected: all tests PASS. Commit with a body that says `Task 5A complete; synchronization and application work remain.` and push.
+
+### Task 5B: Implement the Pure Classification Kernel Before Sync
+
+The five-source manifest requires real `award-classification` facts, so the classifier cannot remain after synchronization in the task order. Move only the pure classification kernel forward; report shaping stays in Task 6.
+
+**Files:**
+
+- Create: `src/lib/building-control/types.ts`
+- Create: `src/lib/building-control/classification.ts`
+- Create: `tests/building-control-classification.test.ts`
+
+- [ ] **Step 1: Ask MiniMax-M3 for failing classification tests**
+
+Cover cooperative business number precedence, designation start/end/extension boundaries, official `유효`/`만료` interval semantics, blank/`효력정지` incompleteness inside the interval, exact non-target designation evidence, missing end dates, multiple designations for one business, company rename by business number, and deterministic evidence hashes. The result includes `rulesVersion`, category, matched designation source identity or null, reason, evaluated award date, and a SHA-256 evidence hash suitable for immutable repository facts.
+
+- [ ] **Step 2: Implement and verify the pure classifier**
+
+The classifier accepts canonical award drafts and designation observations, has no database/network dependency, sorts candidate designations deterministically, and emits exactly one fact draft per canonical award or an explicit incomplete result that blocks manifest activation.
+
+```powershell
+npx vitest run tests/building-control-classification.test.ts tests/building-control-designations.test.ts
+```
+
+Expected: all tests PASS. Commit with a body that says `Task 5B complete; synchronization and application work remain.` and push.
+
+### Task 5C: Implement Resumable Atomic Full-Snapshot Synchronization
+
+For v1, every successful sync materializes a complete snapshot from `2025-01-01` through the Seoul `dateTo`. Do not merge a trailing delta with an older generation. A full rescan is deliberately chosen so provider corrections, rescinded awards, corrected-out target products, and changed designations disappear from the new active snapshot without deleting prior immutable generations. Checkpoints make that full scan resumable and bound repeated API work.
 
 **Files:**
 
@@ -583,115 +746,109 @@ git commit -m "feat: collect building control notices and awards"
 
 - [ ] **Step 1: Ask MiniMax-M3 for failing sync-generation tests**
 
-Cover first backfill, trailing registration/publication overlaps, quota exhaustion, restart resume, provider correction, rescinded award deactivation, target-code correction, designation failure, lease loss, and secret redaction. Source generations may complete independently, but they remain invisible until one manifest pins all required generations and coverage. The core invariants are:
+Cover first backfill, second full rescan with provider correction, rescinded award deactivation, target-code correction, an exact-target notice with no successful-result row remaining in the notice snapshot but outside the canonical denominator, quota exhaustion, restart resume from the next page, 2025 award resolving a pre-2025 notice by identity, a 2024-12-31 final award excluded while a 2025-01-01 final award is included, designation failure, unresolved target award, lease loss, concurrent startup skip, successful-startup guard, manual sync after a same-day successful startup, active-manifest CAS loss, and secret redaction. Tests use the real SQLite repository public interface. No test may insert source facts with raw SQL.
+
+The core invariants remain:
 
 ```ts
-await expect(
-  syncBuildingControlMarket(depsWithAwardPageFailure),
-).rejects.toThrow();
+await expect(syncBuildingControlMarket(depsWithAwardPageFailure)).rejects.toThrow();
 expect(repository.readActiveManifest()).toEqual(beforeFailureManifest);
 expect(repository.failedRunMessages()).not.toContain(serviceKey);
 
-await expect(
-  syncBuildingControlMarket(designationSucceedsThenAwardPageFails),
-).rejects.toThrow();
+const partial = await syncBuildingControlMarket(quotaStopsOnAwardPageThree);
+expect(partial.status).toBe("partial");
 expect(repository.readActiveManifest()).toEqual(beforeFailureManifest);
-expect(repository.readActiveClassifications()).toEqual(
-  beforeFailureClassifications,
-);
+
+const resumed = await syncBuildingControlMarket(resumeAfterQuotaReset);
+expect(resumed.status).toBe("completed");
+expect(resumeAfterQuotaReset.requestedAwardPages).not.toContain(1);
 ```
 
-- [ ] **Step 2: Run sync tests and confirm failure**
+- [ ] **Step 2: Implement bounded full-snapshot orchestration**
 
-```powershell
-npx vitest run tests/building-control-sync.test.ts
-```
-
-Expected: FAIL because `syncBuildingControlMarket` is missing.
-
-- [ ] **Step 3: Ask MiniMax-M3 to implement bounded window orchestration**
-
-Use dependency injection and an explicit result:
+Use dependency injection and an explicit result. The notice identity dependency returns both the notice and its products:
 
 ```ts
-export type BuildingControlSyncResult = {
+export type BuildingControlCompletedSyncResult = {
   runId: number;
-  status: "completed" | "partial" | "skipped";
-  manifestId: number | null;
+  status: "completed";
+  manifestId: number;
   noticeCount: number;
   awardCount: number;
   designationCount: number;
   coverage: Record<CoverageSource, CoverageSnapshot>;
 };
 
-export async function syncBuildingControlMarket(
-  input: { trigger: "startup" | "manual" | "resume"; now: Date },
-  deps: BuildingControlSyncDependencies,
-): Promise<BuildingControlSyncResult>;
+export type BuildingControlPartialSyncResult = {
+  runId: number;
+  status: "partial";
+  manifestId: null;
+  noticeCount: number;
+  awardCount: number;
+  designationCount: number;
+  coverage: Partial<Record<CoverageSource, CoverageSnapshot>>;
+};
+
+export type BuildingControlSkippedSyncResult = {
+  runId: null;
+  status: "skipped";
+  manifestId: number | null;
+  noticeCount: 0;
+  awardCount: 0;
+  designationCount: 0;
+  coverage: Partial<Record<CoverageSource, CoverageSnapshot>>;
+};
+
+export type BuildingControlSyncResult =
+  | BuildingControlCompletedSyncResult
+  | BuildingControlPartialSyncResult
+  | BuildingControlSkippedSyncResult;
 
 export type BuildingControlSyncDependencies = {
   repository: BuildingControlRepository;
-  fetchNoticeInventoryWindow: (
-    dateFrom: string,
-    dateTo: string,
-  ) => Promise<NoticeInventoryBatch>;
-  fetchAwardRegistrationWindow: (
-    dateFrom: string,
-    dateTo: string,
-  ) => Promise<AwardRegistrationBatch>;
-  fetchNoticeProducts: (
+  collectNoticeInventory: ResumableNoticeCollector;
+  collectAwardRegistration: ResumableAwardCollector;
+  collectNoticeInventoryByIdentity: (
     noticeNo: string,
     noticeOrder: string,
-  ) => Promise<NoticeProductRow[]>;
-  fetchDesignationHistory: () => Promise<DesignationObservationInput[]>;
+    progress: SyncProgressHooks,
+  ) => Promise<NoticeIdentityInventory>;
+  collectDesignationHistory: ResumableDesignationCollector;
+  classifyAwards: typeof classifyAwards;
   now: () => Date;
   sleep: (milliseconds: number) => Promise<void>;
 };
 ```
 
-Renew the SQLite lease between pages, stage under `run_id`, complete only validated source generations, and leave resumable cursors for rate-limit exhaustion. Refresh designation status union before staging immutable classification facts for the candidate award/designation generations. Create and compare-and-swap activate a single market manifest only after every source range, watermark, product correlation, and classification coverage check passes. Partial or failed work must not change the active manifest, report rows, or classifications visible through it.
+Acquire the fenced lease, skip a second successful startup for the same Seoul date, adopt a matching resumable run when `trigger === "resume"`, and scan the full range. Renew the lease and transactionally persist progress after every validated page/detail. Award discovery happens before source snapshot sealing so every pre-2025 notice identity can be fetched and included in the candidate notice/product snapshots.
 
-- [ ] **Step 4: Run sync, repository, and designation tests**
+After all source collections are complete, stage and seal notice, product, award, and designation generations; classify every canonical award with the Task 5B kernel; stage and seal the classification generation; create the five-source candidate manifest; and compare-and-swap activate it. Any incomplete target award/designation classification, page mismatch, source correlation failure, lease loss, or CAS loss leaves the prior active manifest unchanged. Quota exhaustion returns `partial` without failing the resumable run. Other errors are redacted, record a failed run when the current fence still owns it, release the lease, and rethrow.
 
-```powershell
-npx vitest run tests/building-control-sync.test.ts tests/building-control-repository.test.ts tests/building-control-designations.test.ts
-```
-
-Expected: all selected tests PASS.
-
-- [ ] **Step 5: Commit synchronization**
+- [ ] **Step 3: Run sync and regression verification**
 
 ```powershell
-git add src/lib/building-control/constants.ts src/lib/building-control/sync.ts tests/building-control-sync.test.ts
-git commit -m "feat: synchronize building control market data"
+npx vitest run tests/building-control-sync.test.ts tests/building-control-sync-checkpoints.test.ts tests/building-control-repository.test.ts tests/building-control-classification.test.ts tests/building-control-designations.test.ts
+npm test
 ```
+
+Expected: all tests PASS. Commit with a body that says `Task 5C complete; UI, report, export, and packaging work remain.` and push.
 
 ---
 
-### Task 6: Classify Awards and Build One Report DTO
+### Task 6: Build Period Queries and One Report DTO
 
 **Files:**
 
-- Create: `src/lib/building-control/types.ts`
 - Create: `src/lib/building-control/period.ts`
-- Create: `src/lib/building-control/classification.ts`
 - Create: `src/lib/building-control/report.ts`
-- Create: `tests/building-control-classification.test.ts`
 - Create: `tests/building-control-report.test.ts`
 - Create: `tests/building-control-period.test.ts`
 
-- [ ] **Step 1: Ask MiniMax-M3 for failing business-rule tests**
+- [ ] **Step 1: Ask MiniMax-M3 for failing period and report tests**
 
-Tests must include start/end/extension boundaries, null effective end, official status/date interval semantics, cooperative precedence, historical excellent company, zero-award eligible company, non-excellent aggregation, rename by business number, multiple designations, zero denominator, 2025 lower bound, and Seoul quarter ranges. `유효`/`만료` is excellent inside the inclusive interval and not excellent outside; `효력정지`/blank is incomplete inside. Denominator fixtures must prove multiple rebid revisions count once, multiple target lots with the same representative count once, different target-lot winners make coverage incomplete, and only canonical awards whose final date falls inside the selected period count.
+Reuse the Task 5B classifier facts. Tests must include historical excellent company, zero-award eligible company, non-excellent aggregation, rename by business number, multiple designations, zero denominator, 2025 lower bound, and Seoul quarter ranges. Denominator fixtures must prove multiple target lots with the same representative count once, different target-lot winners make coverage incomplete, and only canonical awards whose final date falls inside the selected period count.
 
 ```ts
-expect(classifyAward(cooperativeAward, validDesignation).category).toBe(
-  "cooperative",
-);
-expect(classifyAward(onStartDate, validDesignation).category).toBe("excellent");
-expect(classifyAward(afterEffectiveEnd, validDesignation).category).toBe(
-  "non_excellent",
-);
 expect(report.totalFinalAwardedNotices).toBe(10);
 expect(
   report.rows.find((row) => row.companyName === "A업체")?.marketShare,
@@ -706,12 +863,12 @@ expect(
 - [ ] **Step 2: Run report tests and confirm missing-module failure**
 
 ```powershell
-npx vitest run tests/building-control-period.test.ts tests/building-control-classification.test.ts tests/building-control-report.test.ts
+npx vitest run tests/building-control-period.test.ts tests/building-control-report.test.ts
 ```
 
 Expected: FAIL on missing exports.
 
-- [ ] **Step 3: Ask MiniMax-M3 to implement pure period/classification/report services**
+- [ ] **Step 3: Ask MiniMax-M3 to implement pure period/report services**
 
 The shared DTO is versioned and contains no functions or database objects:
 
