@@ -2691,12 +2691,31 @@ export function createBuildingControlRepository(
               and r.date_from = ?
               and r.date_to = ?
               and r.seoul_date = ?
+              and exists (
+                select 1
+                from building_control_sync_expected_requests expected
+                where expected.sync_run_id = r.id
+                  and expected.collector_plan_id = ?
+              )
+              and not exists (
+                select 1
+                from building_control_sync_expected_requests expected
+                where expected.sync_run_id = r.id
+                  and expected.collector_plan_id <> ?
+              )
               and r.lease_owner <> ''
               and lease.expires_at <= ?
             order by r.id desc
             `,
           )
-          .get(input.dateFrom, input.dateTo, input.seoulDate, input.now) as
+          .get(
+            input.dateFrom,
+            input.dateTo,
+            input.seoulDate,
+            input.collectorPlanId,
+            input.collectorPlanId,
+            input.now,
+          ) as
           | {
               id: number;
               trigger: string;
@@ -3230,15 +3249,16 @@ export function createBuildingControlRepository(
           input.pageCount,
         );
         const distinctNotices = [...noticeIdByKey.keys()];
-        if (distinctNotices.length === 0) {
-          throw new Error(
-            "notice-product snapshot requires at least one notice",
-          );
-        }
         const placeholders = distinctNotices.map(() => "?").join(",");
-        const found = db
-          .prepare(
-            `
+        let found: Array<{
+          id: number;
+          notice_no: string;
+          notice_order: string;
+        }> = [];
+        if (distinctNotices.length > 0) {
+          found = db
+            .prepare(
+              `
             select id, notice_no, notice_order
             from building_control_notices
             where generation_id = (
@@ -3247,12 +3267,9 @@ export function createBuildingControlRepository(
             )
               and (notice_no || '|' || notice_order) in (${placeholders})
             `,
-          )
-          .all(input.runId, ...distinctNotices) as Array<{
-          id: number;
-          notice_no: string;
-          notice_order: string;
-        }>;
+            )
+            .all(input.runId, ...distinctNotices) as typeof found;
+        }
         if (found.length !== distinctNotices.length) {
           throw new Error(
             "notice-product references missing notices in the same run",
@@ -3431,13 +3448,16 @@ export function createBuildingControlRepository(
           input.pageCount,
         );
         const distinctNotices = [...noticeIdByKey.keys()];
-        if (distinctNotices.length === 0) {
-          throw new Error("award snapshot requires at least one notice");
-        }
         const placeholders = distinctNotices.map(() => "?").join(",");
-        const found = db
-          .prepare(
-            `
+        let found: Array<{
+          id: number;
+          notice_no: string;
+          notice_order: string;
+        }> = [];
+        if (distinctNotices.length > 0) {
+          found = db
+            .prepare(
+              `
             select id, notice_no, notice_order
             from building_control_notices
             where generation_id = (
@@ -3446,12 +3466,9 @@ export function createBuildingControlRepository(
             )
               and (notice_no || '|' || notice_order) in (${placeholders})
             `,
-          )
-          .all(input.runId, ...distinctNotices) as Array<{
-          id: number;
-          notice_no: string;
-          notice_order: string;
-        }>;
+            )
+            .all(input.runId, ...distinctNotices) as typeof found;
+        }
         if (found.length !== distinctNotices.length) {
           throw new Error("award references missing notices in the same run");
         }

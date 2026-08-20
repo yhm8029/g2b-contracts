@@ -548,6 +548,54 @@ describe("building_control_sync_checkpoints", () => {
 });
 
 describe("building_control_sync_checkpoints adoptResumableRun", () => {
+  it("starts a new run when the expired candidate uses another collector plan", () => {
+    const { repository } = openDb();
+    const first = beginRun(repository, "worker-a", "2026-08-21T00:00:00.000Z");
+    repository.registerCollectorPlan({
+      planId: "plan-a",
+      name: "Plan A",
+      description: "original plan",
+      requestSetHash: sha256("plan-a-hash"),
+      createdAt: "2026-08-21T00:00:00.000Z",
+    });
+    repository.registerCollectorPlan({
+      planId: "plan-b",
+      name: "Plan B",
+      description: "replacement plan",
+      requestSetHash: sha256("plan-b-hash"),
+      createdAt: "2026-08-21T00:00:00.000Z",
+    });
+    repository.registerExpectedRequests(
+      first.runId,
+      [
+        {
+          source: "notice-publication",
+          role: "notice-publication-bulk",
+          requestKey: "notice-bulk",
+          dependencyRequestKey: null,
+          collectorPlanId: "plan-a",
+          canonicalQueryJson: "{}",
+          now: "2026-08-21T00:00:00.000Z",
+        },
+      ],
+      first.owner,
+      first.fence,
+    );
+
+    const adopted = repository.adoptResumableRun({
+      owner: "worker-b",
+      dateFrom: "2025-01-01",
+      dateTo: "2026-08-21",
+      seoulDate: "2026-08-21",
+      collectorPlanId: "plan-b",
+      now: "2026-08-21T00:01:30.000Z",
+      ttlSeconds: 60,
+    });
+
+    expect(adopted.resumed).toBe(false);
+    expect(adopted.runId).not.toBe(first.runId);
+  });
+
   it("adopts an expired resumable run with one collector plan", () => {
     const { repository } = openDb();
     const first = beginRun(repository, "worker-a", "2026-08-21T00:00:00.000Z");
@@ -625,6 +673,188 @@ describe("building_control_sync_checkpoints adoptResumableRun", () => {
         ttlSeconds: 60,
       }),
     ).toThrow(/lease/i);
+  });
+});
+
+describe("building-control zero-result snapshots", () => {
+  it("activates a complete five-source manifest when every source has zero facts", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    repository.registerCollectorPlan({
+      planId: "plan-zero",
+      name: "Zero result plan",
+      description: "complete transport coverage with no matching facts",
+      requestSetHash: sha256("plan-zero"),
+      createdAt: "2026-08-21T00:00:00.000Z",
+    });
+    const requests = [
+      {
+        source: "notice-publication" as const,
+        role: "notice-publication-bulk" as const,
+        requestKey: "zero-notices",
+      },
+      {
+        source: "notice-product" as const,
+        role: "notice-identity-lookup" as const,
+        requestKey: "zero-products",
+      },
+      {
+        source: "award-registration" as const,
+        role: "award-registration-bulk" as const,
+        requestKey: "zero-awards",
+      },
+      {
+        source: "designation-history" as const,
+        role: "designation-list-all" as const,
+        requestKey: "zero-designations",
+      },
+    ];
+    repository.registerExpectedRequests(
+      run.runId,
+      requests.map((request) => ({
+        ...request,
+        dependencyRequestKey: null,
+        collectorPlanId: "plan-zero",
+        canonicalQueryJson: "{}",
+        now: "2026-08-21T00:00:00.000Z",
+      })),
+      run.owner,
+      run.fence,
+    );
+    repository.sealExpectedRequestSet(
+      run.runId,
+      "plan-zero",
+      run.owner,
+      run.fence,
+      "2026-08-21T00:01:00.000Z",
+    );
+    for (const request of requests) {
+      completeCheckpointForFacts(
+        repository,
+        run,
+        request.source,
+        request.requestKey,
+        [],
+        {},
+      );
+    }
+
+    const notice = repository.stageNoticeSnapshot(
+      {
+        runId: run.runId,
+        source: "notice-publication",
+        dateFrom: "2025-01-01",
+        dateTo: "2026-08-21",
+        expectedCount: 0,
+        pageCount: 1,
+        notices: [],
+      },
+      run.owner,
+      run.fence,
+    );
+    const product = repository.stageNoticeProductSnapshot(
+      {
+        runId: run.runId,
+        source: "notice-product",
+        dateFrom: "2025-01-01",
+        dateTo: "2026-08-21",
+        expectedCount: 0,
+        pageCount: 1,
+        products: [],
+      },
+      run.owner,
+      run.fence,
+    );
+    const award = repository.stageAwardSnapshot(
+      {
+        runId: run.runId,
+        source: "award-registration",
+        dateFrom: "2025-01-01",
+        dateTo: "2026-08-21",
+        expectedCount: 0,
+        pageCount: 1,
+        awards: [],
+        quarantines: [],
+      },
+      run.owner,
+      run.fence,
+    );
+    const designation = repository.stageDesignationSnapshot(
+      {
+        runId: run.runId,
+        source: "designation-history",
+        dateFrom: "2025-01-01",
+        dateTo: "2026-08-21",
+        expectedCount: 0,
+        pageCount: 1,
+        designations: [],
+      },
+      run.owner,
+      run.fence,
+    );
+    const classificationGenerationId = repository.stageGeneration(
+      {
+        runId: run.runId,
+        source: "award-classification",
+        dateFrom: "2025-01-01",
+        dateTo: "2026-08-21",
+        sourceIdentityHashes: [],
+        expectedCount: 0,
+        observedCount: 0,
+        pageCount: 0,
+        identitySetHash: sha256(""),
+        sourceHashes: {},
+      },
+      run.owner,
+      run.fence,
+    );
+    const generationIds = {
+      "notice-publication": notice.generationId,
+      "notice-product": product.generationId,
+      "award-registration": award.generationId,
+      "designation-history": designation.generationId,
+      "award-classification": classificationGenerationId,
+    };
+    for (const [source, generationId] of Object.entries(generationIds)) {
+      repository.completeGeneration(
+        {
+          runId: run.runId,
+          source: source as keyof typeof generationIds,
+          dateFrom: "2025-01-01",
+          dateTo: "2026-08-21",
+          sourceIdentityHashes: [],
+          generationId,
+          completedAt: "2026-08-21T00:04:00.000Z",
+        },
+        run.owner,
+        run.fence,
+      );
+    }
+    const manifestId = repository.createManifest(
+      generationIds,
+      run.owner,
+      run.fence,
+    );
+    expect(
+      repository.completeRunAndActivate({
+        runId: run.runId,
+        manifestId,
+        expectedActiveManifestId: null,
+        owner: run.owner,
+        fence: run.fence,
+        completedAt: "2026-08-21T00:05:00.000Z",
+      }),
+    ).toBe(true);
+
+    const active = repository.readActiveManifest();
+    expect(active?.manifestId).toBe(manifestId);
+    for (const coverage of Object.values(active!.coverage)) {
+      expect(coverage).toMatchObject({
+        expectedCount: 0,
+        observedCount: 0,
+        complete: true,
+      });
+    }
   });
 });
 
