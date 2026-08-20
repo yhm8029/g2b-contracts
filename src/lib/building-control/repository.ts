@@ -428,7 +428,7 @@ export interface BuildingControlRepository {
     requestKey: string,
     owner: string,
     fence: number,
-  ): void;
+  ): "reset" | "restart-run";
   clearCompletedCheckpoints(runId: number, owner: string, fence: number): void;
   readResumeSeed(
     runId: number,
@@ -2804,13 +2804,14 @@ export function createBuildingControlRepository(
     requestKey: string,
     owner: string,
     fence: number,
-  ): void =>
+  ): "reset" | "restart-run" =>
     db
-      .transaction(() => {
+      .transaction((): "reset" | "restart-run" => {
         requireLease(owner, fence);
         requireRun(runId, owner, fence);
         const checkpoint = readCheckpoint(runId, source, requestKey);
-        if (!checkpoint) return;
+        if (!checkpoint) return "reset";
+        if (checkpoint.state === "complete") return "restart-run";
         db.prepare(
           `delete from building_control_sync_checkpoint_pages where checkpoint_id = ?`,
         ).run(checkpoint.checkpointId);
@@ -2822,6 +2823,7 @@ export function createBuildingControlRepository(
           where id = ?
           `,
         ).run(new Date().toISOString(), checkpoint.checkpointId);
+        return "reset";
       })
       .immediate();
 

@@ -24,6 +24,9 @@ export type ValidatedSyncChunk<T> = {
 export type SyncProgressHooks<T> = {
   readResumeSeed(requestKey: string): Promise<SyncResumeSeed | null>;
   onValidatedChunk(chunk: ValidatedSyncChunk<T>): Promise<void>;
+  resetAfterDrift?(
+    requestKey: string,
+  ): Promise<void | "reset" | "restart-run">;
 };
 
 export function isResumeSeed(value: unknown): value is SyncResumeSeed {

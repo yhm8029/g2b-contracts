@@ -1285,13 +1285,14 @@ describe("building_control_sync_checkpoints resume behavior", () => {
       run.owner,
       run.fence,
     );
-    repository.resetDriftedCheckpoint(
+    const reset = repository.resetDriftedCheckpoint(
       run.runId,
       "notice-publication",
       "notice-bulk-reset",
       run.owner,
       run.fence,
     );
+    expect(reset).toBe("reset");
     const seed = repository.readResumeSeed(
       run.runId,
       "notice-publication",
@@ -1306,6 +1307,56 @@ describe("building_control_sync_checkpoints resume behavior", () => {
       )
       .get() as { count: number };
     expect(chunksCount.count).toBe(0);
+  });
+
+  it("preserves completed drift evidence and requests a new sync run", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    registerBulkNoticePlan(repository, run, "notice-bulk-complete-drift", true);
+    repository.stageCheckpointPage(
+      {
+        source: "notice-publication",
+        requestKey: "notice-bulk-complete-drift",
+        cursor: 1,
+        pageSize: 10,
+        totalCount: 1,
+        ...checkpointPayload("complete-drift", 1),
+        now: "2026-08-21T00:02:00.000Z",
+      },
+      run.runId,
+      run.owner,
+      run.fence,
+    );
+    repository.completeCheckpoint(
+      run.runId,
+      "notice-publication",
+      "notice-bulk-complete-drift",
+      run.owner,
+      run.fence,
+      "2026-08-21T00:03:00.000Z",
+    );
+    const before = repository.readResumeSeed(
+      run.runId,
+      "notice-publication",
+      "notice-bulk-complete-drift",
+    );
+
+    expect(
+      repository.resetDriftedCheckpoint(
+        run.runId,
+        "notice-publication",
+        "notice-bulk-complete-drift",
+        run.owner,
+        run.fence,
+      ),
+    ).toBe("restart-run");
+    expect(
+      repository.readResumeSeed(
+        run.runId,
+        "notice-publication",
+        "notice-bulk-complete-drift",
+      ),
+    ).toEqual(before);
   });
 });
 

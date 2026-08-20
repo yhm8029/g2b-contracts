@@ -3,10 +3,11 @@
 // TypeScript 5.7. No network/global state. Sleep is injected.
 
 import type { CoverageSource } from "@/lib/building-control/repository";
-import type {
-  SyncProgressHooks,
-  SyncResumeSeed,
-  ValidatedSyncChunk,
+import {
+  isResumeSeed,
+  type SyncProgressHooks,
+  type SyncResumeSeed,
+  type ValidatedSyncChunk,
 } from "@/lib/building-control/sync-progress";
 
 export type { ValidatedSyncChunk, SyncProgressHooks, SyncResumeSeed };
@@ -305,6 +306,103 @@ export interface ResumableCollectResult<T> {
   readonly resumed: boolean;
 }
 
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function sameOrderedStrings(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function isCompatibleResumeSeed<T>(
+  value: unknown,
+  options: ResumableCollectOptions<T>,
+): boolean {
+  if (!isResumeSeed(value)) return false;
+  if (
+    value.cursorKind !== "page" ||
+    value.pageSize !== options.pageSize ||
+    value.totalCount === null ||
+    !Number.isInteger(value.totalCount)
+  ) {
+    return false;
+  }
+  const expectedPages = Math.max(
+    1,
+    Math.ceil(value.totalCount / options.pageSize),
+  );
+  const chunks = [...value.persistedChunks].sort(
+    (left, right) => left.cursor - right.cursor,
+  );
+  if (
+    chunks.length === 0 ||
+    chunks.length > expectedPages ||
+    value.nextCursor !== chunks.length + 1
+  ) {
+    return false;
+  }
+  const seen = new Set<string>();
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index]!;
+    const expectedCursor = index + 1;
+    const expectedFacts =
+      expectedCursor === expectedPages
+        ? value.totalCount - (expectedPages - 1) * options.pageSize
+        : options.pageSize;
+    if (
+      chunk.source !== options.source ||
+      chunk.requestKey !== options.requestKey ||
+      chunk.cursorKind !== "page" ||
+      chunk.cursor !== expectedCursor ||
+      chunk.pageSize !== options.pageSize ||
+      chunk.totalCount !== value.totalCount ||
+      !Array.isArray(chunk.facts) ||
+      !Array.isArray(chunk.identityHashes) ||
+      chunk.facts.length !== expectedFacts ||
+      chunk.identityHashes.length !== expectedFacts ||
+      chunk.sourceHashes === null ||
+      typeof chunk.sourceHashes !== "object" ||
+      Array.isArray(chunk.sourceHashes)
+    ) {
+      return false;
+    }
+    const sourceHashKeys = Object.keys(chunk.sourceHashes);
+    if (
+      sourceHashKeys.length !== chunk.identityHashes.length ||
+      !sourceHashKeys.every((key) => chunk.identityHashes.includes(key))
+    ) {
+      return false;
+    }
+    for (const identityHash of chunk.identityHashes) {
+      const sourceHash = chunk.sourceHashes[identityHash];
+      if (
+        !SHA256_HEX.test(identityHash) ||
+        typeof sourceHash !== "string" ||
+        !SHA256_HEX.test(sourceHash) ||
+        seen.has(identityHash)
+      ) {
+        return false;
+      }
+      seen.add(identityHash);
+    }
+  }
+  return sameOrderedStrings(
+    [...seen].sort(),
+    [...value.seenIdentityHashes].sort(),
+  );
+}
+
+export class ResumeRunRestartRequiredError extends Error {
+  constructor(readonly requestKey: string) {
+    super(`resumable request requires a new sync run: ${requestKey}`);
+    this.name = "ResumeRunRestartRequiredError";
+  }
+}
+
 export async function collectCompletePagesResumable<T>(
   options: ResumableCollectOptions<T>,
 ): Promise<ResumableCollectResult<T>> {
@@ -322,9 +420,49 @@ export async function collectCompletePagesResumable<T>(
     );
   }
 
+  const restartFromPageOne = async (): Promise<
+    ResumableCollectResult<T>
+  > => {
+    if (!options.progress?.resetAfterDrift) {
+      throw new Error(
+        "collectCompletePagesResumable: resume drift requires a reset hook",
+      );
+    }
+    const reset = await options.progress.resetAfterDrift(options.requestKey);
+    if (reset === "restart-run") {
+      throw new ResumeRunRestartRequiredError(options.requestKey);
+    }
+    return collectCompletePagesResumable({
+      ...options,
+      progress: {
+        ...options.progress,
+        readResumeSeed: async () => null,
+      },
+    });
+  };
+
   let seed: SyncResumeSeed | null = null;
   if (options.progress) {
-    seed = await options.progress.readResumeSeed(options.requestKey);
+    const rawSeed: unknown = await options.progress.readResumeSeed(
+      options.requestKey,
+    );
+    if (rawSeed !== null) {
+      if (isCompatibleResumeSeed(rawSeed, options)) {
+        seed = rawSeed as SyncResumeSeed;
+      } else {
+        const emptyResetSeed =
+          isResumeSeed(rawSeed) &&
+          rawSeed.cursorKind === "page" &&
+          rawSeed.pageSize === options.pageSize &&
+          rawSeed.totalCount === null &&
+          rawSeed.nextCursor === 1 &&
+          rawSeed.seenIdentityHashes.length === 0 &&
+          rawSeed.persistedChunks.length === 0;
+        if (!emptyResetSeed) {
+          return restartFromPageOne();
+        }
+      }
+    }
   }
 
   const persistedChunks: ValidatedSyncChunk<unknown>[] = [];
@@ -333,32 +471,27 @@ export async function collectCompletePagesResumable<T>(
   const rawPages: string[] = [];
 
   if (seed) {
-    if (seed.pageSize !== options.pageSize || seed.cursorKind !== "page") {
-      seed = null;
-      persistedChunks.length = 0;
-    } else {
-      for (const chunk of seed.persistedChunks) {
-        if (chunk.cursorKind !== "page") continue;
-        if (chunk.pageSize !== options.pageSize) continue;
-        const identityEntries: string[] = [];
-        for (const hash of chunk.identityHashes) {
-          if (seenIdentityHashes.has(hash)) {
-            throw new Error(
-              "collectCompletePagesResumable: duplicate persisted identity",
-            );
-          }
-          seenIdentityHashes.add(hash);
-          identityEntries.push(hash);
+    const orderedChunks = [...seed.persistedChunks].sort(
+      (left, right) => left.cursor - right.cursor,
+    );
+    for (const chunk of orderedChunks) {
+      for (const hash of chunk.identityHashes) {
+        if (seenIdentityHashes.has(hash)) {
+          throw new Error(
+            "collectCompletePagesResumable: duplicate persisted identity",
+          );
         }
-        const facts = chunk.facts as readonly T[];
-        for (const fact of facts) {
-          items.push(options.normalizeItem(fact));
-        }
-        rawPages.push("");
-        persistedChunks.push(chunk);
+        seenIdentityHashes.add(hash);
       }
+      const facts = chunk.facts as readonly T[];
+      for (const fact of facts) {
+        items.push(options.normalizeItem(fact));
+      }
+      rawPages.push("");
+      persistedChunks.push(chunk);
     }
   }
+  const persistedPrefixChunks = persistedChunks.slice();
 
   let nextCursor = seed?.nextCursor ?? 1;
   let totalCount = seed?.totalCount ?? -1;
@@ -367,7 +500,10 @@ export async function collectCompletePagesResumable<T>(
 
   while (true) {
     if (totalCount !== -1) {
-      const expectedPages = Math.ceil(totalCount / options.pageSize);
+      const expectedPages = Math.max(
+        1,
+        Math.ceil(totalCount / options.pageSize),
+      );
       if (nextCursor > expectedPages) break;
     }
     if (nextCursor > options.maxPages) {
@@ -382,11 +518,13 @@ export async function collectCompletePagesResumable<T>(
       );
     }
     if (page.pageNo !== nextCursor) {
+      if (resumed) return restartFromPageOne();
       throw new Error(
         "collectCompletePagesResumable: page.pageNo does not match requested cursor",
       );
     }
     if (page.pageSize !== options.pageSize) {
+      if (resumed) return restartFromPageOne();
       throw new Error(
         "collectCompletePagesResumable: page.pageSize does not match requested pageSize",
       );
@@ -419,6 +557,7 @@ export async function collectCompletePagesResumable<T>(
         );
       }
     } else if (page.totalCount !== totalCount) {
+      if (resumed) return restartFromPageOne();
       throw new Error(
         "collectCompletePagesResumable: totalCount must be stable across pages",
       );
@@ -429,6 +568,7 @@ export async function collectCompletePagesResumable<T>(
       ? totalCount - (expectedPages - 1) * options.pageSize
       : options.pageSize;
     if (page.items.length !== expectedItems) {
+      if (resumed) return restartFromPageOne();
       throw new Error(
         "collectCompletePagesResumable: page items count does not match expected cardinality",
       );
@@ -438,18 +578,24 @@ export async function collectCompletePagesResumable<T>(
     const newFacts: T[] = [];
     for (const item of page.items) {
       const id = options.identity(item);
-      if (typeof id !== "string" || id.length === 0) {
+      if (typeof id !== "string" || !SHA256_HEX.test(id)) {
         throw new Error(
-          "collectCompletePagesResumable: identity must be a non-empty string",
+          "collectCompletePagesResumable: identity must be a lowercase SHA-256 hash",
         );
       }
       if (seenIdentityHashes.has(id)) {
+        if (resumed) return restartFromPageOne();
         throw new Error(
           "collectCompletePagesResumable: duplicate identity across pages",
         );
       }
       seenIdentityHashes.add(id);
-      const itemHash = options.hashItem(item, "");
+      const itemHash = options.hashItem(item, page.rawJson);
+      if (typeof itemHash !== "string" || !SHA256_HEX.test(itemHash)) {
+        throw new Error(
+          "collectCompletePagesResumable: source hash must be a lowercase SHA-256 hash",
+        );
+      }
       identityHashes.push(id);
       sourceHashes[id] = itemHash;
       newFacts.push(options.normalizeItem(item));
@@ -466,34 +612,6 @@ export async function collectCompletePagesResumable<T>(
         identityHashes: Object.freeze(identityHashes) as readonly string[],
         sourceHashes,
       };
-      const ok =
-        options.revalidateChunk === undefined
-          ? true
-          : await options.revalidateChunk(chunk);
-      if (!ok) {
-        seenIdentityHashes.clear();
-        items.length = 0;
-        rawPages.length = 0;
-        persistedChunks.length = 0;
-        nextCursor = 1;
-        totalCount = -1;
-        resumed = false;
-        if (options.progress) {
-          // Persist a fresh seed so callers can drop persisted prefix
-          await options.progress.onValidatedChunk({
-            source: options.source,
-            requestKey: options.requestKey,
-            cursorKind: "page",
-            cursor: 1,
-            pageSize: options.pageSize,
-            totalCount: -1,
-            facts: Object.freeze([]) as readonly T[],
-            identityHashes: Object.freeze([]) as readonly string[],
-            sourceHashes: {},
-          });
-        }
-        continue;
-      }
       await options.progress.onValidatedChunk(chunk);
       persistedChunks.push(chunk as ValidatedSyncChunk<unknown>);
     }
@@ -503,6 +621,95 @@ export async function collectCompletePagesResumable<T>(
     nextCursor += 1;
     if (totalCount === 0) break;
     if (nextCursor > expectedPages) break;
+  }
+
+  let prefixDrift = false;
+  for (const persisted of persistedPrefixChunks) {
+    const page = await options.fetchPage(persisted.cursor, options.pageSize);
+    const expectedPages =
+      totalCount < 0
+        ? -1
+        : Math.max(1, Math.ceil(totalCount / options.pageSize));
+    const expectedItems =
+      expectedPages < 0
+        ? -1
+        : persisted.cursor === expectedPages
+          ? totalCount - (expectedPages - 1) * options.pageSize
+          : options.pageSize;
+    if (
+      !page ||
+      typeof page !== "object" ||
+      page.pageNo !== persisted.cursor ||
+      page.pageSize !== options.pageSize ||
+      page.totalCount !== totalCount ||
+      !Array.isArray(page.items) ||
+      page.items.length !== expectedItems ||
+      typeof page.rawJson !== "string" ||
+      page.rawJson.length === 0
+    ) {
+      prefixDrift = true;
+      break;
+    }
+
+    const identityHashes: string[] = [];
+    const sourceHashes: Record<string, string> = {};
+    const normalizedFacts: T[] = [];
+    for (const item of page.items) {
+      const identityHash = options.identity(item);
+      const sourceHash = options.hashItem(item, page.rawJson);
+      if (
+        typeof identityHash !== "string" ||
+        !SHA256_HEX.test(identityHash) ||
+        typeof sourceHash !== "string" ||
+        !SHA256_HEX.test(sourceHash) ||
+        sourceHashes[identityHash] !== undefined
+      ) {
+        prefixDrift = true;
+        break;
+      }
+      identityHashes.push(identityHash);
+      sourceHashes[identityHash] = sourceHash;
+      normalizedFacts.push(options.normalizeItem(item));
+    }
+    if (prefixDrift) break;
+    if (
+      JSON.stringify(identityHashes) !==
+        JSON.stringify(persisted.identityHashes) ||
+      Object.keys(sourceHashes).some(
+        (identityHash) =>
+          sourceHashes[identityHash] !==
+          persisted.sourceHashes[identityHash],
+      ) ||
+      Object.keys(sourceHashes).length !==
+        Object.keys(persisted.sourceHashes).length
+    ) {
+      prefixDrift = true;
+      break;
+    }
+    const refreshedChunk: ValidatedSyncChunk<T> = {
+      source: options.source,
+      requestKey: options.requestKey,
+      cursorKind: "page",
+      cursor: page.pageNo,
+      pageSize: page.pageSize,
+      totalCount: page.totalCount,
+      facts: Object.freeze(normalizedFacts) as readonly T[],
+      identityHashes: Object.freeze(identityHashes) as readonly string[],
+      sourceHashes,
+    };
+    if (
+      options.revalidateChunk !== undefined &&
+      !(await options.revalidateChunk(refreshedChunk))
+    ) {
+      prefixDrift = true;
+      break;
+    }
+    rawPages[persisted.cursor - 1] = page.rawJson;
+    lastPage = page;
+  }
+
+  if (prefixDrift) {
+    return restartFromPageOne();
   }
 
   if (totalCount === -1) {
