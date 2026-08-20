@@ -188,15 +188,22 @@ git commit -m "feat: prove building control API contracts"
 - Create: `src/lib/building-control/g2b/paging.ts`
 - Create: `src/lib/building-control/g2b/designation-list-client.ts`
 - Create: `src/lib/building-control/g2b/designation-detail-client.ts`
+- Create: `src/lib/building-control/g2b/designation-session.ts`
+- Create: `src/lib/building-control/g2b/designation-history-client.ts`
 - Create: `tests/building-control-designations.test.ts`
+- Create: `tests/building-control-designation-paging.test.ts`
+- Create: `tests/building-control-designation-session.test.ts`
+- Create: `tests/building-control-designation-history.test.ts`
+- Create: `tests/building-control-designation-red-phase.test.ts`
+- Create: `tests/building-control-designation-session-options.test.ts`
 - Read fixture manifest: `tests/fixtures/building-control/active-generation.json`
 - Read active sanitized designation fixtures from the referenced immutable generation
 - Reference only: `.worktrees/g2b-excellent-pr/src/lib/g2b/excellent-product-discovery-client.ts`
 - Reference only: `.worktrees/g2b-excellent-pr/src/lib/g2b/excellent-product-designation-detail-client.ts`
 
-- [ ] **Step 1: Ask MiniMax-M3 for failing list/detail tests from sanitized probe fixtures**
+- [x] **Step 1: Ask MiniMax-M3 for failing list/detail tests from sanitized probe fixtures**
 
-Tests must prove explicit status union, stable pagination, exact `39121801` detail membership, extension precedence, null-end incompleteness, cancellation/revocation boundaries, and fail-closed contraction:
+Tests must prove explicit status union, stable pagination, exact `39121801` detail membership, extension precedence, null-end incompleteness, status/date interval semantics, and fail-closed contraction:
 
 ```ts
 expect(
@@ -214,13 +221,11 @@ expect(() => reconcileStatusPages(previousComplete, contractedCurrent)).toThrow(
 expect(classifyDesignationValidity({ effectiveEnd: null }, "2026-01-01")).toBe(
   "incomplete",
 );
-expect(isDesignationValidOn(cancelledDesignation, "2026-03-31")).toBe(true);
-expect(isDesignationValidOn(cancelledDesignation, "2026-04-01")).toBe(false);
 ```
 
-Use the sanitized Task 1 active generation for proven list/detail values. Those fixtures are deliberately strict projections rather than raw transport envelopes; add small synthetic provider-envelope parser cases, matching the proven official field names and shapes, for pagination and malformed-envelope failures. A missing effective end, unsupported status, missing detail evidence, or ambiguous cancellation/revocation date marks designation coverage incomplete and never qualifies an award as excellent.
+Use the sanitized Task 1 active generation for proven list/detail values. Those fixtures are deliberately strict projections rather than raw transport envelopes; add small synthetic provider-envelope parser cases, matching the proven official field names and shapes, for pagination and malformed-envelope failures. Live detail has no proven cancellation/revocation effective dates, so they must never be derived. Target `유효`/`만료` uses the official inclusive start/effective-end interval and classifies as `excellent` inside it; outside the interval classifies as `not_excellent`; target `효력정지` or blank status inside the interval classifies as `incomplete`. A complete non-target is `not_excellent`; `rawJson` must parse equal to the payload; shared session detail calls are strictly sequential with concurrency 1.
 
-- [ ] **Step 2: Run the designation tests and confirm missing-client failure**
+- [x] **Step 2: Run the designation tests and confirm missing-client failure**
 
 ```powershell
 npx vitest run tests/building-control-designations.test.ts
@@ -228,9 +233,9 @@ npx vitest run tests/building-control-designations.test.ts
 
 Expected: FAIL because the new clients do not exist.
 
-- [ ] **Step 3: Ask MiniMax-M3 to implement bounded retries and exact historical parsing**
+- [x] **Step 3: Ask MiniMax-M3 to implement bounded retries and exact historical parsing**
 
-Use only status values proven by Task 1. Preserve list/detail raw JSON and these normalized fields:
+Use only status values proven by Task 1. The nullable cancellation/revocation fields remain null and unverified until a future live contract proves them, and are not a current classification condition. Preserve list/detail raw JSON and these normalized fields:
 
 ```ts
 export type DesignationObservationInput = {
@@ -254,18 +259,18 @@ export type DesignationObservationInput = {
 
 Do not import the legacy CSV repository, title tokens, `startsWith` classification logic, or replace-snapshot deletion.
 
-- [ ] **Step 4: Run focused and inherited G2B tests**
+- [x] **Step 4: Run focused and inherited G2B tests**
 
 ```powershell
-npx vitest run tests/building-control-designations.test.ts tests/g2b-parsers.test.ts tests/shopping-mall-product-client.test.ts
+npx vitest run tests/building-control-designation-history.test.ts tests/building-control-designations.test.ts tests/building-control-designation-paging.test.ts tests/building-control-designation-session.test.ts tests/g2b-parsers.test.ts tests/shopping-mall-product-client.test.ts
 ```
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 5: Commit designation history clients**
+- [x] **Step 5: Commit designation history clients**
 
 ```powershell
-git add src/lib/building-control/g2b tests/building-control-designations.test.ts
+git add src/lib/building-control/g2b tests/building-control-designation*.test.ts docs/superpowers/plans/2026-08-20-building-control-market-share.md
 git commit -m "feat: collect excellent designation history"
 ```
 
@@ -637,7 +642,7 @@ git commit -m "feat: synchronize building control market data"
 
 - [ ] **Step 1: Ask MiniMax-M3 for failing business-rule tests**
 
-Tests must include start/end/extension boundaries, null effective end, cancellation/revocation day boundaries, cooperative precedence, historical excellent company, zero-award eligible company, non-excellent aggregation, rename by business number, multiple designations, zero denominator, 2025 lower bound, and Seoul quarter ranges. Denominator fixtures must prove multiple rebid revisions count once, multiple target lots with the same representative count once, different target-lot winners make coverage incomplete, and only canonical awards whose final date falls inside the selected period count.
+Tests must include start/end/extension boundaries, null effective end, official status/date interval semantics, cooperative precedence, historical excellent company, zero-award eligible company, non-excellent aggregation, rename by business number, multiple designations, zero denominator, 2025 lower bound, and Seoul quarter ranges. `유효`/`만료` is excellent inside the inclusive interval and not excellent outside; `효력정지`/blank is incomplete inside. Denominator fixtures must prove multiple rebid revisions count once, multiple target lots with the same representative count once, different target-lot winners make coverage incomplete, and only canonical awards whose final date falls inside the selected period count.
 
 ```ts
 expect(classifyAward(cooperativeAward, validDesignation).category).toBe(
@@ -978,7 +983,7 @@ Use filename `빌딩자동제어_시장점유율_<YEAR>[_Q<N>].xlsx` and these e
 ```text
 시장점유율: 분류, 업체명, 사업자등록번호, 낙찰건수, 전체낙찰공고수, 시장점유율, 지정번호, 지정시작일, 유효만료일
 낙찰공고 상세: 공고번호, 차수, 공고명, 대상품목번호, 최종낙찰일, 낙찰업체, 사업자등록번호, 낙찰금액, 낙찰률, 분류, 매칭지정번호, 유효만료일, 수요기관, 원문
-조달우수 지정이력: 업체명, 사업자등록번호, 지정번호, 제품명, 지정시작일, 원만료일, 연장일, 유효만료일, 상태, 취소효력일, 철회효력일, 조회기간중첩
+조달우수 지정이력: 업체명, 사업자등록번호, 지정번호, 제품명, 지정시작일, 원만료일, 연장일, 유효만료일, 상태, 조회기간중첩
 ```
 
 Freeze/filter all headers, write typed numbers/dates/hyperlinks, and place the native pie chart on `시장점유율` with category+percentage data labels and leader lines.
