@@ -597,7 +597,9 @@ Add RED tests for all of these boundaries:
 - Public repository methods, never raw SQL in the sync layer, stage notice, product, resolved award revision plus canonical award, quarantined award, and designation observation facts under a matching staging generation and current lease fence.
 - Fact writers return stable identity-to-database-ID maps needed by later product, canonical award, designation, and classification joins.
 - An award quarantine fact retains source hash, raw JSON, reason, page/index provenance, and every recoverable provider identity field. It never enters the canonical denominator.
-- A validated page and its next cursor/checkpoint commit in one fenced transaction. A crash before that transaction causes the page to be replayed; a crash after it resumes at the next page without duplicate facts.
+- A validated page and its next cursor/checkpoint commit in one fenced transaction. A crash before that transaction causes the page to be replayed; a crash after it resumes at the next page without duplicate facts. Previously committed chunks can be read back with their normalized facts and hashes to reconstruct the complete batch.
+- Every dynamically discovered request is persisted in an expected-request registry before it can be considered complete. A source snapshot cannot be staged until its versioned request set is sealed and every required request is complete.
+- Resume begins at the saved next cursor, then revalidates all persisted prefix chunks against the provider before snapshot sealing. Any page/detail identity or hash drift discards that request checkpoint and restarts it at cursor 1.
 - A new lease fence may atomically adopt the latest matching resumable run after the old lease expires. A stale worker cannot update its checkpoint, facts, generation, or manifest.
 - Checkpoint payloads contain normalized public source facts and hashes only. Service keys, request URLs containing credentials, cookies, authorization headers, and session identifiers are rejected before persistence.
 - Failed or partial runs remain invisible through the active manifest. Hard failure finalizes the run as failed; quota exhaustion leaves the run resumable and releases the lease without marking any generation complete.
@@ -626,11 +628,13 @@ export type StagedSourceIds = {
 };
 ```
 
-`building_control_sync_checkpoints` stores one row per `(run_id, source, request_key)` and `building_control_sync_checkpoint_pages` stores each validated cursor, stable total count, parsed public fact JSON, and SHA-256. A page/detail insert and checkpoint advance are one transaction. The repository exposes fenced `readCheckpoint`, `stageCheckpointPage`, `adoptResumableRun`, and `clearCompletedCheckpoints` methods.
+`building_control_sync_expected_requests` stores each required request role, source, canonical request key, dependency identity, state, and collector plan ID. A source-level request-set hash is sealed only after its authoritative parent discovery is complete: bulk notice/award requests are initial, award observations add missing notice/product identity requests, and the complete designation list adds its detail requests. Snapshot writers reject an unsealed request set, any absent required request, any duplicate request identity, or any request not in the sealed hash.
+
+`building_control_sync_checkpoints` stores one row per `(run_id, source, request_key)` and `building_control_sync_checkpoint_pages` stores each validated cursor, stable total count, parsed public fact JSON, and SHA-256. A page/detail insert and checkpoint advance are one transaction. The repository exposes fenced `registerExpectedRequests`, `sealExpectedRequestSet`, `readExpectedRequests`, `readCheckpoint`, `readCheckpointChunks`, `stageCheckpointPage`, `adoptResumableRun`, `resetDriftedCheckpoint`, and `clearCompletedCheckpoints` methods. Persisted checkpoint chunks, not an in-memory suffix alone, are the authoritative input to snapshot writers and complete-batch reconstruction.
 
 This is a real v2 migration, not an edit to the already-applied v1 DDL. The migration runner reads the ledger, validates canonical v1 before upgrade, applies v2 tables/indexes/triggers inside `BEGIN IMMEDIATE`, records a separate v2 name/checksum row, and then validates exact v2 schema. A fresh database applies v1 then v2 sequentially. Tests cover fresh v2 creation, upgrade of a populated real v1 database, injected/interrupted v2 rollback with no v2 ledger row, retry after the failure, and repeated initialization idempotence.
 
-`adoptResumableRun` requires an exact match on `date_from`, `date_to`, `seoul_date`, and a versioned collector plan ID. A checkpoint request key is the SHA-256 of source, official operation, canonical non-secret query parameters, bounds, page size, collector plan ID, and designation detail identity when applicable. A different Seoul date, page size, operation parameter, or collector plan never adopts the old run/checkpoint and starts at cursor 1.
+Task 5C atomically registers its initial required requests immediately after beginning a run; those registry rows carry the versioned collector plan ID. `adoptResumableRun` requires an exact match on the run's `date_from`, `date_to`, and `seoul_date`, plus the single distinct collector plan ID in its registered request set. A run with no registered request plan is not resumable. A checkpoint request key is the SHA-256 of source, official operation, canonical non-secret query parameters, bounds, page size, collector plan ID, and designation detail identity when applicable. A different Seoul date, page size, operation parameter, or collector plan never adopts the old run/checkpoint and starts at cursor 1.
 
 `building_control_award_quarantine` is append-only and belongs to an `award-registration` generation. Extend the award source membership calculation to include both resolved revisions and quarantined provider observations. Quarantine rows with a recoverable four-part identity use that identity; otherwise use the already approved page/index/source-hash fallback identity. `stageAwardSnapshot` performs product correlation and returns `promotionBlocked` plus reasons. A non-target irrelevant quarantine may be retained in a complete registration transport snapshot. An unresolved exact-target result, an identity that cannot be correlated safely, or an incomplete registration timestamp blocks sealing. As defense in depth, `completeGeneration`/manifest validation rejects a blocked award generation, and manifest validation rejects any `award_classifications.category = 'incomplete'` fact even if a caller bypasses the orchestrator.
 
@@ -663,6 +667,7 @@ export type SyncResumeSeed = {
   pageSize: number;
   totalCount: number | null;
   seenIdentityHashes: readonly string[];
+  persistedChunks: readonly ValidatedSyncChunk<unknown>[];
 };
 
 export type ValidatedSyncChunk<T> = {
@@ -694,10 +699,16 @@ export type ResumableAwardCollector = (input: {
 }) => Promise<AwardRegistrationBatch>;
 export type ResumableDesignationCollector = (input: {
   progress: SyncProgressHooks;
-}) => Promise<readonly DesignationObservationInput[]>;
+}) => Promise<{
+  schemaVersion: 1;
+  history: CollectCompleteDesignationHistoryResult;
+  observations: readonly DesignationObservationInput[];
+  complete: boolean;
+  incompleteReasons: readonly string[];
+}>;
 ```
 
-Collectors invoke `onValidatedChunk` after envelope/cardinality/identity validation and before requesting the next cursor. On resume, duplicate detection is seeded from the identities already persisted for that checkpoint and the first resumed page must agree with the stored total/page size.
+Collectors invoke `onValidatedChunk` after envelope/cardinality/identity validation and before requesting the next cursor. On resume, duplicate detection and the returned aggregate are rehydrated from `persistedChunks`; the first resumed page must agree with the stored total/page size. After the suffix finishes, the collector re-fetches and exact-compares the persisted prefix identities/source hashes. Drift invokes `resetDriftedCheckpoint` and restarts that request at cursor 1. Tests assert that the first request after resume is the saved cursor while allowing the mandatory prefix revalidation before sealing.
 
 Designation collection uses the same rule for all-status list pages and emits a stable per-designation detail progress item after each sequential detail response. Notice identity lookup returns the full `NoticeIdentityInventory`, not products alone, so an award dated in 2025 or later can stage a notice published before 2025.
 
@@ -751,7 +762,9 @@ Cover first backfill, second full rescan with provider correction, rescinded awa
 The core invariants remain:
 
 ```ts
-await expect(syncBuildingControlMarket(depsWithAwardPageFailure)).rejects.toThrow();
+await expect(
+  syncBuildingControlMarket(depsWithAwardPageFailure),
+).rejects.toThrow();
 expect(repository.readActiveManifest()).toEqual(beforeFailureManifest);
 expect(repository.failedRunMessages()).not.toContain(serviceKey);
 
@@ -761,7 +774,8 @@ expect(repository.readActiveManifest()).toEqual(beforeFailureManifest);
 
 const resumed = await syncBuildingControlMarket(resumeAfterQuotaReset);
 expect(resumed.status).toBe("completed");
-expect(resumeAfterQuotaReset.requestedAwardPages).not.toContain(1);
+expect(resumeAfterQuotaReset.firstRequestedAwardPage).toBe(3);
+expect(resumeAfterQuotaReset.revalidatedAwardPages).toContain(1);
 ```
 
 - [ ] **Step 2: Implement bounded full-snapshot orchestration**
@@ -820,7 +834,7 @@ export type BuildingControlSyncDependencies = {
 };
 ```
 
-Acquire the fenced lease, skip a second successful startup for the same Seoul date, adopt a matching resumable run when `trigger === "resume"`, and scan the full range. Renew the lease and transactionally persist progress after every validated page/detail. Award discovery happens before source snapshot sealing so every pre-2025 notice identity can be fetched and included in the candidate notice/product snapshots.
+Acquire the fenced lease, skip a second successful startup for the same Seoul date, adopt a matching resumable run when `trigger === "resume"`, and scan the full range. Renew the lease and transactionally persist progress after every validated page/detail. Register and seal request sets in dependency order. After bulk award collection, take every resolved or quarantined observation with a recoverable `(noticeNo, noticeOrder)` that is absent from the bulk notice set; register and complete notice-plus-product identity lookup for all of them without assuming publication year. Deduplicate bulk and identity results, seal notice/product request sets and snapshots, then correlate target lots and apply the `finalAwardDate >= 2025-01-01` rule. Only after this ordering may award promotion eligibility be decided.
 
 After all source collections are complete, stage and seal notice, product, award, and designation generations; classify every canonical award with the Task 5B kernel; stage and seal the classification generation; create the five-source candidate manifest; and compare-and-swap activate it. Any incomplete target award/designation classification, page mismatch, source correlation failure, lease loss, or CAS loss leaves the prior active manifest unchanged. Quota exhaustion returns `partial` without failing the resumable run. Other errors are redacted, record a failed run when the current fence still owns it, release the lease, and rethrow.
 

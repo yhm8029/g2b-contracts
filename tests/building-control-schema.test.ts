@@ -21,6 +21,11 @@ const REQUIRED_TABLES = [
   "building_control_coverage",
   "building_control_market_manifests",
   "building_control_active_manifest",
+  "building_control_sync_expected_requests",
+  "building_control_sync_checkpoints",
+  "building_control_sync_checkpoint_pages",
+  "building_control_award_quarantine",
+  "building_control_collector_plans",
 ] as const;
 
 function tableNames(db: Database.Database): string[] {
@@ -75,15 +80,21 @@ describe("building-control versioned schema", () => {
 
     const migration = db
       .prepare(
-        "select version, name, checksum from building_control_schema_migrations",
+        "select version, name, checksum from building_control_schema_migrations order by version",
       )
       .all() as Array<{ version: number; name: string; checksum: string }>;
-    expect(migration).toHaveLength(1);
+    expect(migration).toHaveLength(2);
+    expect(migration.map((m) => m.version)).toEqual([1, 2]);
     expect(migration[0]).toMatchObject({
       version: 1,
       name: "building-control-versioned-market-data",
     });
     expect(migration[0]?.checksum).toMatch(/^[0-9a-f]{64}$/);
+    expect(migration[1]).toMatchObject({
+      version: 2,
+      name: "building-control-sync-checkpoints",
+    });
+    expect(migration[1]?.checksum).toMatch(/^[0-9a-f]{64}$/);
 
     expect(
       db

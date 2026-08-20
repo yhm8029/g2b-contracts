@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import {
   check,
   index,
@@ -860,6 +861,204 @@ export const buildingControlActiveManifest = sqliteTable(
     check(
       "building_control_active_manifest_version_check",
       sql`${table.version} >= 0`,
+    ),
+  ],
+);
+
+export const buildingControlCollectorPlans = sqliteTable(
+  "building_control_collector_plans",
+  {
+    id: integer("id").primaryKey(),
+    planId: text("plan_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    requestSetHash: text("request_set_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("building_control_collector_plans_id_unique").on(table.planId),
+    check(
+      "building_control_collector_plans_hash_check",
+      sql`length(${table.requestSetHash}) = 64`,
+    ),
+  ],
+);
+
+export const buildingControlSyncExpectedRequests = sqliteTable(
+  "building_control_sync_expected_requests",
+  {
+    id: integer("id").primaryKey(),
+    syncRunId: integer("sync_run_id")
+      .notNull()
+      .references(() => buildingControlSyncRuns.id),
+    source: text("source").notNull(),
+    role: text("role").notNull(),
+    requestKey: text("request_key").notNull(),
+    dependencyRequestId: integer("dependency_request_id").references(
+      (): AnySQLiteColumn => buildingControlSyncExpectedRequests.id,
+    ),
+    collectorPlanId: text("collector_plan_id")
+      .notNull()
+      .references(() => buildingControlCollectorPlans.planId),
+    canonicalQueryJson: text("canonical_query_json").notNull(),
+    state: text("state").notNull(),
+    sealedAt: text("sealed_at"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("building_control_sync_expected_requests_run_key_unique").on(
+      table.syncRunId,
+      table.requestKey,
+    ),
+    index("building_control_sync_expected_requests_plan_idx").on(
+      table.collectorPlanId,
+      table.source,
+    ),
+    check(
+      "building_control_sync_expected_requests_source_check",
+      sql`${table.source} IN ('notice-publication', 'award-registration', 'notice-product', 'designation-history', 'award-classification')`,
+    ),
+    check(
+      "building_control_sync_expected_requests_role_check",
+      sql`${table.role} IN ('notice-publication-bulk', 'award-registration-bulk', 'notice-identity-lookup', 'designation-list-all', 'designation-detail')`,
+    ),
+    check(
+      "building_control_sync_expected_requests_state_check",
+      sql`${table.state} IN ('pending', 'sealed')`,
+    ),
+  ],
+);
+
+export const buildingControlSyncCheckpoints = sqliteTable(
+  "building_control_sync_checkpoints",
+  {
+    id: integer("id").primaryKey(),
+    syncRunId: integer("sync_run_id")
+      .notNull()
+      .references(() => buildingControlSyncRuns.id),
+    source: text("source").notNull(),
+    expectedRequestId: integer("expected_request_id")
+      .notNull()
+      .references(() => buildingControlSyncExpectedRequests.id),
+    requestKey: text("request_key").notNull(),
+    cursorKind: text("cursor_kind").notNull(),
+    nextCursor: integer("next_cursor").notNull(),
+    pageSize: integer("page_size").notNull(),
+    totalCount: integer("total_count"),
+    observedCount: integer("observed_count").notNull().default(0),
+    state: text("state").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex(
+      "building_control_sync_checkpoints_run_source_request_unique",
+    ).on(table.syncRunId, table.source, table.requestKey),
+    check(
+      "building_control_sync_checkpoints_source_check",
+      sql`${table.source} IN ('notice-publication', 'award-registration', 'notice-product', 'designation-history', 'award-classification')`,
+    ),
+    check(
+      "building_control_sync_checkpoints_cursor_kind_check",
+      sql`${table.cursorKind} IN ('page', 'detail')`,
+    ),
+    check(
+      "building_control_sync_checkpoints_state_check",
+      sql`${table.state} IN ('collecting', 'complete')`,
+    ),
+    check(
+      "building_control_sync_checkpoints_next_cursor_check",
+      sql`${table.nextCursor} >= 1`,
+    ),
+    check(
+      "building_control_sync_checkpoints_page_size_check",
+      sql`${table.pageSize} >= 1`,
+    ),
+  ],
+);
+
+export const buildingControlSyncCheckpointPages = sqliteTable(
+  "building_control_sync_checkpoint_pages",
+  {
+    id: integer("id").primaryKey(),
+    checkpointId: integer("checkpoint_id")
+      .notNull()
+      .references(() => buildingControlSyncCheckpoints.id),
+    cursor: integer("cursor").notNull(),
+    pageSize: integer("page_size").notNull(),
+    totalCount: integer("total_count").notNull(),
+    factJson: text("fact_json").notNull(),
+    identityHash: text("identity_hash").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex(
+      "building_control_sync_checkpoint_pages_checkpoint_cursor_unique",
+    ).on(table.checkpointId, table.cursor),
+    check(
+      "building_control_sync_checkpoint_pages_cursor_check",
+      sql`${table.cursor} >= 1`,
+    ),
+    check(
+      "building_control_sync_checkpoint_pages_page_size_check",
+      sql`${table.pageSize} >= 1`,
+    ),
+    check(
+      "building_control_sync_checkpoint_pages_total_count_check",
+      sql`${table.totalCount} >= 0`,
+    ),
+    check(
+      "building_control_sync_checkpoint_pages_identity_hash_check",
+      sql`length(${table.identityHash}) = 64`,
+    ),
+    check(
+      "building_control_sync_checkpoint_pages_source_hash_check",
+      sql`length(${table.sourceHash}) = 64`,
+    ),
+  ],
+);
+
+export const buildingControlAwardQuarantine = sqliteTable(
+  "building_control_award_quarantine",
+  {
+    id: integer("id").primaryKey(),
+    generationId: integer("generation_id")
+      .notNull()
+      .references(() => buildingControlSourceGenerations.id),
+    noticeNo: text("notice_no"),
+    noticeOrder: text("notice_order"),
+    bidClassNo: text("bid_clsfc_no"),
+    rbidNo: text("rbid_no"),
+    providerResultIdentity: text("provider_result_identity").notNull(),
+    registeredAt: text("registered_at"),
+    finalAwardDate: text("final_award_date"),
+    rawJson: text("raw_json").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    reason: text("reason").notNull(),
+    pageNo: integer("page_no").notNull(),
+    pageIndex: integer("page_index").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex(
+      "building_control_award_quarantine_generation_identity_unique",
+    ).on(table.generationId, table.providerResultIdentity, table.sourceHash),
+    check(
+      "building_control_award_quarantine_source_hash_check",
+      sql`length(${table.sourceHash}) = 64`,
+    ),
+    check(
+      "building_control_award_quarantine_reason_check",
+      sql`${table.reason} IN ('missing_final_award_date', 'invalid_award_row', 'product_correlation_blocked')`,
+    ),
+    check(
+      "building_control_award_quarantine_page_no_check",
+      sql`${table.pageNo} >= 1`,
+    ),
+    check(
+      "building_control_award_quarantine_page_index_check",
+      sql`${table.pageIndex} >= 0`,
     ),
   ],
 );
