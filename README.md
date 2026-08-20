@@ -23,8 +23,7 @@
 1. `npm run db:init` 으로 Drizzle 스키마와 필수 인덱스 생성
 2. (선택) `npm run contracts:import -- <path-to-csv>` 로 나라장터 계약 인덱스를 SQLite에 적재
 3. (선택) `ENRICHMENT_ENABLED=true` 환경에서 `npm run contracts:enrich -- <record-id>` 로 특정 레코드의 상세 항목을 보강
-4. `npm run excellent-products:import -- <path-to-csv>` 로 조달우수업체 스냅샷 CSV를 적재하거나, `npm run excellent-products:sync` 로 공공 API를 통해 현재 스냅샷 대상 업체를 갱신
-5. Next.js 페이지에서 집계 결과를 조회: `/`(일반 계약 조회), `/competitors`(경쟁사 영업 실적), `/excellent-products`(조달우수업체 현황)
+4. Next.js 페이지에서 집계 결과를 조회: `/`(일반 계약 조회), `/competitors`(경쟁사 영업 실적)
 
 ## 빠른 시작
 
@@ -41,7 +40,6 @@ npm run dev
 
 ```powershell
 npm run contracts:import -- <계약 인덱스 CSV 경로>
-npm run excellent-products:import -- <조달우수제품 지정내역 CSV 경로>
 ```
 
 상세 보강까지 수행하려면 `.env.local` 의 `ENRICHMENT_ENABLED` 를 `true` 로 바꾼 뒤 `DATA_GO_KR_SERVICE_KEY` 를 채우고 보강할 레코드 ID를 지정해 실행한다.
@@ -71,8 +69,6 @@ npm run contracts:enrich -- <record-id>
 | `npm run db:init` | Drizzle 기반 데이터베이스 초기화 |
 | `npm run contracts:import -- <path-to-csv>` | 나라장터 계약 인덱스 CSV를 SQLite에 적재 |
 | `npm run contracts:enrich -- <record-id>` | 공공데이터 상세 보강 (양의 정수 레코드 ID 필수) |
-| `npm run excellent-products:import -- <path-to-csv>` | 조달우수업체 스냅샷 CSV 적재 |
-| `npm run excellent-products:sync` | 공공 API로 현재 스냅샷 대상 조달우수업체 지정 기간을 동기화 |
 | `npm run build:portable` | Tauri 기반 Windows 포터블 실행 파일 생성 |
 | `npm run test:portable` | 포터블 빌드 산출물 검증 스크립트 실행 |
 

@@ -11,9 +11,7 @@
     "test:portable": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/run-portable-tests.ps1",
     "db:init": "tsx scripts/db-init.ts",
     "contracts:import": "tsx scripts/import-contract-index.ts",
-    "contracts:enrich": "tsx scripts/enrich-g2b-details.ts",
-    "excellent-products:import": "tsx scripts/import-excellent-products.ts",
-    "excellent-products:sync": "tsx scripts/sync-excellent-products.ts"
+    "contracts:enrich": "tsx scripts/enrich-g2b-details.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",
