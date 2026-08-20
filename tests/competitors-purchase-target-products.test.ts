@@ -180,6 +180,41 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
     }
   });
 
+  it("serializes item classification requests to avoid upstream rate limits", async () => {
+    let inFlight = 0;
+    let overlapCount = 0;
+    const fetchImpl = vi.fn(async (_rawUrl: string) => {
+      if (inFlight > 0) {
+        overlapCount += 1;
+        return new Response("rate limited", { status: 429 });
+      }
+      inFlight += 1;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return purchaseTargetResponse([{ dtilPrdctClsfcNo: "39121801-01" }]);
+      } finally {
+        inFlight -= 1;
+      }
+    });
+    const rows = Array.from({ length: 8 }, (_, index) => makeRow({
+      id: `row-${index}`,
+      noticeNo: `NT-${index}`,
+      noticeDetailUrl: `https://example.com/notice?bidPbancOrd=00${index}`,
+    }));
+    const result = await enrichCompetitorStandardContractItemCodes(rows, {
+      serviceKey: "K",
+      fetchImpl,
+      sqlite,
+      timeBudgetMs: 5_000,
+    });
+    expect(overlapCount).toBe(0);
+    expect(result.complete).toBe(true);
+    expect(result.unresolvedCount).toBe(0);
+    expect(result.rows.map((row) => row.itemCodes)).toEqual(
+      Array.from({ length: 8 }, () => ["3912180101"]),
+    );
+  });
+
   it("extracts bidPbancOrd from noticeDetailUrl and gets itemCodes", async () => {
     const fetchImpl = vi.fn(async () => purchaseTargetResponse([
       { dtilPrdctClsfcNo: "39121801-01" },
@@ -339,7 +374,7 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
     expect(secondUrl.searchParams.get("untyCntrctNo")).toBe("R26TE16824807");
   },);
 
-  it("keeps empty no-notice contract searches unresolved without negative caching", async () => {
+  it("persists an empty no-notice contract search as a non-target cache result", async () => {
     const row = makeRow({
       id: "row-empty-no-notice",
       noticeNo: undefined,
@@ -368,14 +403,14 @@ describe("enrichCompetitorStandardContractItemCodes", () => {
     );
     const result2 = await enrichCompetitorStandardContractItemCodes(
       [row],
-      { serviceKey: "K", fetchImpl, sqlite },
+      { serviceKey: "K", fetchImpl, sqlite, cacheOnly: true },
     );
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(result1.complete).toBe(false);
-    expect(result1.unresolvedCount).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result1.complete).toBe(true);
+    expect(result1.unresolvedCount).toBe(0);
     expect(result1.rows[0]?.itemCodes).toBeUndefined();
-    expect(result2.complete).toBe(false);
-    expect(result2.unresolvedCount).toBe(1);
+    expect(result2.complete).toBe(true);
+    expect(result2.unresolvedCount).toBe(0);
     expect(result2.rows[0]?.itemCodes).toBeUndefined();
   },);
 });

@@ -5,7 +5,7 @@ const ENDPOINT =
   "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPurchsObjPrdct";
 const CACHE_TABLE = "competitor_purchase_target_cache";
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const MAX_CONCURRENCY = 4;
+const MAX_CONCURRENCY = 1;
 const SEP = "\u0000";
 const DEFAULT_ORDER = "000";
 
@@ -105,9 +105,9 @@ async function fetchG2bContractItemCodes(params: {
   const searchBody = await fetchG2bJson(searchUrl.toString(), fetchImpl, signal);
   const searchItems = extractItems(searchBody);
   if (searchItems.length === 0) {
-    throw new Error(
-      "G2B contract search returned no matching contract; treating as transient upstream replication lag",
-    );
+    // Successful empty goods-contract search is a verified non-target: let
+    // the caller persist an empty cache entry and mark the row resolved so
+    // subsequent enrichments do not re-hit G2B for these no-notice groups.
   }
   const untyIds = new Set<string>();
   for (const raw of searchItems) {

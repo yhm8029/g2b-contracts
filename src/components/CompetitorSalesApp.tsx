@@ -11,7 +11,7 @@ import type {
 
 const FIRST_COMPETITOR_YEAR = 2020;
 const wonFormatter = new Intl.NumberFormat("ko-KR");
-const MAX_OVERVIEW_COMPLETION_PASSES = 3;
+const MAX_OVERVIEW_COMPLETION_MS = 5 * 60 * 1000;
 
 type PeriodUnit = CompetitorSalesPeriodQuery["period"];
 type PeriodSelection =
@@ -182,12 +182,17 @@ export function CompetitorSalesApp() {
           return;
         }
 
-        for (let pass = 0; pass < MAX_OVERVIEW_COMPLETION_PASSES; pass += 1) {
+        const completionStartedAt = Date.now();
+        while (!controller.signal.aborted) {
           const nextOverview = await loadOverview(selection, controller.signal);
           if (sequence !== requestSequence.current) return;
           setOverview(nextOverview);
           setOpenCompanyId(null);
           if (nextOverview.coverage.complete && nextOverview.coverage.fresh) {
+            break;
+          }
+          if (Date.now() - completionStartedAt >= MAX_OVERVIEW_COMPLETION_MS) {
+            setError("자동 분류 시간이 초과됐습니다. 최신 데이터 버튼을 눌러 계속 진행할 수 있습니다.");
             break;
           }
         }
@@ -253,11 +258,16 @@ export function CompetitorSalesApp() {
         setOverview(refreshed);
         setError(null);
         if (!refreshed.coverage.complete || !refreshed.coverage.fresh) {
-          for (let pass = 1; pass < MAX_OVERVIEW_COMPLETION_PASSES; pass++) {
+          const completionStartedAt = Date.now();
+          while (!controller.signal.aborted) {
             const nextOverview = await loadOverview(selection, controller.signal);
             if (sequence !== refreshSequence.current) return;
             setOverview(nextOverview);
             if (nextOverview.coverage.complete && nextOverview.coverage.fresh) break;
+            if (Date.now() - completionStartedAt >= MAX_OVERVIEW_COMPLETION_MS) {
+              setError("자동 분류 시간이 초과됐습니다. 최신 데이터 버튼을 눌러 계속 진행할 수 있습니다.");
+              break;
+            }
           }
         }
       } catch (caught: unknown) {

@@ -37,32 +37,33 @@ describe("competitor sales loading state", () => {
     expect(componentSource).toContain('label={partialCache ? "저장된 결과 기준 계약금액" : "전체 계약금액"}');
   });
 
-  it("continues incomplete overview enrichment in bounded passes", () => {
-    expect(componentSource).toMatch(
-      /const\s+MAX_OVERVIEW_COMPLETION_PASSES\s*=\s*3\b/,
-    );
-    expect(componentSource).toMatch(
-      /for\s*\([^)]*MAX_OVERVIEW_COMPLETION_PASSES[^)]*\)\s*\{[\s\S]*?loadOverview\(selection, controller\.signal\)[\s\S]*?setOverview\(nextOverview\)[\s\S]*?nextOverview\.coverage\.complete\s*&&\s*nextOverview\.coverage\.fresh/,
-    );
+  it("continues initial enrichment until coverage completes or explicit safety stops it", () => {
+    const initialStart = componentSource.indexOf("void (async () => {");
+    const initialEnd = componentSource.indexOf("return () => controller.abort()", initialStart);
+    const initialRegion = componentSource.slice(initialStart, initialEnd);
+
+    expect(componentSource).not.toMatch(/MAX_OVERVIEW_COMPLETION_PASSES/);
+    expect(initialRegion).toMatch(/while\s*\(\s*!controller\.signal\.aborted\s*\)/);
+    expect(initialRegion).toMatch(/loadOverview\(\s*selection\s*,\s*controller\.signal\s*\)/);
+    expect(initialRegion).toMatch(/setOverview\(\s*nextOverview\s*\)/);
+    expect(initialRegion).toMatch(/nextOverview\.coverage\.complete\s*&&\s*nextOverview\.coverage\.fresh/);
+    expect(initialRegion).toMatch(/MAX_OVERVIEW_COMPLETION_MS/);
   });
 
-  it("continues an incomplete manual refresh in bounded passes", () => {
+  it("continues manual refresh until coverage completes or explicit safety stops it", () => {
     const handleRefreshStart = componentSource.indexOf("function handleRefresh()");
     const followingEffectStart = componentSource.indexOf("useEffect", handleRefreshStart);
     const handleRefreshRegion = componentSource.slice(handleRefreshStart, followingEffectStart);
 
     expect(handleRefreshRegion).toMatch(
-      /loadOverview\(selection, controller\.signal, \{ refresh: true \}\)/,
+      /loadOverview\(\s*selection\s*,\s*controller\.signal\s*,\s*\{\s*refresh:\s*true\s*\}\s*\)/,
     );
-    expect(handleRefreshRegion).toMatch(
-      /for\s*\([^)]*MAX_OVERVIEW_COMPLETION_PASSES[^)]*\)/,
-    );
-    expect(handleRefreshRegion).toMatch(
-      /loadOverview\(selection, controller\.signal\)[\s\S]*?setOverview\(nextOverview\)/,
-    );
-    expect(handleRefreshRegion).toMatch(
-      /nextOverview\.coverage\.complete\s*&&\s*nextOverview\.coverage\.fresh/,
-    );
+    expect(componentSource).not.toMatch(/MAX_OVERVIEW_COMPLETION_PASSES/);
+    expect(handleRefreshRegion).toMatch(/while\s*\(\s*!controller\.signal\.aborted\s*\)/);
+    expect(handleRefreshRegion).toMatch(/loadOverview\(\s*selection\s*,\s*controller\.signal\s*\)/);
+    expect(handleRefreshRegion).toMatch(/setOverview\(\s*nextOverview\s*\)/);
+    expect(handleRefreshRegion).toMatch(/nextOverview\.coverage\.complete\s*&&\s*nextOverview\.coverage\.fresh/);
+    expect(handleRefreshRegion).toMatch(/MAX_OVERVIEW_COMPLETION_MS/);
   });
 });
 
