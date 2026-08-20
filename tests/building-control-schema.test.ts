@@ -26,6 +26,8 @@ const REQUIRED_TABLES = [
   "building_control_sync_checkpoint_pages",
   "building_control_award_quarantine",
   "building_control_collector_plans",
+  "building_control_sync_request_sets",
+  "building_control_generation_blocks",
 ] as const;
 
 function tableNames(db: Database.Database): string[] {
@@ -83,8 +85,8 @@ describe("building-control versioned schema", () => {
         "select version, name, checksum from building_control_schema_migrations order by version",
       )
       .all() as Array<{ version: number; name: string; checksum: string }>;
-    expect(migration).toHaveLength(2);
-    expect(migration.map((m) => m.version)).toEqual([1, 2]);
+    expect(migration).toHaveLength(3);
+    expect(migration.map((m) => m.version)).toEqual([1, 2, 3]);
     expect(migration[0]).toMatchObject({
       version: 1,
       name: "building-control-versioned-market-data",
@@ -95,6 +97,11 @@ describe("building-control versioned schema", () => {
       name: "building-control-sync-checkpoints",
     });
     expect(migration[1]?.checksum).toMatch(/^[0-9a-f]{64}$/);
+    expect(migration[2]).toMatchObject({
+      version: 3,
+      name: "building-control-request-set-seals",
+    });
+    expect(migration[2]?.checksum).toMatch(/^[0-9a-f]{64}$/);
 
     expect(
       db
@@ -347,6 +354,7 @@ describe("building-control versioned schema", () => {
       schema.buildingControlCoverage,
       schema.buildingControlManifestSources,
       schema.buildingControlActiveManifest,
+      schema.buildingControlSyncRequestSets,
     ].flatMap((table) =>
       getTableConfig(table).checks.map((check) => check.name),
     );
@@ -364,6 +372,9 @@ describe("building-control versioned schema", () => {
         "building_control_coverage_hash_check",
         "building_control_manifest_sources_source_check",
         "building_control_active_manifest_singleton_check",
+        "building_control_sync_request_sets_source_check",
+        "building_control_sync_request_sets_count_check",
+        "building_control_sync_request_sets_hash_check",
       ]),
     );
   });

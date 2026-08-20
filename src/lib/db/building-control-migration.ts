@@ -5,6 +5,8 @@ const MIGRATION_VERSION = 1;
 const MIGRATION_NAME = "building-control-versioned-market-data";
 const MIGRATION_VERSION_V2 = 2;
 const MIGRATION_NAME_V2 = "building-control-sync-checkpoints";
+const MIGRATION_VERSION_V3 = 3;
+const MIGRATION_NAME_V3 = "building-control-request-set-seals";
 
 const REQUIRED_TABLES = [
   "building_control_schema_migrations",
@@ -28,6 +30,8 @@ const REQUIRED_TABLES = [
   "building_control_sync_checkpoint_pages",
   "building_control_award_quarantine",
   "building_control_collector_plans",
+  "building_control_sync_request_sets",
+  "building_control_generation_blocks",
 ] as const;
 
 const REQUIRED_INDEXES = [
@@ -50,6 +54,7 @@ const REQUIRED_INDEXES = [
   "building_control_sync_checkpoint_pages_checkpoint_cursor_unique",
   "building_control_award_quarantine_generation_identity_unique",
   "building_control_collector_plans_id_unique",
+  "building_control_sync_request_sets_plan_idx",
 ] as const;
 
 const SOURCE_FACT_TABLES = [
@@ -762,13 +767,110 @@ const V2_MIGRATION_CHECKSUM = createHash("sha256")
   .update(V2_TRIGGER_DDL)
   .digest("hex");
 
+const V3_DDL = `
+  CREATE TABLE building_control_sync_request_sets (
+    sync_run_id INTEGER NOT NULL REFERENCES building_control_sync_runs(id),
+    source TEXT NOT NULL CHECK (source IN (
+      'notice-publication', 'award-registration', 'notice-product',
+      'designation-history', 'award-classification'
+    )),
+    collector_plan_id TEXT NOT NULL REFERENCES building_control_collector_plans(plan_id),
+    request_count INTEGER NOT NULL CHECK (request_count >= 1),
+    request_set_hash TEXT NOT NULL CHECK (length(request_set_hash) = 64),
+    sealed_at TEXT NOT NULL,
+    PRIMARY KEY (sync_run_id, source)
+  );
+  CREATE INDEX building_control_sync_request_sets_plan_idx
+    ON building_control_sync_request_sets (collector_plan_id, source);
+  CREATE TABLE building_control_generation_blocks (
+    generation_id INTEGER PRIMARY KEY REFERENCES building_control_source_generations(id),
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+`;
+
+const V3_TRIGGER_DDL = `
+  CREATE TRIGGER building_control_sync_request_sets_update_guard
+  BEFORE UPDATE ON building_control_sync_request_sets
+  BEGIN
+    SELECT RAISE(ABORT, 'immutable sealed request set');
+  END;
+  CREATE TRIGGER building_control_sync_request_sets_delete_guard
+  BEFORE DELETE ON building_control_sync_request_sets
+  BEGIN
+    SELECT RAISE(ABORT, 'immutable sealed request set');
+  END;
+  CREATE TRIGGER building_control_sync_expected_requests_insert_after_seal_guard
+  BEFORE INSERT ON building_control_sync_expected_requests
+  WHEN EXISTS (
+    SELECT 1 FROM building_control_sync_request_sets sealed
+    WHERE sealed.sync_run_id = NEW.sync_run_id
+      AND sealed.source = NEW.source
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'sealed source request set');
+  END;
+  CREATE TRIGGER building_control_sync_checkpoints_completed_update_guard
+  BEFORE UPDATE ON building_control_sync_checkpoints
+  WHEN OLD.state = 'complete'
+  BEGIN
+    SELECT RAISE(ABORT, 'immutable completed checkpoint');
+  END;
+  CREATE TRIGGER building_control_sync_checkpoint_pages_completed_insert_guard
+  BEFORE INSERT ON building_control_sync_checkpoint_pages
+  WHEN EXISTS (
+    SELECT 1 FROM building_control_sync_checkpoints parent
+    WHERE parent.id = NEW.checkpoint_id
+      AND parent.state = 'complete'
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'immutable completed checkpoint page');
+  END;
+  CREATE TRIGGER building_control_sync_checkpoint_pages_completed_delete_guard
+  BEFORE DELETE ON building_control_sync_checkpoint_pages
+  WHEN EXISTS (
+    SELECT 1 FROM building_control_sync_checkpoints parent
+    WHERE parent.id = OLD.checkpoint_id
+      AND parent.state = 'complete'
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'immutable completed checkpoint page');
+  END;
+  CREATE TRIGGER building_control_generation_blocks_update_guard
+  BEFORE UPDATE ON building_control_generation_blocks
+  BEGIN
+    SELECT RAISE(ABORT, 'immutable generation promotion block');
+  END;
+  CREATE TRIGGER building_control_generation_blocks_delete_guard
+  BEFORE DELETE ON building_control_generation_blocks
+  BEGIN
+    SELECT RAISE(ABORT, 'immutable generation promotion block');
+  END;
+`;
+
+const V3_REQUIRED_TRIGGERS = [
+  "building_control_sync_request_sets_update_guard",
+  "building_control_sync_request_sets_delete_guard",
+  "building_control_sync_expected_requests_insert_after_seal_guard",
+  "building_control_sync_checkpoints_completed_update_guard",
+  "building_control_sync_checkpoint_pages_completed_insert_guard",
+  "building_control_sync_checkpoint_pages_completed_delete_guard",
+  "building_control_generation_blocks_update_guard",
+  "building_control_generation_blocks_delete_guard",
+] as const;
+
+const V3_MIGRATION_CHECKSUM = createHash("sha256")
+  .update(V3_DDL)
+  .update(V3_TRIGGER_DDL)
+  .digest("hex");
+
 function normalizeSchemaSql(value: string): string {
   return value.trim().replace(/;\s*$/, "").replace(/\s+/g, " ").toLowerCase();
 }
 
-function expectedTriggerDefinitions(): Map<string, string> {
+function expectedTriggerDefinitions(includeV3 = true): Map<string, string> {
   const definitions = new Map<string, string>();
-  const source = `${FACT_GUARD_DDL}\n${PROVENANCE_TRIGGER_DDL}\n${V2_TRIGGER_DDL}`;
+  const source = `${FACT_GUARD_DDL}\n${PROVENANCE_TRIGGER_DDL}\n${V2_TRIGGER_DDL}${includeV3 ? `\n${V3_TRIGGER_DDL}` : ""}`;
   const pattern = /create\s+trigger\s+([a-z0-9_]+)[\s\S]*?\bend\s*;/gi;
   for (const match of source.matchAll(pattern)) {
     definitions.set(match[1]!, normalizeSchemaSql(match[0]));
@@ -776,7 +878,7 @@ function expectedTriggerDefinitions(): Map<string, string> {
   return definitions;
 }
 
-function expectedSchemaDefinitions(): Map<string, string> {
+function expectedSchemaDefinitions(includeV3 = true): Map<string, string> {
   const definitions = new Map<string, string>();
   const tablePattern = /create\s+table\s+([a-z0-9_]+)\s*\([\s\S]*?\n\s*\);/gi;
   const indexPattern = /create\s+(?:unique\s+)?index\s+([a-z0-9_]+)[\s\S]*?;/gi;
@@ -786,6 +888,11 @@ function expectedSchemaDefinitions(): Map<string, string> {
     }
     for (const match of V2_DDL.matchAll(pattern)) {
       definitions.set(match[1]!, normalizeSchemaSql(match[0]));
+    }
+    if (includeV3) {
+      for (const match of V3_DDL.matchAll(pattern)) {
+        definitions.set(match[1]!, normalizeSchemaSql(match[0]));
+      }
     }
   }
   return definitions;
@@ -825,7 +932,10 @@ function columnNames(db: Database.Database, table: string): Set<string> {
   );
 }
 
-function validateExistingSchema(db: Database.Database): void {
+function validateExistingSchema(
+  db: Database.Database,
+  requireV3 = true,
+): void {
   const ledger = db
     .prepare(
       `
@@ -864,16 +974,56 @@ function validateExistingSchema(db: Database.Database): void {
     );
   }
 
+  if (requireV3) {
+    const ledgerV3 = db
+      .prepare(
+        `
+        select version, name, checksum
+        from building_control_schema_migrations
+        where version = ?
+      `,
+      )
+      .get(MIGRATION_VERSION_V3) as
+      { version: number; name: string; checksum: string } | undefined;
+    if (
+      ledgerV3?.name !== MIGRATION_NAME_V3 ||
+      ledgerV3.checksum !== V3_MIGRATION_CHECKSUM
+    ) {
+      throw new Error(
+        "incompatible schema: building-control v3 migration ledger mismatch",
+      );
+    }
+  }
+
   for (const trigger of V2_REQUIRED_TRIGGERS) {
     if (!triggerExists(db, trigger)) {
       throw new Error(`incompatible schema: missing v2 trigger ${trigger}`);
     }
   }
+  if (requireV3) {
+    for (const trigger of V3_REQUIRED_TRIGGERS) {
+      if (!triggerExists(db, trigger)) {
+        throw new Error(`incompatible schema: missing v3 trigger ${trigger}`);
+      }
+    }
+  }
 
-  const missingTables = REQUIRED_TABLES.filter(
+  const requiredTables = requireV3
+    ? REQUIRED_TABLES
+    : REQUIRED_TABLES.filter(
+        (table) =>
+          table !== "building_control_sync_request_sets" &&
+          table !== "building_control_generation_blocks",
+      );
+  const requiredIndexes = requireV3
+    ? REQUIRED_INDEXES
+    : REQUIRED_INDEXES.filter(
+        (index) => index !== "building_control_sync_request_sets_plan_idx",
+      );
+  const missingTables = requiredTables.filter(
     (table) => !tableExists(db, table),
   );
-  const missingIndexes = REQUIRED_INDEXES.filter(
+  const missingIndexes = requiredIndexes.filter(
     (index) => !indexExists(db, index),
   );
   const missingTriggers = REQUIRED_TRIGGERS.filter(
@@ -888,7 +1038,7 @@ function validateExistingSchema(db: Database.Database): void {
       ].join(", ")}`,
     );
   }
-  const expectedSchema = expectedSchemaDefinitions();
+  const expectedSchema = expectedSchemaDefinitions(requireV3);
   for (const [name, expected] of expectedSchema) {
     const actual = db
       .prepare(
@@ -901,8 +1051,13 @@ function validateExistingSchema(db: Database.Database): void {
       );
     }
   }
-  const expectedTriggers = expectedTriggerDefinitions();
-  for (const trigger of [...REQUIRED_TRIGGERS, ...V2_REQUIRED_TRIGGERS]) {
+  const expectedTriggers = expectedTriggerDefinitions(requireV3);
+  const triggerNames = [
+    ...REQUIRED_TRIGGERS,
+    ...V2_REQUIRED_TRIGGERS,
+    ...(requireV3 ? V3_REQUIRED_TRIGGERS : []),
+  ];
+  for (const trigger of triggerNames) {
     const actual = db
       .prepare(
         "select sql from sqlite_master where type = 'trigger' and name = ?",
@@ -1055,6 +1210,24 @@ function validateExistingSchema(db: Database.Database): void {
   }
 }
 
+function applyV3Migration(db: Database.Database): void {
+  db.transaction(() => {
+    db.exec(V3_DDL);
+    db.exec(V3_TRIGGER_DDL);
+    db.prepare(
+      `
+      insert into building_control_schema_migrations (version, name, checksum, applied_at)
+      values (?, ?, ?, ?)
+      `,
+    ).run(
+      MIGRATION_VERSION_V3,
+      MIGRATION_NAME_V3,
+      V3_MIGRATION_CHECKSUM,
+      new Date().toISOString(),
+    );
+  }).immediate();
+}
+
 export function applyBuildingControlMigration(db: Database.Database): void {
   const existingV2Tables = [
     "building_control_sync_expected_requests",
@@ -1070,6 +1243,12 @@ export function applyBuildingControlMigration(db: Database.Database): void {
         "incompatible schema: partial building-control tables without ledger",
       );
     }
+    if (tableExists(db, "building_control_sync_request_sets")) {
+      validateExistingSchema(db);
+      return;
+    }
+    validateExistingSchema(db, false);
+    applyV3Migration(db);
     validateExistingSchema(db);
     return;
   }
@@ -1129,6 +1308,7 @@ export function applyBuildingControlMigration(db: Database.Database): void {
       V2_MIGRATION_CHECKSUM,
       new Date().toISOString(),
     );
+    applyV3Migration(db);
     validateExistingSchema(db);
     return;
   }
@@ -1160,5 +1340,6 @@ export function applyBuildingControlMigration(db: Database.Database): void {
     V2_MIGRATION_CHECKSUM,
     new Date().toISOString(),
   );
+  applyV3Migration(db);
   validateExistingSchema(db);
 }

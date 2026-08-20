@@ -162,6 +162,8 @@ describe("building_control_sync_checkpoints schema", () => {
           "building_control_sync_checkpoints",
           "building_control_sync_checkpoint_pages",
           "building_control_award_quarantine",
+          "building_control_sync_request_sets",
+          "building_control_generation_blocks",
         ]),
       );
 
@@ -172,13 +174,13 @@ describe("building_control_sync_checkpoints schema", () => {
         .all()
         .map((row) => (row as { version: number }).version);
 
-      expect(migrations).toEqual([1, 2]);
+      expect(migrations).toEqual([1, 2, 3]);
     } finally {
       db.close();
     }
   });
 
-  it("upgrades a v1 database to v2 with new checkpoint and quarantine tables", () => {
+  it("upgrades a v1 database to v3 with checkpoint and request-set tables", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "bc-sync-checkpoints-"));
     tempDirs.push(tempDir);
     const dbPath = join(tempDir, "upgrade.sqlite");
@@ -191,15 +193,17 @@ describe("building_control_sync_checkpoints schema", () => {
         )
         .all()
         .map((row) => (row as { version: number }).version);
-      expect(before).toEqual([1, 2]);
+      expect(before).toEqual([1, 2, 3]);
 
       db.exec(`
+        drop table building_control_generation_blocks;
+        drop table building_control_sync_request_sets;
         drop table building_control_sync_expected_requests;
         drop table building_control_sync_checkpoints;
         drop table building_control_sync_checkpoint_pages;
         drop table building_control_award_quarantine;
         drop table building_control_collector_plans;
-        delete from building_control_schema_migrations where version = 2;
+        delete from building_control_schema_migrations where version in (2, 3);
       `);
 
       const mid = db
@@ -218,7 +222,7 @@ describe("building_control_sync_checkpoints schema", () => {
         )
         .all()
         .map((row) => (row as { version: number }).version);
-      expect(after).toEqual([1, 2]);
+      expect(after).toEqual([1, 2, 3]);
 
       const tableNames = db
         .prepare(
@@ -233,8 +237,64 @@ describe("building_control_sync_checkpoints schema", () => {
           "building_control_sync_checkpoint_pages",
           "building_control_award_quarantine",
           "building_control_collector_plans",
+          "building_control_sync_request_sets",
+          "building_control_generation_blocks",
         ]),
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("upgrades an existing v2 database to v3 atomically", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "bc-sync-checkpoints-"));
+    tempDirs.push(tempDir);
+    const dbPath = join(tempDir, "upgrade-v2.sqlite");
+    const db = new Database(dbPath);
+    try {
+      initializeSqliteSchema(db);
+      db.exec(`
+        drop trigger building_control_sync_request_sets_update_guard;
+        drop trigger building_control_sync_request_sets_delete_guard;
+        drop trigger building_control_sync_expected_requests_insert_after_seal_guard;
+        drop trigger building_control_sync_checkpoints_completed_update_guard;
+        drop trigger building_control_sync_checkpoint_pages_completed_insert_guard;
+        drop trigger building_control_sync_checkpoint_pages_completed_delete_guard;
+        drop trigger building_control_generation_blocks_update_guard;
+        drop trigger building_control_generation_blocks_delete_guard;
+        drop table building_control_generation_blocks;
+        drop table building_control_sync_request_sets;
+        delete from building_control_schema_migrations where version = 3;
+      `);
+      const before = db
+        .prepare(
+          "select version from building_control_schema_migrations order by version",
+        )
+        .all()
+        .map((row) => (row as { version: number }).version);
+      expect(before).toEqual([1, 2]);
+
+      initializeSqliteSchema(db);
+
+      const after = db
+        .prepare(
+          "select version from building_control_schema_migrations order by version",
+        )
+        .all()
+        .map((row) => (row as { version: number }).version);
+      expect(after).toEqual([1, 2, 3]);
+      const v3Tables = db
+        .prepare(
+          `select name from sqlite_master where type = 'table'
+           and name in ('building_control_generation_blocks',
+                        'building_control_sync_request_sets') order by name`,
+        )
+        .all()
+        .map((row) => (row as { name: string }).name);
+      expect(v3Tables).toEqual([
+        "building_control_generation_blocks",
+        "building_control_sync_request_sets",
+      ]);
     } finally {
       db.close();
     }
@@ -248,12 +308,14 @@ describe("building_control_sync_checkpoints schema", () => {
     try {
       initializeSqliteSchema(db);
       db.exec(`
+        drop table building_control_generation_blocks;
+        drop table building_control_sync_request_sets;
         drop table building_control_sync_expected_requests;
         drop table building_control_sync_checkpoints;
         drop table building_control_sync_checkpoint_pages;
         drop table building_control_award_quarantine;
         drop table building_control_collector_plans;
-        delete from building_control_schema_migrations where version = 2;
+        delete from building_control_schema_migrations where version in (2, 3);
       `);
 
       db.exec(`
@@ -284,7 +346,7 @@ describe("building_control_sync_checkpoints schema", () => {
         )
         .all()
         .map((row) => (row as { version: number }).version);
-      expect(recovered).toEqual([1, 2]);
+      expect(recovered).toEqual([1, 2, 3]);
     } finally {
       db.close();
     }
@@ -460,6 +522,76 @@ describe("building_control_sync_checkpoints credential rejection", () => {
     expect(result.nextCursor).toBe(2);
   });
 
+  it("persists detail cursors only for designation-detail requests", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    repository.registerCollectorPlan({
+      planId: "plan-detail-cursor",
+      name: "Designation detail cursor plan",
+      description: "tests detail checkpoint cursor semantics",
+      requestSetHash: sha256("plan-detail-cursor"),
+      createdAt: "2026-08-21T00:00:00.000Z",
+    });
+    repository.registerExpectedRequests(
+      run.runId,
+      ["designation-detail-ok", "designation-detail-wrong"].map(
+        (requestKey) => ({
+          source: "designation-history" as const,
+          role: "designation-detail" as const,
+          requestKey,
+          dependencyRequestKey: null,
+          collectorPlanId: "plan-detail-cursor",
+          canonicalQueryJson: "{}",
+          now: "2026-08-21T00:00:00.000Z",
+        }),
+      ),
+      run.owner,
+      run.fence,
+    );
+    repository.sealExpectedRequestSet(
+      run.runId,
+      "plan-detail-cursor",
+      run.owner,
+      run.fence,
+      "2026-08-21T00:01:00.000Z",
+    );
+
+    const detail = repository.stageCheckpointPage(
+      {
+        source: "designation-history",
+        requestKey: "designation-detail-ok",
+        cursorKind: "detail",
+        cursor: 1,
+        pageSize: 1,
+        totalCount: 1,
+        ...checkpointPayload("designation-detail-ok", 1),
+        now: "2026-08-21T00:02:00.000Z",
+      },
+      run.runId,
+      run.owner,
+      run.fence,
+    );
+    expect(detail.cursorKind).toBe("detail");
+
+    expect(() =>
+      repository.stageCheckpointPage(
+        {
+          source: "designation-history",
+          requestKey: "designation-detail-wrong",
+          cursorKind: "page",
+          cursor: 1,
+          pageSize: 1,
+          totalCount: 1,
+          ...checkpointPayload("designation-detail-wrong", 1),
+          now: "2026-08-21T00:02:00.000Z",
+        },
+        run.runId,
+        run.owner,
+        run.fence,
+      ),
+    ).toThrow(/cursor kind|designation.detail/i);
+  });
+
   it("rejects checkpoint hashes that are not derived from the persisted chunk payload", () => {
     const { repository } = openDb();
     const run = beginRun(repository);
@@ -564,6 +696,81 @@ describe("building_control_sync_checkpoints credential rejection", () => {
 });
 
 describe("building_control_sync_checkpoints snapshot writer guards", () => {
+  it("rejects a snapshot when its persisted request-set seal is tampered", () => {
+    const { db, repository } = openDb();
+    const run = beginRun(repository);
+    const requestKey = "notice-bulk-seal-tamper";
+    registerBulkNoticePlan(repository, run, requestKey, true);
+    const notice = {
+      noticeNo: "20250821997",
+      noticeOrder: "00",
+      noticeName: "Seal evidence notice",
+      publicationDate: "2025-08-21",
+      demandAgencyCode: null,
+      demandAgencyName: "Agency",
+      noticeUrl: null,
+      status: "active",
+      targetParentProductCode: null,
+      targetDetailProductCode: null,
+      rawJson: "{}",
+      sourceHash: sha256("seal-evidence-notice"),
+    };
+    const identityHash = computeSourceIdentityHash("notice-publication", [
+      notice.noticeNo,
+      notice.noticeOrder,
+    ]);
+    const factJson = JSON.stringify({
+      schemaVersion: 1,
+      facts: [notice],
+      identityHashes: [identityHash],
+      sourceHashes: { [identityHash]: notice.sourceHash },
+    });
+    repository.stageCheckpointPage(
+      {
+        source: "notice-publication",
+        requestKey,
+        cursor: 1,
+        pageSize: 1,
+        totalCount: 1,
+        factJson,
+        identityHash: sha256(identityHash),
+        sourceHash: sha256(factJson),
+        now: "2026-08-21T00:02:00.000Z",
+      },
+      run.runId,
+      run.owner,
+      run.fence,
+    );
+    repository.completeCheckpoint(
+      run.runId,
+      "notice-publication",
+      requestKey,
+      run.owner,
+      run.fence,
+      "2026-08-21T00:03:00.000Z",
+    );
+    db.exec("drop trigger building_control_sync_request_sets_update_guard");
+    db.prepare(
+      "update building_control_sync_request_sets set request_set_hash = ? where sync_run_id = ?",
+    ).run(sha256("tampered-request-set"), run.runId);
+
+    expect(() =>
+      repository.stageNoticeSnapshot(
+        {
+          runId: run.runId,
+          source: "notice-publication",
+          dateFrom: "2025-01-01",
+          dateTo: "2026-08-21",
+          expectedCount: 1,
+          pageCount: 1,
+          notices: [notice],
+        },
+        run.owner,
+        run.fence,
+      ),
+    ).toThrow(/request.*set|seal|hash/i);
+  });
+
   it("rejects a notice snapshot whose facts differ from its completed checkpoint payload", () => {
     const { repository } = openDb();
     const run = beginRun(repository);

@@ -212,6 +212,80 @@ describe("building_control_sync_expected_requests", () => {
     expect(after.every((row) => row.sealedAt !== null)).toBe(true);
   });
 
+  it("rejects late requests for a source after its request set is sealed", () => {
+    const { db, repository } = openDb();
+    const run = beginRun(repository);
+    repository.registerCollectorPlan({
+      planId: "plan-a",
+      name: "Plan A",
+      description: "test plan",
+      requestSetHash: sha256("plan-a-hash"),
+      createdAt: "2026-08-21T00:00:00.000Z",
+    });
+    repository.registerExpectedRequests(
+      run.runId,
+      [
+        {
+          source: "notice-publication",
+          role: "notice-publication-bulk",
+          requestKey: "notice-initial",
+          dependencyRequestKey: null,
+          collectorPlanId: "plan-a",
+          canonicalQueryJson: "{}",
+          now: "2026-08-21T00:00:00.000Z",
+        },
+      ],
+      run.owner,
+      run.fence,
+    );
+    repository.sealExpectedRequestSet(
+      run.runId,
+      "plan-a",
+      run.owner,
+      run.fence,
+      "2026-08-21T00:01:00.000Z",
+    );
+    const seal = db
+      .prepare(
+        `
+        select source, collector_plan_id, request_count, request_set_hash
+        from building_control_sync_request_sets
+        where sync_run_id = ?
+        `,
+      )
+      .get(run.runId) as {
+      source: string;
+      collector_plan_id: string;
+      request_count: number;
+      request_set_hash: string;
+    };
+    expect(seal).toMatchObject({
+      source: "notice-publication",
+      collector_plan_id: "plan-a",
+      request_count: 1,
+    });
+    expect(seal.request_set_hash).toMatch(/^[0-9a-f]{64}$/);
+
+    expect(() =>
+      repository.registerExpectedRequests(
+        run.runId,
+        [
+          {
+            source: "notice-publication",
+            role: "notice-publication-bulk",
+            requestKey: "notice-late",
+            dependencyRequestKey: null,
+            collectorPlanId: "plan-a",
+            canonicalQueryJson: "{}",
+            now: "2026-08-21T00:02:00.000Z",
+          },
+        ],
+        run.owner,
+        run.fence,
+      ),
+    ).toThrow(/sealed|closed/i);
+  });
+
   it("rejects duplicate request keys within a single register call", () => {
     const { repository } = openDb();
     const run = beginRun(repository);
@@ -671,19 +745,48 @@ describe("building_control_award_quarantine staging", () => {
       rawJson: "{}",
       sourceHash: productRawHash,
     };
+    const productFact2 = {
+      ...productFact,
+      bidClassNo: "3912180101",
+      providerRowIdentity: "row-2",
+      sourceHash: sha256("product-raw-2"),
+    };
+    const productFact3 = {
+      ...productFact,
+      bidClassNo: "39121802",
+      providerRowIdentity: "row-3",
+      exactMatch: 0 as const,
+      sourceHash: sha256("product-raw-3"),
+    };
     const productIdentityHash = computeSourceIdentityHash("notice-product", [
       productFact.noticeNo,
       productFact.noticeOrder,
       productFact.bidClassNo,
       productFact.providerRowIdentity,
     ]);
+    const productIdentityHash2 = computeSourceIdentityHash("notice-product", [
+      productFact2.noticeNo,
+      productFact2.noticeOrder,
+      productFact2.bidClassNo,
+      productFact2.providerRowIdentity,
+    ]);
+    const productIdentityHash3 = computeSourceIdentityHash("notice-product", [
+      productFact3.noticeNo,
+      productFact3.noticeOrder,
+      productFact3.bidClassNo,
+      productFact3.providerRowIdentity,
+    ]);
     completeCheckpointForFacts(
       repository,
       run,
       "notice-product",
       "notice-product-v2",
-      [productFact],
-      { [productIdentityHash]: productRawHash },
+      [productFact, productFact2, productFact3],
+      {
+        [productIdentityHash]: productRawHash,
+        [productIdentityHash2]: productFact2.sourceHash,
+        [productIdentityHash3]: productFact3.sourceHash,
+      },
     );
     const productIds = repository.stageNoticeProductSnapshot(
       {
@@ -691,9 +794,9 @@ describe("building_control_award_quarantine staging", () => {
         source: "notice-product",
         dateFrom: "2025-01-01",
         dateTo: "2026-08-21",
-        expectedCount: 1,
+        expectedCount: 3,
         pageCount: 1,
-        products: [productFact],
+        products: [productFact, productFact2, productFact3],
       },
       run.owner,
       run.fence,
@@ -726,6 +829,16 @@ describe("building_control_award_quarantine staging", () => {
         rawJson: "{}",
       },
     };
+    const awardFact2 = {
+      ...awardFact,
+      bidClassNo: "3912180101",
+      providerResultIdentity: "20250821001|00|3912180101|001",
+      sourceHash: sha256("award-raw-2"),
+      canonicalAward: {
+        ...awardFact.canonicalAward,
+        finalResultIdentity: "20250821001|00|3912180101|001",
+      },
+    };
     const quarantineFact = {
       noticeNo: "20250821001",
       noticeOrder: "00",
@@ -747,6 +860,15 @@ describe("building_control_award_quarantine staging", () => {
       awardFact.bidClassNo,
       awardFact.rbidNo,
     ]);
+    const awardIdentityHash2 = computeSourceIdentityHash(
+      "award-registration",
+      [
+        awardFact2.noticeNo,
+        awardFact2.noticeOrder,
+        awardFact2.bidClassNo,
+        awardFact2.rbidNo,
+      ],
+    );
     const quarantineIdentityHash = computeSourceIdentityHash(
       "award-registration",
       [
@@ -761,9 +883,10 @@ describe("building_control_award_quarantine staging", () => {
       run,
       "award-registration",
       "award-bulk-v2",
-      [awardFact, quarantineFact],
+      [awardFact, awardFact2, quarantineFact],
       {
         [awardIdentityHash]: awardFact.sourceHash,
+        [awardIdentityHash2]: awardFact2.sourceHash,
         [quarantineIdentityHash]: quarantineFact.sourceHash,
       },
     );
@@ -773,9 +896,9 @@ describe("building_control_award_quarantine staging", () => {
         source: "award-registration",
         dateFrom: "2025-01-01",
         dateTo: "2026-08-21",
-        expectedCount: 1,
+        expectedCount: 2,
         pageCount: 1,
-        awards: [awardFact],
+        awards: [awardFact, awardFact2],
         quarantines: [quarantineFact],
       },
       run.owner,
@@ -785,6 +908,12 @@ describe("building_control_award_quarantine staging", () => {
     expect(result.canonicalAwardIdsByNotice["20250821001|00"]).toBeTypeOf(
       "number",
     );
+    const canonicalCount = db
+      .prepare(
+        "select count(*) as count from building_control_awards where generation_id = ?",
+      )
+      .get(result.generationId) as { count: number };
+    expect(canonicalCount.count).toBe(1);
 
     const designationFact = {
       certificateNo: "CR-1",
@@ -856,7 +985,40 @@ describe("building_control_award_quarantine staging", () => {
     expect(quarantinedRows.count).toBe(1);
   });
 
-  it("flags promotionBlocked when an award lacks an exact target product", () => {
+  it.each([
+    [
+      "preserves a resolved award proven non-target without blocking promotion",
+      "39121801",
+      false,
+      "none",
+    ],
+    [
+      "blocks a resolved award when product correlation is missing",
+      "39121802",
+      true,
+      "none",
+    ],
+    [
+      "blocks an exact-target award quarantine",
+      "39121801",
+      true,
+      "exact-target",
+    ],
+    [
+      "blocks an award quarantine with an invalid registration timestamp",
+      "39121801",
+      true,
+      "invalid-registration",
+    ],
+    [
+      "blocks an award quarantine with an unrecoverable identity",
+      "39121801",
+      true,
+      "unrecoverable-identity",
+    ],
+  ] as const)(
+    "%s",
+    (_name, productBidClassNo, expectedBlocked, quarantineKind) => {
     const { repository } = openDb();
     const run = beginRun(repository);
     repository.registerCollectorPlan({
@@ -951,11 +1113,11 @@ describe("building_control_award_quarantine staging", () => {
     const productFact = {
       noticeNo: "20250821001",
       noticeOrder: "00",
-      bidClassNo: "39121801",
+      bidClassNo: productBidClassNo,
       parentProductCode: "39121801",
       detailProductCode: null,
       providerRowIdentity: "row-1",
-      exactMatch: 0 as const,
+      exactMatch: (quarantineKind === "exact-target" ? 1 : 0) as 0 | 1,
       rawJson: "{}",
       sourceHash: productRawHash,
     };
@@ -1015,13 +1177,70 @@ describe("building_control_award_quarantine staging", () => {
       awardFact.bidClassNo,
       awardFact.rbidNo,
     ]);
+    const quarantineFact =
+      quarantineKind === "none"
+        ? null
+        : {
+            noticeNo:
+              quarantineKind === "unrecoverable-identity"
+                ? null
+                : awardFact.noticeNo,
+            noticeOrder:
+              quarantineKind === "unrecoverable-identity"
+                ? null
+                : awardFact.noticeOrder,
+            bidClassNo:
+              quarantineKind === "unrecoverable-identity"
+                ? null
+                : awardFact.bidClassNo,
+            rbidNo:
+              quarantineKind === "unrecoverable-identity" ? null : "002",
+            providerResultIdentity: `quarantine-${quarantineKind}`,
+            registeredAt:
+              quarantineKind === "invalid-registration"
+                ? null
+                : "2025-08-22 09:30:00",
+            finalAwardDate: null,
+            rawJson: "{}",
+            sourceHash: sha256(`quarantine-${quarantineKind}`),
+            reason: "missing_final_award_date" as const,
+            pageNo: 1,
+            pageIndex: 1,
+            now: "2026-08-21T00:05:00.000Z",
+          };
+    const quarantineIdentityHash = quarantineFact
+      ? computeSourceIdentityHash(
+          "award-registration",
+          quarantineKind === "unrecoverable-identity"
+            ? [
+                `quarantine:${quarantineFact.pageNo}:${quarantineFact.pageIndex}:${quarantineFact.sourceHash}`,
+                "",
+                "",
+                "",
+              ]
+            : [
+                quarantineFact.noticeNo!,
+                quarantineFact.noticeOrder!,
+                quarantineFact.bidClassNo!,
+                quarantineFact.rbidNo!,
+              ],
+        )
+      : null;
+    const awardSourceIdentityHashes = quarantineIdentityHash
+      ? [awardIdentityHash, quarantineIdentityHash]
+      : [awardIdentityHash];
     completeCheckpointForFacts(
       repository,
       run,
       "award-registration",
       "award-bulk-blocked",
-      [awardFact],
-      { [awardIdentityHash]: awardFact.sourceHash },
+      quarantineFact ? [awardFact, quarantineFact] : [awardFact],
+      quarantineFact && quarantineIdentityHash
+        ? {
+            [awardIdentityHash]: awardFact.sourceHash,
+            [quarantineIdentityHash]: quarantineFact.sourceHash,
+          }
+        : { [awardIdentityHash]: awardFact.sourceHash },
     );
     const result = repository.stageAwardSnapshot(
       {
@@ -1032,18 +1251,98 @@ describe("building_control_award_quarantine staging", () => {
         expectedCount: 1,
         pageCount: 1,
         awards: [awardFact],
-        quarantines: [],
+        quarantines: quarantineFact ? [quarantineFact] : [],
       },
       run.owner,
       run.fence,
     );
-    expect(result.promotionBlocked).toBe(true);
-    expect(result.promotionBlockReasons.length).toBeGreaterThan(0);
-  });
+    expect(result.promotionBlocked).toBe(expectedBlocked);
+    const complete = () =>
+      repository.completeGeneration(
+        {
+          runId: run.runId,
+          source: "award-registration",
+          dateFrom: "2025-01-01",
+          dateTo: "2026-08-21",
+          sourceIdentityHashes: awardSourceIdentityHashes,
+          generationId: result.generationId,
+          completedAt: "2026-08-21T00:04:00.000Z",
+        },
+        run.owner,
+        run.fence,
+      );
+    if (expectedBlocked) {
+      expect(complete).toThrow(/promotion|correlation|blocked/i);
+    } else {
+      expect(result.promotionBlockReasons).toEqual([]);
+      expect(complete()).toBeTypeOf("number");
+    }
+    },
+  );
 });
 
 describe("building_control_sync_checkpoints clearCompletedCheckpoints", () => {
-  it("removes only completed checkpoints and their pages", () => {
+  it("rejects generic non-classification generation staging that bypasses checkpoint facts", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    repository.registerCollectorPlan({
+      planId: "plan-a",
+      name: "Plan A",
+      description: "test plan",
+      requestSetHash: sha256("plan-a-hash"),
+      createdAt: "2026-08-21T00:00:00.000Z",
+    });
+    repository.registerExpectedRequests(
+      run.runId,
+      [
+        {
+          source: "notice-publication",
+          role: "notice-publication-bulk",
+          requestKey: "notice-bulk-bypass",
+          dependencyRequestKey: null,
+          collectorPlanId: "plan-a",
+          canonicalQueryJson: "{}",
+          now: "2026-08-21T00:00:00.000Z",
+        },
+      ],
+      run.owner,
+      run.fence,
+    );
+    repository.sealExpectedRequestSet(
+      run.runId,
+      "plan-a",
+      run.owner,
+      run.fence,
+      "2026-08-21T00:01:00.000Z",
+    );
+    completeSinglePageCheckpoint(
+      repository,
+      run,
+      "notice-publication",
+      "notice-bulk-bypass",
+    );
+
+    expect(() =>
+      repository.stageGeneration(
+        {
+          runId: run.runId,
+          source: "notice-publication",
+          dateFrom: "2025-01-01",
+          dateTo: "2026-08-21",
+          sourceIdentityHashes: [],
+          expectedCount: 0,
+          observedCount: 0,
+          pageCount: 0,
+          identitySetHash: sha256(""),
+          sourceHashes: {},
+        },
+        run.owner,
+        run.fence,
+      ),
+    ).toThrow(/typed|checkpoint|snapshot|classification/i);
+  });
+
+  it("preserves completed checkpoints and their pages", () => {
     const { db, repository } = openDb();
     const run = beginRun(repository);
     repository.registerCollectorPlan({
@@ -1099,12 +1398,154 @@ describe("building_control_sync_checkpoints clearCompletedCheckpoints", () => {
       "2026-08-21T00:03:00.000Z",
     );
     repository.clearCompletedCheckpoints(run.runId, run.owner, run.fence);
-    const remaining = db
+    const remainingCheckpoints = db
       .prepare(
         `select count(*) as count from building_control_sync_checkpoints`,
       )
       .get() as { count: number };
-    expect(remaining.count).toBe(0);
+    expect(remainingCheckpoints.count).toBe(1);
+    const remainingPages = db
+      .prepare(
+        `select count(*) as count from building_control_sync_checkpoint_pages`,
+      )
+      .get() as { count: number };
+    expect(remainingPages.count).toBe(1);
+  });
+
+  it("freezes completed checkpoint metadata and pages", () => {
+    const { db, repository } = openDb();
+    const run = beginRun(repository);
+    repository.registerCollectorPlan({
+      planId: "plan-a",
+      name: "Plan A",
+      description: "test plan",
+      requestSetHash: sha256("plan-a-hash"),
+      createdAt: "2026-08-21T00:00:00.000Z",
+    });
+    repository.registerExpectedRequests(
+      run.runId,
+      [
+        {
+          source: "notice-publication",
+          role: "notice-publication-bulk",
+          requestKey: "notice-bulk",
+          dependencyRequestKey: null,
+          collectorPlanId: "plan-a",
+          canonicalQueryJson: "{}",
+          now: "2026-08-21T00:00:00.000Z",
+        },
+      ],
+      run.owner,
+      run.fence,
+    );
+    repository.sealExpectedRequestSet(
+      run.runId,
+      "plan-a",
+      run.owner,
+      run.fence,
+      "2026-08-21T00:01:00.000Z",
+    );
+    completeSinglePageCheckpoint(
+      repository,
+      run,
+      "notice-publication",
+      "notice-bulk",
+    );
+    const checkpoint = db
+      .prepare(
+        `select id from building_control_sync_checkpoints
+         where sync_run_id = ? and source = ? and request_key = ?`,
+      )
+      .get(run.runId, "notice-publication", "notice-bulk") as { id: number };
+
+    expect(() =>
+      db
+        .prepare(
+          `update building_control_sync_checkpoints set updated_at = ? where id = ?`,
+        )
+        .run("2026-08-21T00:05:00.000Z", checkpoint.id),
+    ).toThrow(/immutable|checkpoint/i);
+
+    const latePage = checkpointPayload("late-page", 1);
+    expect(() =>
+      db
+        .prepare(
+          `insert into building_control_sync_checkpoint_pages
+             (checkpoint_id, cursor, page_size, total_count, fact_json,
+              identity_hash, source_hash, created_at)
+           values (?, 2, 10, 1, ?, ?, ?, ?)`,
+        )
+        .run(
+          checkpoint.id,
+          latePage.factJson,
+          latePage.identityHash,
+          latePage.sourceHash,
+          "2026-08-21T00:05:00.000Z",
+        ),
+    ).toThrow(/immutable|checkpoint/i);
+    expect(() =>
+      db
+        .prepare(
+          `delete from building_control_sync_checkpoint_pages where checkpoint_id = ?`,
+        )
+        .run(checkpoint.id),
+    ).toThrow(/immutable|checkpoint/i);
+  });
+
+  it("rejects tampered completed checkpoint evidence when reading a resume seed", () => {
+    const { db, repository } = openDb();
+    const run = beginRun(repository);
+    repository.registerCollectorPlan({
+      planId: "plan-a",
+      name: "Plan A",
+      description: "test plan",
+      requestSetHash: sha256("plan-a-hash"),
+      createdAt: "2026-08-21T00:00:00.000Z",
+    });
+    repository.registerExpectedRequests(
+      run.runId,
+      [
+        {
+          source: "notice-publication",
+          role: "notice-publication-bulk",
+          requestKey: "notice-bulk",
+          dependencyRequestKey: null,
+          collectorPlanId: "plan-a",
+          canonicalQueryJson: "{}",
+          now: "2026-08-21T00:00:00.000Z",
+        },
+      ],
+      run.owner,
+      run.fence,
+    );
+    repository.sealExpectedRequestSet(
+      run.runId,
+      "plan-a",
+      run.owner,
+      run.fence,
+      "2026-08-21T00:01:00.000Z",
+    );
+    completeSinglePageCheckpoint(
+      repository,
+      run,
+      "notice-publication",
+      "notice-bulk",
+    );
+    db.exec(
+      `drop trigger building_control_sync_checkpoints_completed_update_guard`,
+    );
+    db.prepare(
+      `update building_control_sync_checkpoints set next_cursor = 99
+       where sync_run_id = ? and source = ? and request_key = ?`,
+    ).run(run.runId, "notice-publication", "notice-bulk");
+
+    expect(() =>
+      repository.readResumeSeed(
+        run.runId,
+        "notice-publication",
+        "notice-bulk",
+      ),
+    ).toThrow(/checkpoint|evidence|cursor/i);
   });
 });
 

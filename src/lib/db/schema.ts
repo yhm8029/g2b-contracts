@@ -929,6 +929,52 @@ export const buildingControlSyncExpectedRequests = sqliteTable(
   ],
 );
 
+export const buildingControlSyncRequestSets = sqliteTable(
+  "building_control_sync_request_sets",
+  {
+    syncRunId: integer("sync_run_id")
+      .notNull()
+      .references(() => buildingControlSyncRuns.id),
+    source: text("source").notNull(),
+    collectorPlanId: text("collector_plan_id")
+      .notNull()
+      .references(() => buildingControlCollectorPlans.planId),
+    requestCount: integer("request_count").notNull(),
+    requestSetHash: text("request_set_hash").notNull(),
+    sealedAt: text("sealed_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.syncRunId, table.source] }),
+    index("building_control_sync_request_sets_plan_idx").on(
+      table.collectorPlanId,
+      table.source,
+    ),
+    check(
+      "building_control_sync_request_sets_source_check",
+      sql`${table.source} IN ('notice-publication', 'award-registration', 'notice-product', 'designation-history', 'award-classification')`,
+    ),
+    check(
+      "building_control_sync_request_sets_count_check",
+      sql`${table.requestCount} >= 1`,
+    ),
+    check(
+      "building_control_sync_request_sets_hash_check",
+      sql`length(${table.requestSetHash}) = 64`,
+    ),
+  ],
+);
+
+export const buildingControlGenerationBlocks = sqliteTable(
+  "building_control_generation_blocks",
+  {
+    generationId: integer("generation_id")
+      .primaryKey()
+      .references(() => buildingControlSourceGenerations.id),
+    reason: text("reason").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+);
+
 export const buildingControlSyncCheckpoints = sqliteTable(
   "building_control_sync_checkpoints",
   {

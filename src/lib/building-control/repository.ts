@@ -82,6 +82,7 @@ export type ResumeValidatedChunk = {
 export type CheckpointPageInput = {
   source: CoverageSource;
   requestKey: string;
+  cursorKind?: "page" | "detail";
   cursor: number;
   pageSize: number;
   totalCount: number;
@@ -889,6 +890,11 @@ export function createBuildingControlRepository(
     owner: string,
     fence: number,
   ) => {
+    if (input.source !== "award-classification") {
+      throw new Error(
+        "non-classification generations require a typed checkpoint-bound snapshot writer",
+      );
+    }
     requireIso(input.dateFrom, "dateFrom");
     requireIso(input.dateTo, "dateTo");
     if (Date.parse(input.dateFrom) > Date.parse(input.dateTo)) {
@@ -1105,6 +1111,24 @@ export function createBuildingControlRepository(
     const awardGeneration = generations["award-registration"];
     const designationGeneration = generations["designation-history"];
     const classificationGeneration = generations["award-classification"];
+
+    const blockedGeneration = db
+      .prepare(
+        `select generation_id, reason from building_control_generation_blocks
+         where generation_id in (?, ?, ?, ?, ?) limit 1`,
+      )
+      .get(
+        noticeGeneration,
+        productGeneration,
+        awardGeneration,
+        designationGeneration,
+        classificationGeneration,
+      ) as { generation_id: number; reason: string } | undefined;
+    if (blockedGeneration) {
+      throw new Error(
+        `manifest provenance blocked: ${blockedGeneration.reason}`,
+      );
+    }
 
     const invalidProductNotices = scalar(
       `select count(*) as count
@@ -1326,6 +1350,9 @@ export function createBuildingControlRepository(
           "staged generation identity does not match promotion input",
         );
       }
+      if (input.source !== "award-classification") {
+        assertSealedRequestSetForSource(input.runId, input.source);
+      }
       const declaredSourceHashes = JSON.parse(
         String(generation.source_hashes_json),
       ) as Record<string, string>;
@@ -1361,6 +1388,17 @@ export function createBuildingControlRepository(
         if (duplicateFinalGrain) {
           throw new Error(
             "duplicate final award grain in successful-result generation",
+          );
+        }
+        const promotionBlockRow = db
+          .prepare(
+            `select reason from building_control_generation_blocks
+             where generation_id = ?`,
+          )
+          .get(input.generationId) as { reason: string } | undefined;
+        if (promotionBlockRow) {
+          throw new Error(
+            `award generation promotion blocked: ${promotionBlockRow.reason}`,
           );
         }
       }
@@ -1840,6 +1878,56 @@ export function createBuildingControlRepository(
         .get(seoulDate),
     );
 
+  const buildRequestSetSeal = (
+    runId: number,
+    source: CoverageSource,
+    collectorPlanId: string,
+  ): { requestCount: number; requestSetHash: string } => {
+    const rows = db
+      .prepare(
+        `
+        select er.source, er.role, er.request_key,
+               dependency.request_key as dependency_request_key,
+               er.collector_plan_id, er.canonical_query_json
+        from building_control_sync_expected_requests er
+        left join building_control_sync_expected_requests dependency
+          on dependency.id = er.dependency_request_id
+        where er.sync_run_id = ? and er.source = ?
+        order by er.request_key
+        `,
+      )
+      .all(runId, source) as Array<{
+      source: string;
+      role: string;
+      request_key: string;
+      dependency_request_key: string | null;
+      collector_plan_id: string;
+      canonical_query_json: string;
+    }>;
+    if (rows.length === 0) {
+      throw new Error(`no expected requests found for source ${source}`);
+    }
+    if (rows.some((row) => row.collector_plan_id !== collectorPlanId)) {
+      throw new Error(
+        `source ${source} contains requests from multiple collector plans`,
+      );
+    }
+    const stableRows = rows.map((row) => ({
+      source: row.source,
+      role: row.role,
+      requestKey: row.request_key,
+      dependencyRequestKey: row.dependency_request_key,
+      collectorPlanId: row.collector_plan_id,
+      canonicalQueryJson: row.canonical_query_json,
+    }));
+    return {
+      requestCount: rows.length,
+      requestSetHash: createHash("sha256")
+        .update(JSON.stringify(stableRows))
+        .digest("hex"),
+    };
+  };
+
   const registerCollectorPlan = (plan: CollectorPlanRecord): void => {
     requireIso(plan.createdAt, "createdAt");
     requireHash(plan.requestSetHash, "requestSetHash");
@@ -1847,6 +1935,35 @@ export function createBuildingControlRepository(
       throw new Error("collector plan id is required");
     }
     db.transaction(() => {
+      const existing = db
+        .prepare(
+          `
+          select name, description, request_set_hash, created_at
+          from building_control_collector_plans
+          where plan_id = ?
+          `,
+        )
+        .get(plan.planId) as
+        | {
+            name: string;
+            description: string;
+            request_set_hash: string;
+            created_at: string;
+          }
+        | undefined;
+      if (existing) {
+        if (
+          existing.name === plan.name &&
+          existing.description === plan.description &&
+          existing.request_set_hash === plan.requestSetHash &&
+          existing.created_at === plan.createdAt
+        ) {
+          return;
+        }
+        throw new Error(
+          "collector plan id already exists with different definition",
+        );
+      }
       db.prepare(
         `
         insert into building_control_collector_plans
@@ -1892,6 +2009,20 @@ export function createBuildingControlRepository(
             );
           }
           seenKeys.add(input.requestKey);
+          const sealedForSource = db
+            .prepare(
+              `
+              select count(*) as count
+              from building_control_sync_expected_requests
+              where sync_run_id = ? and source = ? and state = 'sealed'
+              `,
+            )
+            .get(runId, input.source) as { count: number };
+          if (sealedForSource.count > 0) {
+            throw new Error(
+              `cannot register request for sealed source: ${input.source}`,
+            );
+          }
           let dependencyId: number | null = null;
           if (input.dependencyRequestKey !== null) {
             const depRow = db
@@ -1952,7 +2083,7 @@ export function createBuildingControlRepository(
         const rows = db
           .prepare(
             `
-            select id, dependency_request_id, state, sealed_at
+            select id, source, dependency_request_id, state, sealed_at
             from building_control_sync_expected_requests
             where sync_run_id = ? and collector_plan_id = ?
             order by id
@@ -1960,6 +2091,7 @@ export function createBuildingControlRepository(
           )
           .all(runId, collectorPlanId) as Array<{
           id: number;
+          source: CoverageSource;
           dependency_request_id: number | null;
           state: string;
           sealed_at: string | null;
@@ -1988,6 +2120,54 @@ export function createBuildingControlRepository(
             `,
           ).run(now, row.id);
           sealedSoFar.add(row.id);
+        }
+        const sources = [...new Set(rows.map((row) => row.source))];
+        for (const source of sources) {
+          const descriptor = buildRequestSetSeal(
+            runId,
+            source,
+            collectorPlanId,
+          );
+          const existing = db
+            .prepare(
+              `
+              select collector_plan_id, request_count, request_set_hash
+              from building_control_sync_request_sets
+              where sync_run_id = ? and source = ?
+              `,
+            )
+            .get(runId, source) as
+            | {
+                collector_plan_id: string;
+                request_count: number;
+                request_set_hash: string;
+              }
+            | undefined;
+          if (existing) {
+            if (
+              existing.collector_plan_id !== collectorPlanId ||
+              existing.request_count !== descriptor.requestCount ||
+              existing.request_set_hash !== descriptor.requestSetHash
+            ) {
+              throw new Error(`sealed request set changed for source ${source}`);
+            }
+            continue;
+          }
+          db.prepare(
+            `
+            insert into building_control_sync_request_sets
+              (sync_run_id, source, collector_plan_id, request_count,
+               request_set_hash, sealed_at)
+            values (?, ?, ?, ?, ?, ?)
+            `,
+          ).run(
+            runId,
+            source,
+            collectorPlanId,
+            descriptor.requestCount,
+            descriptor.requestSetHash,
+            now,
+          );
         }
         return { sealed: [...sealedSoFar].sort((a, b) => a - b) };
       })
@@ -2038,16 +2218,20 @@ export function createBuildingControlRepository(
     runId: number,
     source: CoverageSource,
     requestKey: string,
-  ): { id: number; state: "pending" | "sealed" } => {
+  ): {
+    id: number;
+    state: "pending" | "sealed";
+    role: ExpectedRequestRole;
+  } => {
     const row = db
       .prepare(
         `
-        select id, state from building_control_sync_expected_requests
+        select id, state, role from building_control_sync_expected_requests
         where sync_run_id = ? and source = ? and request_key = ?
         `,
       )
       .get(runId, source, requestKey) as
-      { id: number; state: string } | undefined;
+      { id: number; state: string; role: string } | undefined;
     if (!row) {
       throw new Error(
         `no expected request for source ${source} key ${requestKey}`,
@@ -2056,7 +2240,11 @@ export function createBuildingControlRepository(
     if (row.state !== "sealed") {
       throw new Error(`expected request ${row.id} is not sealed yet`);
     }
-    return { id: row.id, state: "sealed" };
+    return {
+      id: row.id,
+      state: "sealed",
+      role: row.role as ExpectedRequestRole,
+    };
   };
 
   const readCheckpoint = (
@@ -2133,6 +2321,128 @@ export function createBuildingControlRepository(
     }));
   };
 
+  const validateCheckpointEvidence = (
+    checkpoint: SyncCheckpoint,
+  ): readonly ResumeValidatedChunk[] => {
+    const chunks = [...readCheckpointChunks(
+      checkpoint.runId,
+      checkpoint.source,
+      checkpoint.requestKey,
+    )].sort((left, right) => left.cursor - right.cursor);
+    if (checkpoint.totalCount === null) {
+      if (
+        checkpoint.state === "collecting" &&
+        checkpoint.observedCount === 0 &&
+        checkpoint.nextCursor === 1 &&
+        chunks.length === 0
+      ) {
+        return [];
+      }
+      throw new Error(
+        "checkpoint page coverage is incomplete: totalCount is missing",
+      );
+    }
+    const totalCount = checkpoint.totalCount;
+    const expectedPageCount = Math.max(
+      1,
+      Math.ceil(totalCount / checkpoint.pageSize),
+    );
+    if (
+      checkpoint.state === "complete" &&
+      chunks.length !== expectedPageCount
+    ) {
+      throw new Error(
+        `checkpoint page coverage is incomplete: expected ${expectedPageCount} pages, got ${chunks.length}`,
+      );
+    }
+    if (chunks.length !== checkpoint.observedCount) {
+      throw new Error(
+        `checkpoint page coverage is incomplete: observedCount ${checkpoint.observedCount} does not match chunk count ${chunks.length}`,
+      );
+    }
+    if (checkpoint.nextCursor !== chunks.length + 1) {
+      throw new Error(
+        `checkpoint page coverage is incomplete: nextCursor ${checkpoint.nextCursor} does not advance to ${chunks.length + 1}`,
+      );
+    }
+    const seenIdentityHashes = new Map<string, string>();
+    const validated: ResumeValidatedChunk[] = [];
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index];
+      const expectedCursor = index + 1;
+      if (chunk.cursor !== expectedCursor) {
+        throw new Error(
+          `checkpoint page coverage is incomplete: expected cursor ${expectedCursor}, got ${chunk.cursor}`,
+        );
+      }
+      if (chunk.cursor > expectedPageCount) {
+        throw new Error(
+          `checkpoint page coverage is incomplete: cursor ${chunk.cursor} exceeds expected page count ${expectedPageCount}`,
+        );
+      }
+      if (chunk.pageSize !== checkpoint.pageSize) {
+        throw new Error(
+          `checkpoint page ${chunk.cursor} has inconsistent pageSize: expected ${checkpoint.pageSize}, got ${chunk.pageSize}`,
+        );
+      }
+      if (chunk.totalCount !== totalCount) {
+        throw new Error(
+          `checkpoint page ${chunk.cursor} has inconsistent totalCount: expected ${totalCount}, got ${chunk.totalCount}`,
+        );
+      }
+      const payload = parseCheckpointFactPayload(chunk.factJson);
+      const expectedFactCount =
+        chunk.cursor === expectedPageCount
+          ? Math.max(
+              0,
+              totalCount - (expectedPageCount - 1) * checkpoint.pageSize,
+            )
+          : checkpoint.pageSize;
+      if (payload.facts.length !== expectedFactCount) {
+        throw new Error(
+          `checkpoint payload must contain exactly ${expectedFactCount} facts for page ${chunk.cursor}`,
+        );
+      }
+      if (
+        chunk.identityHash !==
+        computeIdentitySetHash([...payload.identityHashes])
+      ) {
+        throw new Error(
+          `checkpoint page ${chunk.cursor} identity hash does not match payload`,
+        );
+      }
+      const recomputedSourceHash = createHash("sha256")
+        .update(chunk.factJson)
+        .digest("hex");
+      if (chunk.sourceHash !== recomputedSourceHash) {
+        throw new Error(
+          `checkpoint page ${chunk.cursor} source hash does not match payload`,
+        );
+      }
+      for (const identityHash of payload.identityHashes) {
+        const mappedSourceHash = payload.sourceHashes[identityHash];
+        if (seenIdentityHashes.has(identityHash)) {
+          throw new Error(
+            `checkpoint page coverage is incomplete: duplicate identity hash ${identityHash}`,
+          );
+        }
+        seenIdentityHashes.set(identityHash, mappedSourceHash);
+      }
+      validated.push({
+        source: checkpoint.source,
+        requestKey: checkpoint.requestKey,
+        cursorKind: checkpoint.cursorKind,
+        cursor: chunk.cursor,
+        pageSize: chunk.pageSize,
+        totalCount: chunk.totalCount,
+        facts: payload.facts,
+        identityHashes: payload.identityHashes,
+        sourceHashes: payload.sourceHashes,
+      });
+    }
+    return validated;
+  };
+
   const stageCheckpointPage = (
     input: CheckpointPageInput,
     runId: number,
@@ -2204,6 +2514,14 @@ export function createBuildingControlRepository(
           input.source,
           input.requestKey,
         );
+        const requiredCursorKind =
+          expected.role === "designation-detail" ? "detail" : "page";
+        const cursorKind = input.cursorKind ?? requiredCursorKind;
+        if (cursorKind !== requiredCursorKind) {
+          throw new Error(
+            `checkpoint cursor kind must be ${requiredCursorKind} for ${expected.role}`,
+          );
+        }
         const existing = readCheckpoint(runId, input.source, input.requestKey);
         if (existing) {
           if (existing.state === "complete") {
@@ -2214,6 +2532,11 @@ export function createBuildingControlRepository(
           if (existing.nextCursor !== input.cursor) {
             throw new Error(
               `checkpoint cursor drift: expected ${existing.nextCursor}, got ${input.cursor}`,
+            );
+          }
+          if (existing.cursorKind !== cursorKind) {
+            throw new Error(
+              `checkpoint cursor kind drift: expected ${existing.cursorKind}, got ${cursorKind}`,
             );
           }
           if (
@@ -2268,7 +2591,7 @@ export function createBuildingControlRepository(
               (sync_run_id, source, expected_request_id, request_key,
                cursor_kind, next_cursor, page_size, total_count,
                observed_count, state, updated_at, created_at)
-            values (?, ?, ?, ?, 'page', 2, ?, ?, 1, 'collecting', ?, ?)
+            values (?, ?, ?, ?, ?, 2, ?, ?, 1, 'collecting', ?, ?)
             `,
           )
           .run(
@@ -2276,6 +2599,7 @@ export function createBuildingControlRepository(
             input.source,
             expected.id,
             input.requestKey,
+            cursorKind,
             input.pageSize,
             input.totalCount,
             input.now,
@@ -2324,45 +2648,7 @@ export function createBuildingControlRepository(
         if (!checkpoint) {
           throw new Error("checkpoint not found for completion");
         }
-        const totalCount = checkpoint.totalCount;
-        if (totalCount === null) {
-          throw new Error(
-            "checkpoint page coverage is incomplete: totalCount is missing",
-          );
-        }
-        const expectedPageCount = Math.max(
-          1,
-          Math.ceil(totalCount / checkpoint.pageSize),
-        );
-        const chunks = readCheckpointChunks(runId, source, requestKey);
-        if (chunks.length !== expectedPageCount) {
-          throw new Error(
-            `checkpoint page coverage is incomplete: expected ${expectedPageCount} pages, got ${chunks.length}`,
-          );
-        }
-        for (let cursor = 1; cursor <= expectedPageCount; cursor += 1) {
-          const chunk = chunks[cursor - 1];
-          if (!chunk || chunk.cursor !== cursor) {
-            throw new Error(
-              `checkpoint page coverage is incomplete: missing page ${cursor}`,
-            );
-          }
-          if (chunk.pageSize !== checkpoint.pageSize) {
-            throw new Error(
-              `checkpoint page ${cursor} has inconsistent pageSize: expected ${checkpoint.pageSize}, got ${chunk.pageSize}`,
-            );
-          }
-          if (chunk.totalCount !== totalCount) {
-            throw new Error(
-              `checkpoint page ${cursor} has inconsistent totalCount: expected ${totalCount}, got ${chunk.totalCount}`,
-            );
-          }
-        }
-        if (checkpoint.nextCursor !== expectedPageCount + 1) {
-          throw new Error(
-            `checkpoint page coverage is incomplete: nextCursor ${checkpoint.nextCursor} does not advance past final page ${expectedPageCount}`,
-          );
-        }
+        validateCheckpointEvidence(checkpoint);
         db.prepare(
           `
           update building_control_sync_checkpoints
@@ -2374,6 +2660,7 @@ export function createBuildingControlRepository(
         if (!refreshed) {
           throw new Error("checkpoint disappeared after completion");
         }
+        validateCheckpointEvidence(refreshed);
         return refreshed;
       })
       .immediate();
@@ -2528,20 +2815,7 @@ export function createBuildingControlRepository(
       .transaction(() => {
         requireLease(owner, fence);
         requireRun(runId, owner, fence);
-        const completed = db
-          .prepare(
-            `select id from building_control_sync_checkpoints
-             where sync_run_id = ? and state = 'complete'`,
-          )
-          .all(runId) as Array<{ id: number }>;
-        for (const { id } of completed) {
-          db.prepare(
-            `delete from building_control_sync_checkpoint_pages where checkpoint_id = ?`,
-          ).run(id);
-          db.prepare(
-            `delete from building_control_sync_checkpoints where id = ?`,
-          ).run(id);
-        }
+        // Completed checkpoint evidence must be preserved; no deletes performed.
       })
       .immediate();
 
@@ -2552,21 +2826,7 @@ export function createBuildingControlRepository(
   ): ResumeSeed | null => {
     const checkpoint = readCheckpoint(runId, source, requestKey);
     if (!checkpoint) return null;
-    const rawChunks = readCheckpointChunks(runId, source, requestKey);
-    const persistedChunks: ResumeValidatedChunk[] = rawChunks.map((chunk) => {
-      const payload = parseCheckpointFactPayload(chunk.factJson);
-      return {
-        source: checkpoint.source,
-        requestKey: checkpoint.requestKey,
-        cursorKind: checkpoint.cursorKind,
-        cursor: chunk.cursor,
-        pageSize: chunk.pageSize,
-        totalCount: chunk.totalCount,
-        facts: payload.facts,
-        identityHashes: payload.identityHashes,
-        sourceHashes: payload.sourceHashes,
-      };
-    });
+    const persistedChunks = validateCheckpointEvidence(checkpoint);
     const collectedIdentities = persistedChunks.flatMap(
       (chunk) => chunk.identityHashes,
     );
@@ -2601,6 +2861,39 @@ export function createBuildingControlRepository(
     if (total.count === 0) {
       throw new Error(
         `snapshot cannot be staged: no expected request registered for ${source}`,
+      );
+    }
+    const seal = db
+      .prepare(
+        `
+        select collector_plan_id, request_count, request_set_hash
+        from building_control_sync_request_sets
+        where sync_run_id = ? and source = ?
+        `,
+      )
+      .get(runId, source) as
+      | {
+          collector_plan_id: string;
+          request_count: number;
+          request_set_hash: string;
+        }
+      | undefined;
+    if (!seal) {
+      throw new Error(
+        `snapshot cannot be staged: request set is not sealed for ${source}`,
+      );
+    }
+    const computedSeal = buildRequestSetSeal(
+      runId,
+      source,
+      seal.collector_plan_id,
+    );
+    if (
+      seal.request_count !== computedSeal.requestCount ||
+      seal.request_set_hash !== computedSeal.requestSetHash
+    ) {
+      throw new Error(
+        `snapshot cannot be staged: request set seal mismatch for ${source}`,
       );
     }
     const unsealed = db
@@ -2670,6 +2963,15 @@ export function createBuildingControlRepository(
         );
       }
     }
+    for (const row of checkpointRows) {
+      const checkpoint = readCheckpoint(runId, source, row.request_key);
+      if (!checkpoint) {
+        throw new Error(
+          `snapshot cannot be staged: checkpoint for request ${row.request_key} on ${source} is missing`,
+        );
+      }
+      validateCheckpointEvidence(checkpoint);
+    }
   };
 
   const readCompletedCheckpointEvidence = (
@@ -2700,11 +3002,10 @@ export function createBuildingControlRepository(
             " is not complete",
         );
       }
-      const chunks = readCheckpointChunks(runId, source, request.requestKey);
+      const chunks = validateCheckpointEvidence(checkpoint);
       for (const chunk of chunks) {
-        const payload = parseCheckpointFactPayload(chunk.factJson);
-        facts.push(...payload.facts);
-        for (const identityHash of payload.identityHashes) {
+        facts.push(...chunk.facts);
+        for (const identityHash of chunk.identityHashes) {
           if (seenIdentityHashes.has(identityHash)) {
             throw new Error(
               "snapshot cannot be staged: duplicate checkpoint identity hash " +
@@ -2715,7 +3016,7 @@ export function createBuildingControlRepository(
           }
           seenIdentityHashes.add(identityHash);
           identityHashes.push(identityHash);
-          sourceHashes[identityHash] = payload.sourceHashes[identityHash];
+          sourceHashes[identityHash] = chunk.sourceHashes[identityHash];
         }
         pageCount += 1;
       }
@@ -3053,6 +3354,11 @@ export function createBuildingControlRepository(
         const canonicalAwardIdsByNotice: Record<string, number> = {};
         const canonicalRevisionIdsByNotice: Record<string, number> = {};
         const idsBySourceIdentity: Record<string, number> = {};
+        const addPromotionBlockedReason = (reason: string) => {
+          if (!promotionBlockedReasons.includes(reason)) {
+            promotionBlockedReasons.push(reason);
+          }
+        };
         const awardSeed = input.awards.map((award) => {
           const identity = `${award.noticeNo}|${award.noticeOrder}|${award.bidClassNo}|${award.rbidNo}`;
           if (seenIdentity.has(identity)) {
@@ -3092,6 +3398,12 @@ export function createBuildingControlRepository(
           const hasRecoverableIdentity = recoverableParts.every(
             (part) => typeof part === "string" && part.trim().length > 0,
           );
+          if (hasRecoverableIdentity) {
+            noticeIdByKey.set(
+              `${quarantine.noticeNo}|${quarantine.noticeOrder}`,
+              0,
+            );
+          }
           const identityParts = hasRecoverableIdentity
             ? (recoverableParts as string[])
             : [
@@ -3185,6 +3497,58 @@ export function createBuildingControlRepository(
           });
           productByNotice.set(noticeKey, list);
         }
+        for (const quarantine of input.quarantines) {
+          const recoverableParts = [
+            quarantine.noticeNo,
+            quarantine.noticeOrder,
+            quarantine.bidClassNo,
+            quarantine.rbidNo,
+          ];
+          const hasRecoverableIdentity = recoverableParts.every(
+            (part) => typeof part === "string" && part.trim().length > 0,
+          );
+          if (quarantine.reason === "product_correlation_blocked") {
+            addPromotionBlockedReason(
+              `award quarantine promotion blocked: ${quarantine.providerResultIdentity}`,
+            );
+          }
+          if (!hasRecoverableIdentity) {
+            addPromotionBlockedReason(
+              `award quarantine identity is unrecoverable: ${quarantine.providerResultIdentity}`,
+            );
+            continue;
+          }
+          const registeredAt = quarantine.registeredAt;
+          if (
+            typeof registeredAt !== "string" ||
+            !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(
+              registeredAt,
+            ) ||
+            registeredAt.slice(0, 10) < input.dateFrom ||
+            registeredAt.slice(0, 10) > input.dateTo
+          ) {
+            addPromotionBlockedReason(
+              `award quarantine registration timestamp is incomplete: ${quarantine.providerResultIdentity}`,
+            );
+          }
+          const noticeKey = `${quarantine.noticeNo}|${quarantine.noticeOrder}`;
+          const noticeId = noticeIdByKey.get(noticeKey);
+          const products =
+            noticeId === undefined || noticeId === 0
+              ? undefined
+              : productByNotice.get(
+                  `${noticeId}|${quarantine.bidClassNo}`,
+                );
+          if (!products || products.length === 0) {
+            addPromotionBlockedReason(
+              `award quarantine product correlation is missing: ${noticeKey}|${quarantine.bidClassNo}`,
+            );
+          } else if (products.some((product) => product.exactMatch === 1)) {
+            addPromotionBlockedReason(
+              `exact target award is quarantined: ${noticeKey}|${quarantine.bidClassNo}|${quarantine.rbidNo}`,
+            );
+          }
+        }
         const observationIdentityHashes = [
           ...observationIdentityToHash.keys(),
         ].sort();
@@ -3238,9 +3602,13 @@ export function createBuildingControlRepository(
              raw_json, source_hash, reason, page_no, page_index, created_at)
           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        const validCanonicalNoticeBids = new Map<
+        const exactCandidatesByNotice = new Map<
           string,
-          { bidClsfcNo: string; rbidNo: string }
+          Array<{
+            award: (typeof awardSeed)[number];
+            revisionId: number;
+            noticeId: number;
+          }>
         >();
         for (const award of awardSeed) {
           const noticeId = noticeIdByKey.get(
@@ -3256,15 +3624,10 @@ export function createBuildingControlRepository(
           );
           if (!products || products.length === 0) {
             promotionBlockedReasons.push(
-              `award has no matching target product: ${award.noticeNo}|${award.noticeOrder}|${award.bidClassNo}`,
+              `award product correlation is missing: ${award.noticeNo}|${award.noticeOrder}|${award.bidClassNo}`,
             );
           }
           const exact = products?.some((p) => p.exactMatch === 1) ?? false;
-          if (!exact) {
-            promotionBlockedReasons.push(
-              `award lacks an exact target product: ${award.noticeNo}|${award.noticeOrder}|${award.bidClassNo}`,
-            );
-          }
           const revisionId = Number(
             insertRevision.run(
               generationId,
@@ -3285,30 +3648,51 @@ export function createBuildingControlRepository(
             `${award.noticeNo}|${award.noticeOrder}|${award.bidClassNo}|${award.rbidNo}`
           ] = revisionId;
           if (exact) {
-            const canonicalId = Number(
-              insertCanonical.run(
-                generationId,
-                noticeId,
-                revisionId,
-                award.canonicalAward.finalAwardDate,
-                award.canonicalAward.winnerBizNo,
-                award.canonicalAward.winnerName,
-                award.canonicalAward.awardAmount,
-                award.canonicalAward.awardRate,
-                award.canonicalAward.finalResultIdentity,
-                award.canonicalAward.rawJson,
-              ).lastInsertRowid,
-            );
             const noticeKey = `${award.noticeNo}|${award.noticeOrder}`;
-            if (!canonicalAwardIdsByNotice[noticeKey]) {
-              canonicalAwardIdsByNotice[noticeKey] = canonicalId;
-              canonicalRevisionIdsByNotice[noticeKey] = revisionId;
-            }
-            validCanonicalNoticeBids.set(noticeKey, {
-              bidClsfcNo: award.bidClassNo,
-              rbidNo: award.rbidNo,
-            });
+            const candidates = exactCandidatesByNotice.get(noticeKey) ?? [];
+            candidates.push({ award, revisionId, noticeId });
+            exactCandidatesByNotice.set(noticeKey, candidates);
           }
+        }
+        for (const [noticeKey, candidates] of exactCandidatesByNotice) {
+          const sorted = [...candidates].sort((left, right) =>
+            left.award.bidClassNo.localeCompare(right.award.bidClassNo) ||
+            left.award.rbidNo.localeCompare(right.award.rbidNo) ||
+            left.award.providerResultIdentity.localeCompare(
+              right.award.providerResultIdentity,
+            ),
+          );
+          const first = sorted[0]!;
+          const conflict = sorted.some(
+            ({ award }) =>
+              award.winnerBizNo !== first.award.winnerBizNo ||
+              award.finalAwardDate !== first.award.finalAwardDate ||
+              award.canonicalAward.winnerBizNo !== award.winnerBizNo ||
+              award.canonicalAward.finalAwardDate !== award.finalAwardDate,
+          );
+          if (conflict) {
+            promotionBlockedReasons.push(
+              `conflicting exact target lot awards: ${noticeKey}`,
+            );
+            continue;
+          }
+          const award = first.award;
+          const canonicalId = Number(
+            insertCanonical.run(
+              generationId,
+              first.noticeId,
+              first.revisionId,
+              award.canonicalAward.finalAwardDate,
+              award.canonicalAward.winnerBizNo,
+              award.canonicalAward.winnerName,
+              award.canonicalAward.awardAmount,
+              award.canonicalAward.awardRate,
+              award.canonicalAward.finalResultIdentity,
+              award.canonicalAward.rawJson,
+            ).lastInsertRowid,
+          );
+          canonicalAwardIdsByNotice[noticeKey] = canonicalId;
+          canonicalRevisionIdsByNotice[noticeKey] = first.revisionId;
         }
         for (const quarantine of input.quarantines) {
           insertQuarantine.run(
@@ -3326,6 +3710,17 @@ export function createBuildingControlRepository(
             quarantine.pageNo,
             quarantine.pageIndex,
             quarantine.now,
+          );
+        }
+        if (promotionBlockedReasons.length > 0) {
+          db.prepare(
+            `insert into building_control_generation_blocks
+               (generation_id, reason, created_at)
+             values (?, ?, ?)`,
+          ).run(
+            generationId,
+            promotionBlockedReasons.join("\n"),
+            new Date().toISOString(),
           );
         }
         return {

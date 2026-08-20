@@ -9,6 +9,7 @@ import {
   computeSourceIdentityHash,
   type BuildingControlRepository,
   type CoverageSource,
+  type StagedGeneration,
 } from "@/lib/building-control/repository";
 import { initializeSqliteSchema } from "@/lib/db/init";
 
@@ -21,6 +22,10 @@ const SOURCES: CoverageSource[] = [
 ];
 
 const paths: string[] = [];
+const repositoryDatabases = new WeakMap<
+  BuildingControlRepository,
+  Database.Database
+>();
 
 afterEach(() => {
   for (const path of paths.splice(0)) {
@@ -39,11 +44,15 @@ function openFilePair() {
   const second = new Database(file);
   second.pragma("foreign_keys = ON");
   second.pragma("busy_timeout = 5000");
+  const firstRepository = createBuildingControlRepository(first);
+  const secondRepository = createBuildingControlRepository(second);
+  repositoryDatabases.set(firstRepository, first);
+  repositoryDatabases.set(secondRepository, second);
   return {
     first,
     second,
-    firstRepository: createBuildingControlRepository(first),
-    secondRepository: createBuildingControlRepository(second),
+    firstRepository,
+    secondRepository,
   };
 }
 
@@ -57,6 +66,110 @@ function identitySetHash(hashes: string[]): string {
 
 function hash(seed: string): string {
   return sha256(seed);
+}
+
+function stageRawGeneration(
+  repository: BuildingControlRepository,
+  input: StagedGeneration,
+  _owner: string,
+  _fence: number,
+): number {
+  const db = repositoryDatabases.get(repository);
+  if (!db) throw new Error("test repository database is missing");
+  const result = db
+    .prepare(
+      `insert into building_control_source_generations
+         (sync_run_id, source, state, date_from, date_to, expected_count,
+          observed_count, page_count, identity_set_hash, source_hashes_json,
+          created_at)
+       values (?, ?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.runId,
+      input.source,
+      input.dateFrom,
+      input.dateTo,
+      input.expectedCount,
+      input.observedCount,
+      input.pageCount,
+      input.identitySetHash,
+      JSON.stringify(input.sourceHashes),
+      "2026-08-21T00:00:00.000Z",
+    );
+  return Number(result.lastInsertRowid);
+}
+
+function seedRequestSeals(
+  repository: BuildingControlRepository,
+  run: { owner: string; fence: number; runId: number },
+  now: string,
+) {
+  repository.registerCollectorPlan({
+    planId: "repository-test-plan",
+    name: "Repository test plan",
+    description: "provider request seal fixture",
+    requestSetHash: sha256("repository-test-plan"),
+    createdAt: "2026-08-21T00:00:00.000Z",
+  });
+  const requests = [
+    ["notice-publication", "notice-publication-bulk"],
+    ["award-registration", "award-registration-bulk"],
+    ["notice-product", "notice-identity-lookup"],
+    ["designation-history", "designation-list-all"],
+  ] as const;
+  repository.registerExpectedRequests(
+    run.runId,
+    requests.map(([source, role]) => ({
+      source,
+      role,
+      requestKey: `repository-test-${source}`,
+      dependencyRequestKey: null,
+      collectorPlanId: "repository-test-plan",
+      canonicalQueryJson: "{}",
+      now,
+    })),
+    run.owner,
+    run.fence,
+  );
+  repository.sealExpectedRequestSet(
+    run.runId,
+    "repository-test-plan",
+    run.owner,
+    run.fence,
+    now,
+  );
+  for (const [source] of requests) {
+    const factJson = JSON.stringify({
+      schemaVersion: 1,
+      facts: [],
+      identityHashes: [],
+      sourceHashes: {},
+    });
+    repository.stageCheckpointPage(
+      {
+        source,
+        requestKey: `repository-test-${source}`,
+        cursor: 1,
+        pageSize: 1,
+        totalCount: 0,
+        factJson,
+        identityHash: sha256(""),
+        sourceHash: sha256(factJson),
+        now,
+      },
+      run.runId,
+      run.owner,
+      run.fence,
+    );
+    repository.completeCheckpoint(
+      run.runId,
+      source,
+      `repository-test-${source}`,
+      run.owner,
+      run.fence,
+      now,
+    );
+  }
 }
 
 function beginRun(
@@ -76,7 +189,9 @@ function beginRun(
     owner,
     fence!,
   );
-  return { owner, fence: fence!, runId };
+  const run = { owner, fence: fence!, runId };
+  seedRequestSeals(repository, run, now);
+  return run;
 }
 
 function stageAndComplete(
@@ -86,22 +201,22 @@ function stageAndComplete(
   seed = source,
 ) {
   const identities: string[] = [];
-  const generationId = repository.stageGeneration(
-    {
-      runId: run.runId,
-      source,
-      dateFrom: "2025-01-01",
-      dateTo: "2026-08-21",
-      sourceIdentityHashes: identities,
-      expectedCount: 0,
-      observedCount: 0,
-      pageCount: 0,
-      identitySetHash: identitySetHash(identities),
-      sourceHashes: {},
-    },
-    run.owner,
-    run.fence,
-  );
+  const input: StagedGeneration = {
+    runId: run.runId,
+    source,
+    dateFrom: "2025-01-01",
+    dateTo: "2026-08-21",
+    sourceIdentityHashes: identities,
+    expectedCount: 0,
+    observedCount: 0,
+    pageCount: 0,
+    identitySetHash: identitySetHash(identities),
+    sourceHashes: {},
+  };
+  const generationId =
+    source === "award-classification"
+      ? repository.stageGeneration(input, run.owner, run.fence)
+      : stageRawGeneration(repository, input, run.owner, run.fence);
   const coverageId = repository.completeGeneration(
     {
       runId: run.runId,
@@ -184,7 +299,7 @@ describe("building-control repository", () => {
       firstRepository.stageGeneration(
         {
           runId: run.runId,
-          source: "notice-publication",
+          source: "award-classification",
           dateFrom: "2025-01-01",
           dateTo: "2026-08-21",
           sourceIdentityHashes: identities,
@@ -199,7 +314,8 @@ describe("building-control repository", () => {
       ),
     ).toThrow(/count|cardinality/i);
 
-    const generationId = firstRepository.stageGeneration(
+    const generationId = stageRawGeneration(
+      firstRepository,
       {
         runId: run.runId,
         source: "notice-publication",
@@ -245,7 +361,8 @@ describe("building-control repository", () => {
       "00",
     ]);
     const rawHash = hash("notice-raw");
-    const generationId = firstRepository.stageGeneration(
+    const generationId = stageRawGeneration(
+      firstRepository,
       {
         runId: run.runId,
         source: "notice-publication",
@@ -346,7 +463,8 @@ describe("building-control repository", () => {
     const run = beginRun(firstRepository);
     const forgedIdentity = hash("forged-provider-identity");
     const rawHash = hash("provider-row");
-    const generationId = firstRepository.stageGeneration(
+    const generationId = stageRawGeneration(
+      firstRepository,
       {
         runId: run.runId,
         source: "notice-publication",
@@ -400,7 +518,8 @@ describe("building-control repository", () => {
       "00",
     ]);
     const noticeHash = hash("duplicate-grain-notice");
-    const noticeGeneration = firstRepository.stageGeneration(
+    const noticeGeneration = stageRawGeneration(
+      firstRepository,
       {
         runId: run.runId,
         source: "notice-publication",
@@ -460,7 +579,8 @@ describe("building-control repository", () => {
       hash("duplicate-grain-000"),
       hash("duplicate-grain-001"),
     ];
-    const awardGeneration = firstRepository.stageGeneration(
+    const awardGeneration = stageRawGeneration(
+      firstRepository,
       {
         runId: run.runId,
         source: "award-registration",
@@ -536,7 +656,8 @@ describe("building-control repository", () => {
       run.fence,
     );
     const stagingIdentities = [hash("staging")];
-    const stagingId = firstRepository.stageGeneration(
+    const stagingId = stageRawGeneration(
+      firstRepository,
       {
         runId: stagingRunId,
         source: "notice-publication",
@@ -570,7 +691,7 @@ describe("building-control repository", () => {
       firstRepository.stageGeneration(
         {
           runId: run.runId,
-          source: "notice-publication",
+          source: "award-classification",
           dateFrom: "2024-12-31",
           dateTo: "2026-08-21",
           sourceIdentityHashes: [],
@@ -609,7 +730,8 @@ describe("building-control repository", () => {
       "00",
     ]);
     const noticeRawHash = hash("notice-raw");
-    const noticeGeneration = firstRepository.stageGeneration(
+    const noticeGeneration = stageRawGeneration(
+      firstRepository,
       {
         runId: run.runId,
         source: "notice-publication",
@@ -665,7 +787,8 @@ describe("building-control repository", () => {
         "001",
       ]),
     ];
-    const generation = firstRepository.stageGeneration(
+    const generation = stageRawGeneration(
+      firstRepository,
       {
         runId: run.runId,
         source: "award-registration",
@@ -876,6 +999,11 @@ describe("building-control repository", () => {
       run.fence,
     );
     const next = { ...run, runId: nextRun };
+    seedRequestSeals(
+      firstRepository,
+      next,
+      "2026-08-21T00:02:30.000Z",
+    );
     const nextManifestId = firstRepository.createManifest(
       completeAllSources(firstRepository, next),
       next.owner,
@@ -914,6 +1042,11 @@ describe("building-control repository", () => {
       fence,
     );
     const run = { owner: "startup", fence, runId };
+    seedRequestSeals(
+      firstRepository,
+      run,
+      "2026-08-21T00:00:00.000Z",
+    );
     const manifestId = firstRepository.createManifest(
       completeAllSources(firstRepository, run),
       run.owner,
@@ -943,6 +1076,11 @@ describe("building-control repository", () => {
       run.fence,
     );
     const secondRun = { ...run, runId: secondRunId };
+    seedRequestSeals(
+      firstRepository,
+      secondRun,
+      "2026-08-21T00:02:30.000Z",
+    );
     const secondManifestId = firstRepository.createManifest(
       completeAllSources(firstRepository, secondRun),
       secondRun.owner,
@@ -995,7 +1133,8 @@ describe("building-control repository", () => {
     ]);
     const noticeRawHash = hash("conflict-notice-raw");
 
-    const noticeGenerationId = repository.stageGeneration(
+    const noticeGenerationId = stageRawGeneration(
+      repository,
       {
         runId: run.runId,
         source: "notice-publication",
@@ -1056,7 +1195,8 @@ describe("building-control repository", () => {
     ]);
     const lot02RawHash = hash("conflict-lot-02-raw");
 
-    const productGenerationId = repository.stageGeneration(
+    const productGenerationId = stageRawGeneration(
+      repository,
       {
         runId: run.runId,
         source: "notice-product",
@@ -1136,7 +1276,8 @@ describe("building-control repository", () => {
       awardRawHashes.push(lot02AwardRawHash);
     }
 
-    const awardGenerationId = repository.stageGeneration(
+    const awardGenerationId = stageRawGeneration(
+      repository,
       {
         runId: run.runId,
         source: "award-registration",
