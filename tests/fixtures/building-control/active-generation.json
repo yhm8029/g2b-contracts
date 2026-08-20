@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "generationId": "a17c50fdb1e8b042aac2b50fa3a82eea6d0a4c0ad25a6756e4fc159f153962b4",
+  "fixtureSchemaVersion": 1,
+  "fixtureHashes": {
+    "award-page.json": "da01d95424e3f756b93575eedc8c08574f85df5b16f569c4dbf3cc639b2fbc59",
+    "designation-detail.json": "246bcb88f3165f52b9a777c9ab249daa0c00038f349cdcfed05f4aa7f1544a69",
+    "designation-list-expired.json": "f3a2a01949589fce3a9d0e4c22499967d023b316a8275c8538b593734fa2bfd4",
+    "designation-list-extended.json": "207c809a48c98788894094c3ea26e258131a407d6d3ed28ef956e27cf2765559",
+    "designation-list-valid.json": "59801b467bd72351d59fb32baf200952de11071c12edd6e50abf63f498ee25e8",
+    "notice-page.json": "9ce35001cb84dd59ca4aefaf92c8ee28fd9ced65dde6bfe07b5869e548e00da4",
+    "purchase-target-page.json": "817a5ae6cca7d6d5102f17c9f213e23f5b247eb45a7206752ae69c68867b13dc"
+  }
+}

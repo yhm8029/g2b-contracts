@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "status": "만료",
+  "totalCount": 1,
+  "items": [
+    {
+      "applVldYn": "만료",
+      "bzmnRegNo": "9000000005",
+      "dsgnBgngYmd": "2020-04-01",
+      "dsgnEndYmd": "2026-03-31",
+      "dsgnExtsYmd": "2026-03-31",
+      "entNm": "Company 005",
+      "etpmDsgnCrfcNo": "2020006",
+      "etpmDsgnDmndNo": "REQUEST-002",
+      "dsgnDmndChgOrd": "002",
+      "etpsSqno": "1",
+      "itemCfnm": "건물군 에너지 수요관리 기능을 구비한 자동제어장치"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "designationRequest": {
+    "etpmDsgnCrfcNo": "2026058",
+    "etpmDsgnDmndNo": "REQUEST-001",
+    "dsgnDmndChgOrd": "002",
+    "etpsSqno": "1"
+  },
+  "classifications": [
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    },
+    {
+      "itemUntyNo": "3912180101"
+    }
+  ]
+}

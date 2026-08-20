@@ -11,3 +11,4 @@ data/*.sqlite-wal
 dist/
 src-tauri/target/
 src-tauri/gen/
+data/api-contract/

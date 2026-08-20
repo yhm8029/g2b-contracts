@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "page": {
+    "pageNo": 1,
+    "numOfRows": 2,
+    "totalCount": 2,
+    "items": [
+      {
+        "bidNtceNo": "R26BK01687554",
+        "bidNtceOrd": "000",
+        "bidClsfcNo": "1",
+        "prdctSno": "1",
+        "prdctClsfcNo": "39121801",
+        "dtilPrdctClsfcNo": "3912180101"
+      },
+      {
+        "bidNtceNo": "R26BK01688119",
+        "bidNtceOrd": "000",
+        "bidClsfcNo": "1",
+        "prdctSno": "1",
+        "prdctClsfcNo": "39121801",
+        "dtilPrdctClsfcNo": "3912180101"
+      }
+    ]
+  }
+}

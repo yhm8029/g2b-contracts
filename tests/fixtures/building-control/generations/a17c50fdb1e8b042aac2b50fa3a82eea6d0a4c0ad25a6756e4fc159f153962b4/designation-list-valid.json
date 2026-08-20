@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "status": "유효",
+  "totalCount": 1,
+  "items": [
+    {
+      "applVldYn": "유효",
+      "bzmnRegNo": "9000000004",
+      "dsgnBgngYmd": "2026-07-13",
+      "dsgnEndYmd": "2029-07-12",
+      "dsgnExtsYmd": "",
+      "entNm": "Company 004",
+      "etpmDsgnCrfcNo": "2026058",
+      "etpmDsgnDmndNo": "REQUEST-001",
+      "dsgnDmndChgOrd": "002",
+      "etpsSqno": "1",
+      "itemCfnm": "로봇을 적용한 인공지능 기반 지능형 빌딩자동제어시스템"
+    }
+  ]
+}

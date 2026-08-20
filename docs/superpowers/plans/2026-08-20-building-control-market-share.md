@@ -18,41 +18,42 @@
 
 ## File Map
 
-| Path | Responsibility |
-| --- | --- |
-| `src/lib/building-control/constants.ts` | Fixed start date, target codes, cooperative identity, sync limits |
-| `src/lib/building-control/normalization.ts` | Strict code/business/date/source identity normalization |
-| `src/lib/building-control/types.ts` | Versioned report, sync, notice, award, designation DTOs |
-| `src/lib/building-control/period.ts` | 2025+ Seoul year/quarter parsing and inclusive ranges |
-| `src/lib/building-control/g2b/paging.ts` | Shared page cardinality/result-code validation and retry policy |
-| `src/lib/building-control/g2b/notice-client.ts` | Goods notice inventory and paginated purchase-target rows |
-| `src/lib/building-control/g2b/award-client.ts` | Successful-result registration feed and four-part source grain |
-| `src/lib/building-control/g2b/designation-list-client.ts` | Explicit validity-status designation list union |
-| `src/lib/building-control/g2b/designation-detail-client.ts` | Anonymous designation detail classification evidence |
-| `src/lib/building-control/api-contract.ts` | Versioned release-gate report contract and parser |
-| `src/lib/building-control/api-contract-probe.ts` | Pure provider-page validation, identity comparison, and fixture sanitization |
-| `scripts/probe-building-control-api.ts` | CLI entry point for the live API contract gate |
-| `src/lib/building-control/repository.ts` | SQLite lease, staging, generation promotion, reconciliation, reads |
-| `src/lib/building-control/sync.ts` | Resumable notice/award/designation sync orchestration |
-| `src/lib/building-control/classification.ts` | Cooperative/excellent/non-excellent award-date attribution |
-| `src/lib/building-control/report.ts` | Pure year/quarter market-share aggregation |
-| `src/lib/building-control/jobs.ts` | Process singleflight and persisted startup/manual sync lifecycle |
-| `src/app/api/building-control/report/route.ts` | Cache-only report endpoint |
-| `src/app/api/building-control/sync/route.ts` | Start/coalesce startup or manual sync |
-| `src/app/api/building-control/sync/status/route.ts` | Current/last sync status polling |
-| `src/components/BuildingControlMarketApp.tsx` | Year/quarter controls, metrics, table, detail, refresh/export commands |
-| `src/components/MarketSharePie.tsx` | Responsive accessible Recharts pie and legend |
-| `src/lib/building-control/desktop-export.ts` | Browser/Tauri capability detection and typed invoke adapter |
-| `src-tauri/src/workbook.rs` | Native XLSX sheets, formulas, chart, atomic file save |
-| `src-tauri/src/main.rs` | Sidecar plus typed workbook command registration |
-| `tests/building-control-*.test.ts` | Domain, API, schema, sync, report, route, frontend unit/integration tests |
-| `tests/e2e/building-control-market.spec.ts` | Desktop-sized and narrow-window workflow/screenshots |
+| Path                                                        | Responsibility                                                               |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `src/lib/building-control/constants.ts`                     | Fixed start date, target codes, cooperative identity, sync limits            |
+| `src/lib/building-control/normalization.ts`                 | Strict code/business/date/source identity normalization                      |
+| `src/lib/building-control/types.ts`                         | Versioned report, sync, notice, award, designation DTOs                      |
+| `src/lib/building-control/period.ts`                        | 2025+ Seoul year/quarter parsing and inclusive ranges                        |
+| `src/lib/building-control/g2b/paging.ts`                    | Shared page cardinality/result-code validation and retry policy              |
+| `src/lib/building-control/g2b/notice-client.ts`             | Goods notice inventory and paginated purchase-target rows                    |
+| `src/lib/building-control/g2b/award-client.ts`              | Successful-result registration feed and four-part source grain               |
+| `src/lib/building-control/g2b/designation-list-client.ts`   | Explicit validity-status designation list union                              |
+| `src/lib/building-control/g2b/designation-detail-client.ts` | Anonymous designation detail classification evidence                         |
+| `src/lib/building-control/api-contract.ts`                  | Versioned release-gate report contract and parser                            |
+| `src/lib/building-control/api-contract-probe.ts`            | Pure provider-page validation, identity comparison, and fixture sanitization |
+| `scripts/probe-building-control-api.ts`                     | CLI entry point for the live API contract gate                               |
+| `src/lib/building-control/repository.ts`                    | SQLite lease, staging, generation promotion, reconciliation, reads           |
+| `src/lib/building-control/sync.ts`                          | Resumable notice/award/designation sync orchestration                        |
+| `src/lib/building-control/classification.ts`                | Cooperative/excellent/non-excellent award-date attribution                   |
+| `src/lib/building-control/report.ts`                        | Pure year/quarter market-share aggregation                                   |
+| `src/lib/building-control/jobs.ts`                          | Process singleflight and persisted startup/manual sync lifecycle             |
+| `src/app/api/building-control/report/route.ts`              | Cache-only report endpoint                                                   |
+| `src/app/api/building-control/sync/route.ts`                | Start/coalesce startup or manual sync                                        |
+| `src/app/api/building-control/sync/status/route.ts`         | Current/last sync status polling                                             |
+| `src/components/BuildingControlMarketApp.tsx`               | Year/quarter controls, metrics, table, detail, refresh/export commands       |
+| `src/components/MarketSharePie.tsx`                         | Responsive accessible Recharts pie and legend                                |
+| `src/lib/building-control/desktop-export.ts`                | Browser/Tauri capability detection and typed invoke adapter                  |
+| `src-tauri/src/workbook.rs`                                 | Native XLSX sheets, formulas, chart, atomic file save                        |
+| `src-tauri/src/main.rs`                                     | Sidecar plus typed workbook command registration                             |
+| `tests/building-control-*.test.ts`                          | Domain, API, schema, sync, report, route, frontend unit/integration tests    |
+| `tests/e2e/building-control-market.spec.ts`                 | Desktop-sized and narrow-window workflow/screenshots                         |
 
 ---
 
 ### Task 1: Prove API Contracts and Exact Normalization
 
 **Files:**
+
 - Create: `src/lib/building-control/constants.ts`
 - Create: `src/lib/building-control/normalization.ts`
 - Create: `src/lib/building-control/api-contract.ts`
@@ -60,13 +61,14 @@
 - Create: `scripts/probe-building-control-api.ts`
 - Create: `tests/building-control-normalization.test.ts`
 - Create: `tests/building-control-api-contract.test.ts`
-- Create: `tests/fixtures/building-control/notice-page.json`
-- Create: `tests/fixtures/building-control/purchase-target-page.json`
-- Create: `tests/fixtures/building-control/award-page.json`
-- Create: `tests/fixtures/building-control/designation-list-valid.json`
-- Create: `tests/fixtures/building-control/designation-list-expired.json`
-- Create: `tests/fixtures/building-control/designation-list-extended.json`
-- Create: `tests/fixtures/building-control/designation-detail.json`
+- Create: `tests/fixtures/building-control/active-generation.json`
+- Create: `tests/fixtures/building-control/generations/<generation-id>/notice-page.json`
+- Create: `tests/fixtures/building-control/generations/<generation-id>/purchase-target-page.json`
+- Create: `tests/fixtures/building-control/generations/<generation-id>/award-page.json`
+- Create: `tests/fixtures/building-control/generations/<generation-id>/designation-list-valid.json`
+- Create: `tests/fixtures/building-control/generations/<generation-id>/designation-list-expired.json`
+- Create: `tests/fixtures/building-control/generations/<generation-id>/designation-list-extended.json`
+- Create: `tests/fixtures/building-control/generations/<generation-id>/designation-detail.json`
 - Modify: `.gitignore`
 
 - [x] **Step 1: Ask gpt-5.3-codex-spark for failing normalization and contract-report tests**
@@ -79,11 +81,23 @@ expect(normalizeProductCode("3912-1801-01")).toBe("3912180101");
 expect(normalizeProductCode("3912180102")).toBe("3912180102");
 expect(normalizeProductCode("39121801abc")).toBeNull();
 expect(normalizeProductCode("39121801.0")).toBeNull();
-expect(matchesTargetProduct({ parentCode: "39121801", detailCode: null })).toBe(true);
-expect(matchesTargetProduct({ parentCode: "39121801", detailCode: "3912180101" })).toBe(true);
-expect(matchesTargetProduct({ parentCode: "39121801", detailCode: "3912180102" })).toBe(false);
-expect(buildAwardSourceKey({ noticeNo: "R25", noticeOrder: "000", bidClassNo: "1", rebidNo: "2" }))
-  .toBe("R25|000|1|2");
+expect(matchesTargetProduct({ parentCode: "39121801", detailCode: null })).toBe(
+  true,
+);
+expect(
+  matchesTargetProduct({ parentCode: "39121801", detailCode: "3912180101" }),
+).toBe(true);
+expect(
+  matchesTargetProduct({ parentCode: "39121801", detailCode: "3912180102" }),
+).toBe(false);
+expect(
+  buildAwardSourceKey({
+    noticeNo: "R25",
+    noticeOrder: "000",
+    bidClassNo: "1",
+    rebidNo: "2",
+  }),
+).toBe("R25|000|1|2");
 ```
 
 The contract parser test must reject `passed: true` unless all checks are present and true:
@@ -115,7 +129,7 @@ npx vitest run tests/building-control-normalization.test.ts tests/building-contr
 
 Expected: FAIL with unresolved `@/lib/building-control/*` imports.
 
-- [ ] **Step 3: Ask MiniMax-M3 to implement constants, strict normalizers, and the live probe**
+- [x] **Step 3: Ask MiniMax-M3 to implement constants, strict normalizers, and the live probe**
 
 The generated exports must include:
 
@@ -143,11 +157,11 @@ The probe must use `DATA_GO_KR_SERVICE_KEY` only from process environment, redac
 
 Over a bounded day containing a target notice, compare server-side exact detailed-code notice identities with every paginated purchase-target row filtered by `matchesTargetProduct`. Because the server-side detailed-code operation cannot establish recall for an exact eight-digit parent row with no detailed code, the production strategy is `exhaustive_fallback`: paginate purchase-target rows completely and filter locally. The server-side set is retained only as a bounded contrast check for detailed-code rows. `productDiscoveryStrategyProven` passes only after complete local pagination and at least one exact observed target are proven.
 
-For designation history, bootstrap the anonymous session with a Chrome-like user agent and reject any redirect outside exact origin `https://shop.g2b.go.kr`. Query `selectElpdtSlctnSttusLst.do` using `applVldYn: ""` and complete pagination, and require the exact observed status union blank/`유효`/`만료`/`효력정지`; any new status fails closed. Cross-check explicit `유효` and `만료` totals against the all-status counts. Use an `itemCfnm` search only to locate bounded valid, expired, and extended probe samples, validate original/extension date formats and ordering, and require official detail evidence containing exact `39121801` or `3912180101`; title text itself never passes a check. It exits nonzero unless every required check passes.
+For designation history, bootstrap the anonymous session with a Chrome-like user agent, allow redirects only between exact official origins `https://shop.g2b.go.kr` and `https://sso.g2b.go.kr`, and isolate cookies per origin. Query `selectElpdtSlctnSttusLst.do` using `applVldYn: ""` and complete pagination, and require the exact observed status union blank/`유효`/`만료`/`효력정지`; any new status fails closed. Cross-check explicit `유효`, `만료`, and `효력정지` totals against the all-status counts. Use an `itemCfnm` search only to locate bounded valid, expired, and extended probe samples, validate end/extension date formats, accept a nonblank official extension equal to or later than the listed end, and require official detail evidence containing exact `39121801` or `3912180101`; title text itself never passes a check. The probe records blank `fnlSucsfDate` rows separately from representative-winner identity; a target award with no resolved final award date is quarantined rather than assigned the registration date. It exits nonzero unless every required check passes.
 
-The probe also emits deterministic sanitized fixtures under `tests/fixtures/building-control/`. Every provider page fixture must retain official field names and have self-consistent `pageNo`/`numOfRows`/`totalCount`/`items`; live aggregate counts belong in the ignored report instead of contradictory page metadata. Before committing fixtures, remove service keys, cookies, session/request identifiers, URLs containing query credentials, and real personal fields; replace business/name values consistently while preserving status, source grain, final-winner identity, and date structures. Enforce a per-file output-key allowlist before writing. A failed gate writes candidates only below ignored `data/api-contract/candidates/` and never replaces committed fixtures. Only a fully passing, parsed report atomically promotes fixtures and their hashes. Add only `data/api-contract/` to `.gitignore`.
+The probe also emits deterministic sanitized fixtures under `tests/fixtures/building-control/`. Every provider page fixture must retain official field names and have self-consistent `pageNo`/`numOfRows`/`totalCount`/`items`; live aggregate counts belong in the ignored report instead of contradictory page metadata. Before committing fixtures, remove service keys, cookies, session/request identifiers, URLs containing query credentials, and real personal fields; replace business/name values consistently while preserving status, source grain, final-winner identity, and date structures. Enforce a per-file output-key allowlist before any candidate or committed write. A failed gate may write only fully validated candidates below ignored `data/api-contract/candidates/` and never replaces committed fixtures. A passing gate writes all seven files into an immutable generation directory and atomically switches one `active-generation.json` manifest containing the complete hash set; a partial generation is never active. Add only `data/api-contract/` to `.gitignore`.
 
-- [ ] **Step 4: Run unit tests and the live release gate**
+- [x] **Step 4: Run unit tests and the live release gate**
 
 Run:
 
@@ -158,7 +172,7 @@ npx tsx scripts/probe-building-control-api.ts
 
 Expected: tests PASS; probe prints only redacted check names/counts and `api_contract=passed`. If any required check fails, stop execution and route the redacted report back to MiniMax-M3 for a corrective patch.
 
-- [ ] **Step 5: Commit the proven contract gate**
+- [x] **Step 5: Commit the proven contract gate**
 
 ```powershell
 git add .gitignore scripts/probe-building-control-api.ts src/lib/building-control tests/building-control-normalization.test.ts tests/building-control-api-contract.test.ts tests/fixtures/building-control
@@ -170,13 +184,13 @@ git commit -m "feat: prove building control API contracts"
 ### Task 2: Add Historical Designation Clients
 
 **Files:**
+
 - Create: `src/lib/building-control/g2b/paging.ts`
 - Create: `src/lib/building-control/g2b/designation-list-client.ts`
 - Create: `src/lib/building-control/g2b/designation-detail-client.ts`
 - Create: `tests/building-control-designations.test.ts`
-- Read fixtures: `tests/fixtures/building-control/designation-list-valid.json`
-- Read fixtures: `tests/fixtures/building-control/designation-list-expired.json`
-- Read fixtures: `tests/fixtures/building-control/designation-detail.json`
+- Read fixture manifest: `tests/fixtures/building-control/active-generation.json`
+- Read active sanitized designation fixtures from the referenced immutable generation
 - Reference only: `.worktrees/g2b-excellent-pr/src/lib/g2b/excellent-product-discovery-client.ts`
 - Reference only: `.worktrees/g2b-excellent-pr/src/lib/g2b/excellent-product-designation-detail-client.ts`
 
@@ -185,19 +199,26 @@ git commit -m "feat: prove building control API contracts"
 Tests must prove explicit status union, stable pagination, exact `39121801` detail membership, extension precedence, null-end incompleteness, cancellation/revocation boundaries, and fail-closed contraction:
 
 ```ts
-expect(effectiveDesignationEnd({ endDate: "2027-01-01", extensionDate: "2029-01-01" }))
-  .toBe("2029-01-01");
+expect(
+  effectiveDesignationEnd({
+    endDate: "2027-01-01",
+    extensionDate: "2029-01-01",
+  }),
+).toBe("2029-01-01");
 expect(hasExactDesignationClassification("39121801; 39121107")).toBe(true);
 expect(hasExactDesignationClassification("3912180101")).toBe(true);
 expect(hasExactDesignationClassification("3912180199")).toBe(false);
-expect(() => reconcileStatusPages(previousComplete, contractedCurrent))
-  .toThrow(/count contraction/i);
-expect(classifyDesignationValidity({ effectiveEnd: null }, "2026-01-01")).toBe("incomplete");
+expect(() => reconcileStatusPages(previousComplete, contractedCurrent)).toThrow(
+  /count contraction/i,
+);
+expect(classifyDesignationValidity({ effectiveEnd: null }, "2026-01-01")).toBe(
+  "incomplete",
+);
 expect(isDesignationValidOn(cancelledDesignation, "2026-03-31")).toBe(true);
 expect(isDesignationValidOn(cancelledDesignation, "2026-04-01")).toBe(false);
 ```
 
-Use the sanitized Task 1 fixtures only. A missing effective end, unsupported status, missing detail evidence, or ambiguous cancellation/revocation date marks designation coverage incomplete and never qualifies an award as excellent.
+Use the sanitized Task 1 active generation for proven list/detail values. Those fixtures are deliberately strict projections rather than raw transport envelopes; add small synthetic provider-envelope parser cases, matching the proven official field names and shapes, for pagination and malformed-envelope failures. A missing effective end, unsupported status, missing detail evidence, or ambiguous cancellation/revocation date marks designation coverage incomplete and never qualifies an award as excellent.
 
 - [ ] **Step 2: Run the designation tests and confirm missing-client failure**
 
@@ -253,6 +274,7 @@ git commit -m "feat: collect excellent designation history"
 ### Task 3: Add Versioned SQLite Schema and Repository
 
 **Files:**
+
 - Modify: `src/lib/db/init.ts`
 - Modify: `src/lib/db/schema.ts`
 - Create: `src/lib/building-control/repository.ts`
@@ -349,7 +371,10 @@ export interface BuildingControlRepository {
   completeGeneration(input: PromotionInput): number;
   stageClassificationFacts(input: ClassificationFactInput[]): number;
   createManifest(input: MarketManifestInput): number;
-  activateManifest(manifestId: number, expectedActiveManifestId: number | null): boolean;
+  activateManifest(
+    manifestId: number,
+    expectedActiveManifestId: number | null,
+  ): boolean;
   readActiveManifest(): MarketManifest | null;
   failRun(runId: number, redactedMessage: string): void;
   hasSuccessfulStartupSync(seoulDate: string): boolean;
@@ -375,9 +400,10 @@ git commit -m "feat: add versioned building control database"
 
 ---
 
-### Task 4: Collect Notices and Terminal Award Results
+### Task 4: Collect Notices and Final Award Results
 
 **Files:**
+
 - Create: `src/lib/building-control/g2b/notice-client.ts`
 - Create: `src/lib/building-control/g2b/award-client.ts`
 - Create: `tests/building-control-notices.test.ts`
@@ -386,14 +412,25 @@ git commit -m "feat: add versioned building control database"
 
 - [ ] **Step 1: Ask MiniMax-M3 for failing pagination, grain, and winner tests**
 
-Include fixtures where one notice has two `bidClsfcNo` values, multiple `rbidNo` revisions, one officially marked consortium representative, and conflicting target-lot winners. Terminal selection is per `(noticeNo, noticeOrder, bidClsfcNo)`, not across the whole notice. Assert:
+Include fixtures where one notice has two `bidClsfcNo` values, unique singular official winners, and conflicting target-lot winners. The proven successful-result feed contains exactly one final outcome per `(noticeNo, noticeOrder, bidClsfcNo)`; `rbidNo` remains part of the four-field source identity but is not a revision sequence to collapse. Duplicate or conflicting rows at the three-field grain fail closed. Assert:
 
 ```ts
-expect(selectTerminalAwardRows(rows).map((row) => [row.bidClassNo, row.rebidNo]))
-  .toEqual([["1", "2"], ["2", "3"]]);
-expect(joinAwardToTargetProduct(targetProducts, terminalAward).bidClassNo).toBe("1");
-expect(() => collapseNoticeWinner(conflictingTargetLots)).toThrow(/different target-lot winners/i);
-expect(resolveRepresentative(jointRows).bizNo).toBe("2148204708");
+expect(
+  parseFinalAwardRows(rows).map((row) => [row.bidClassNo, row.rebidNo]),
+).toEqual([
+  ["1", "2"],
+  ["2", "3"],
+]);
+expect(() => parseFinalAwardRows(duplicateThreePartGrain)).toThrow(
+  /duplicate final award grain/i,
+);
+expect(joinAwardToTargetProduct(targetProducts, terminalAward).bidClassNo).toBe(
+  "1",
+);
+expect(() => collapseNoticeWinner(conflictingTargetLots)).toThrow(
+  /different target-lot winners/i,
+);
+expect(parseFinalAwardRows(rows)[0].winnerBizNo).toBe("2148204708");
 ```
 
 Also assert page 2 is fetched when `totalCount > items.length` and an empty required page fails completeness.
@@ -454,7 +491,6 @@ export type AwardResultRow = {
   status: "final";
   winnerBizNo: string;
   winnerName: string;
-  representative: boolean;
   amount: number | null;
   rate: number | null;
   providerResultIdentity: string;
@@ -470,7 +506,7 @@ export type AwardRegistrationBatch = {
 };
 ```
 
-Use registration windows for incremental awards. The notice inventory stores all exact target notices published from 2025 regardless of outcome. The award path additionally stores a pre-2025 notice when a qualifying terminal award has `finalAwardDate >= 2025-01-01`; test this boundary explicitly so 2025 reports cannot omit an older notice awarded in 2025.
+Use registration windows for incremental awards. The notice inventory stores all exact target notices published from 2025 regardless of outcome. The award path additionally stores a pre-2025 notice when a qualifying final award has `finalAwardDate >= 2025-01-01`; test this boundary explicitly so 2025 reports cannot omit an older notice awarded in 2025. Attribute each result directly from the singular official `bidwinnrBizno` and `bidwinnrNm`; the proven feed exposes no consortium representative marker, so do not infer or invent one.
 Map official provider `rgstDt` to `registeredAt` and `fnlSucsfDate` to `finalAwardDate`; do not substitute opening, notice, contract, or local collection dates.
 
 Provider DTOs remain independent of repository run state. The repository attaches the current `runId` while staging and persists multiple observations whenever a stable provider row identity reappears with a different source hash. Preserve failed, cancelled, and no-award exact-target notices in inventory; an integration assertion must prove those statuses contribute zero to the final-awarded denominator.
@@ -495,6 +531,7 @@ git commit -m "feat: collect building control notices and awards"
 ### Task 5: Implement Resumable Atomic Synchronization
 
 **Files:**
+
 - Create: `src/lib/building-control/sync.ts`
 - Create: `tests/building-control-sync.test.ts`
 - Modify: `src/lib/building-control/constants.ts`
@@ -504,13 +541,19 @@ git commit -m "feat: collect building control notices and awards"
 Cover first backfill, trailing registration/publication overlaps, quota exhaustion, restart resume, provider correction, rescinded award deactivation, target-code correction, designation failure, lease loss, and secret redaction. Source generations may complete independently, but they remain invisible until one manifest pins all required generations and coverage. The core invariants are:
 
 ```ts
-await expect(syncBuildingControlMarket(depsWithAwardPageFailure)).rejects.toThrow();
+await expect(
+  syncBuildingControlMarket(depsWithAwardPageFailure),
+).rejects.toThrow();
 expect(repository.readActiveManifest()).toEqual(beforeFailureManifest);
 expect(repository.failedRunMessages()).not.toContain(serviceKey);
 
-await expect(syncBuildingControlMarket(designationSucceedsThenAwardPageFails)).rejects.toThrow();
+await expect(
+  syncBuildingControlMarket(designationSucceedsThenAwardPageFails),
+).rejects.toThrow();
 expect(repository.readActiveManifest()).toEqual(beforeFailureManifest);
-expect(repository.readActiveClassifications()).toEqual(beforeFailureClassifications);
+expect(repository.readActiveClassifications()).toEqual(
+  beforeFailureClassifications,
+);
 ```
 
 - [ ] **Step 2: Run sync tests and confirm failure**
@@ -543,9 +586,18 @@ export async function syncBuildingControlMarket(
 
 export type BuildingControlSyncDependencies = {
   repository: BuildingControlRepository;
-  fetchNoticeInventoryWindow: (dateFrom: string, dateTo: string) => Promise<NoticeInventoryBatch>;
-  fetchAwardRegistrationWindow: (dateFrom: string, dateTo: string) => Promise<AwardRegistrationBatch>;
-  fetchNoticeProducts: (noticeNo: string, noticeOrder: string) => Promise<NoticeProductRow[]>;
+  fetchNoticeInventoryWindow: (
+    dateFrom: string,
+    dateTo: string,
+  ) => Promise<NoticeInventoryBatch>;
+  fetchAwardRegistrationWindow: (
+    dateFrom: string,
+    dateTo: string,
+  ) => Promise<AwardRegistrationBatch>;
+  fetchNoticeProducts: (
+    noticeNo: string,
+    noticeOrder: string,
+  ) => Promise<NoticeProductRow[]>;
   fetchDesignationHistory: () => Promise<DesignationObservationInput[]>;
   now: () => Date;
   sleep: (milliseconds: number) => Promise<void>;
@@ -574,6 +626,7 @@ git commit -m "feat: synchronize building control market data"
 ### Task 6: Classify Awards and Build One Report DTO
 
 **Files:**
+
 - Create: `src/lib/building-control/types.ts`
 - Create: `src/lib/building-control/period.ts`
 - Create: `src/lib/building-control/classification.ts`
@@ -587,12 +640,22 @@ git commit -m "feat: synchronize building control market data"
 Tests must include start/end/extension boundaries, null effective end, cancellation/revocation day boundaries, cooperative precedence, historical excellent company, zero-award eligible company, non-excellent aggregation, rename by business number, multiple designations, zero denominator, 2025 lower bound, and Seoul quarter ranges. Denominator fixtures must prove multiple rebid revisions count once, multiple target lots with the same representative count once, different target-lot winners make coverage incomplete, and only canonical awards whose final date falls inside the selected period count.
 
 ```ts
-expect(classifyAward(cooperativeAward, validDesignation).category).toBe("cooperative");
+expect(classifyAward(cooperativeAward, validDesignation).category).toBe(
+  "cooperative",
+);
 expect(classifyAward(onStartDate, validDesignation).category).toBe("excellent");
-expect(classifyAward(afterEffectiveEnd, validDesignation).category).toBe("non_excellent");
+expect(classifyAward(afterEffectiveEnd, validDesignation).category).toBe(
+  "non_excellent",
+);
 expect(report.totalFinalAwardedNotices).toBe(10);
-expect(report.rows.find((row) => row.companyName === "A업체")?.marketShare).toBe(10);
-expect(report.rows.some((row) => row.awardCount === 0 && row.category === "excellent")).toBe(true);
+expect(
+  report.rows.find((row) => row.companyName === "A업체")?.marketShare,
+).toBe(10);
+expect(
+  report.rows.some(
+    (row) => row.awardCount === 0 && row.category === "excellent",
+  ),
+).toBe(true);
 ```
 
 - [ ] **Step 2: Run report tests and confirm missing-module failure**
@@ -643,7 +706,10 @@ export type MarketAwardDetail = {
   matchedEffectiveEndDate: string | null;
   matchedDesignationObservationId: number | null;
   classificationFactId: number;
-  classificationReason: "cooperative_identity" | "valid_designation_on_award_date" | "no_valid_designation";
+  classificationReason:
+    | "cooperative_identity"
+    | "valid_designation_on_award_date"
+    | "no_valid_designation";
   classificationEvidenceHash: string;
   demandAgencyName: string | null;
   sourceUrl: string | null;
@@ -662,7 +728,13 @@ export type MarketDesignationDetail = MarketDesignationSummary & {
 
 export type BuildingControlMarketReport = {
   version: 1;
-  period: { kind: "year" | "quarter"; year: number; quarter: number | null; dateFrom: string; dateTo: string };
+  period: {
+    kind: "year" | "quarter";
+    year: number;
+    quarter: number | null;
+    dateFrom: string;
+    dateTo: string;
+  };
   totalFinalAwardedNotices: number;
   totals: { excellent: number; nonExcellent: number; cooperative: number };
   rows: MarketShareRow[];
@@ -700,6 +772,7 @@ git commit -m "feat: aggregate building control market share"
 ### Task 7: Add Report and Background Sync APIs
 
 **Files:**
+
 - Create: `src/lib/building-control/jobs.ts`
 - Create: `src/app/api/building-control/report/route.ts`
 - Create: `src/app/api/building-control/sync/route.ts`
@@ -712,8 +785,13 @@ git commit -m "feat: aggregate building control market share"
 Require strict duplicate/unknown query rejection, cache-only report reads, `202` background start, same-job coalescing, persisted startup-day skip, manual override, progress status, missing-key `503`, request cancellation isolation, and database close in all paths.
 
 ```ts
-expect(await GET(reportRequest("?period=quarter&year=2026&quarter=1"))).toHaveProperty("status", 200);
-expect(await GET(reportRequest("?period=year&year=2024"))).toHaveProperty("status", 400);
+expect(
+  await GET(reportRequest("?period=quarter&year=2026&quarter=1")),
+).toHaveProperty("status", 200);
+expect(await GET(reportRequest("?period=year&year=2024"))).toHaveProperty(
+  "status",
+  400,
+);
 expect((await POST(syncRequest("startup"))).status).toBe(202);
 expect(mocks.startSync).toHaveBeenCalledTimes(1);
 ```
@@ -750,6 +828,7 @@ git commit -m "feat: expose building control report and sync APIs"
 ### Task 8: Replace the Hardcoded Competitor Screen
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `package-lock.json`
 - Modify: `src/app/competitors/page.tsx`
@@ -813,6 +892,7 @@ git commit -m "feat: show building control market share dashboard"
 ### Task 9: Generate Editable Native Excel in Tauri
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `package-lock.json`
 - Modify: `src-tauri/Cargo.toml`
@@ -941,6 +1021,7 @@ git commit -m "feat: export editable market share workbook"
 ### Task 10: Verify UI, Package the EXE, and Run Live Acceptance
 
 **Files:**
+
 - Modify: `src-tauri/tauri.conf.json`
 - Modify: `scripts/build-tauri-portable.ps1`
 - Modify: `tests/tauri-portable.Tests.ps1`

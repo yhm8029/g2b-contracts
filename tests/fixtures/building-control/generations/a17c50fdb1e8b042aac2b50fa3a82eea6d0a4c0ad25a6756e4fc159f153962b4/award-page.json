@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "page": {
+    "pageNo": 1,
+    "numOfRows": 3,
+    "totalCount": 3,
+    "items": [
+      {
+        "bidNtceNo": "R26BK01654148",
+        "bidNtceOrd": "000",
+        "bidClsfcNo": "1",
+        "rbidNo": "000",
+        "rgstDt": "2026-08-19 09:57:15",
+        "fnlSucsfDate": "",
+        "bidwinnrBizno": "9000000001",
+        "bidwinnrNm": "Company 001"
+      },
+      {
+        "bidNtceNo": "R26BK01674846",
+        "bidNtceOrd": "000",
+        "bidClsfcNo": "1",
+        "rbidNo": "000",
+        "rgstDt": "2026-08-19 13:28:48",
+        "fnlSucsfDate": "2026-08-19",
+        "bidwinnrBizno": "9000000002",
+        "bidwinnrNm": "Company 002"
+      },
+      {
+        "bidNtceNo": "R26BK01662393",
+        "bidNtceOrd": "000",
+        "bidClsfcNo": "1",
+        "rbidNo": "001",
+        "rgstDt": "2026-08-19 15:29:13",
+        "fnlSucsfDate": "2026-08-19",
+        "bidwinnrBizno": "9000000003",
+        "bidwinnrNm": "Company 003"
+      }
+    ]
+  }
+}

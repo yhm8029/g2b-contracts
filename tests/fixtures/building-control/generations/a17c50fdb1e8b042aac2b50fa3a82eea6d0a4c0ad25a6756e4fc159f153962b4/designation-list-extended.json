@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "status": "유효",
+  "totalCount": 1,
+  "items": [
+    {
+      "applVldYn": "유효",
+      "bzmnRegNo": "9000000006",
+      "dsgnBgngYmd": "2024-01-22",
+      "dsgnEndYmd": "2028-01-21",
+      "dsgnExtsYmd": "2028-01-21",
+      "entNm": "Company 006",
+      "etpmDsgnCrfcNo": "2023197",
+      "etpmDsgnDmndNo": "REQUEST-003",
+      "dsgnDmndChgOrd": "006",
+      "etpsSqno": "1",
+      "itemCfnm": "BEMS가 내장된 빌딩자동제어시스템"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "page": {
+    "pageNo": 1,
+    "numOfRows": 3,
+    "totalCount": 3,
+    "items": [
+      {
+        "bidNtceNo": "R26BK01672922",
+        "bidNtceOrd": "000",
+        "bidNtceNm": "전북과학고 기숙사 및 교사동 증축공사 오수처리시설 구매"
+      },
+      {
+        "bidNtceNo": "R26BK01687193",
+        "bidNtceOrd": "000",
+        "bidNtceNm": "천안의료원 기능보강사업 검체 전처리 자동화 장비 구매"
+      },
+      {
+        "bidNtceNo": "R26BK01687192",
+        "bidNtceOrd": "000",
+        "bidNtceNm": "산모태아집중치료실 의료가스공급장치 구매설치(긴급)"
+      }
+    ]
+  }
+}
