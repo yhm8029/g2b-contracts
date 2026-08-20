@@ -67,6 +67,18 @@ export type SyncCheckpointChunk = {
   createdAt: string;
 };
 
+export type ResumeValidatedChunk = {
+  source: CoverageSource;
+  requestKey: string;
+  cursorKind: "page" | "detail";
+  cursor: number;
+  pageSize: number;
+  totalCount: number;
+  facts: readonly unknown[];
+  identityHashes: readonly string[];
+  sourceHashes: Readonly<Record<string, string>>;
+};
+
 export type CheckpointPageInput = {
   source: CoverageSource;
   requestKey: string;
@@ -238,7 +250,7 @@ export type ResumeSeed = {
   totalCount: number | null;
   observedCount: number;
   collectedIdentities: readonly string[];
-  persistedChunks: readonly SyncCheckpointChunk[];
+  persistedChunks: readonly ResumeValidatedChunk[];
 };
 
 export type AdoptResumableRunInput = {
@@ -532,6 +544,24 @@ const COOKIE_ASSIGNMENT_PATTERN: RegExp =
   /(?:^|[;,\s])(?:session|cookie|jsessionid)\s*=\s*[^;,\s]+/i;
 const SECRET_SENTINEL_PATTERN: RegExp = /secret_sentinel/i;
 
+const CHECKPOINT_FACT_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
+  "schemaVersion",
+  "facts",
+  "identityHashes",
+  "sourceHashes",
+]);
+
+type CheckpointFactPayload = {
+  readonly schemaVersion: 1;
+  readonly facts: readonly unknown[];
+  readonly identityHashes: readonly string[];
+  readonly sourceHashes: Readonly<Record<string, string>>;
+};
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function normalizeKeyName(value: string): string {
   return value.toLowerCase().replace(/[\s_-]+/g, "");
 }
@@ -564,13 +594,14 @@ function findCredentialPattern(value: string, pattern: RegExp): string | null {
   return match ? match[0] : null;
 }
 
-function assertCheckpointPayloadAllowed(factJson: string): void {
+function assertCheckpointPayloadAllowed(factJson: string): unknown {
   if (typeof factJson !== "string" || factJson.length === 0) {
     throw new Error("checkpoint factJson must be a non-empty JSON string");
   }
   const forbiddenKeys: string[] = [];
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(factJson) as unknown;
+    parsed = JSON.parse(factJson) as unknown;
     collectForbiddenKeys(parsed, forbiddenKeys, new WeakSet());
   } catch (error) {
     throw new Error(
@@ -609,6 +640,72 @@ function assertCheckpointPayloadAllowed(factJson: string): void {
   if (SECRET_SENTINEL_PATTERN.test(factJson)) {
     throw new Error("checkpoint payload contains secret sentinel value");
   }
+  return parsed;
+}
+
+function parseCheckpointFactPayload(factJson: string): CheckpointFactPayload {
+  const parsed = assertCheckpointPayloadAllowed(factJson);
+  if (!isPlainRecord(parsed)) {
+    throw new Error("checkpoint payload must be a JSON object");
+  }
+  const keys = Object.keys(parsed);
+  if (
+    keys.length !== CHECKPOINT_FACT_PAYLOAD_KEYS.size ||
+    !keys.every((key) => CHECKPOINT_FACT_PAYLOAD_KEYS.has(key))
+  ) {
+    throw new Error(
+      "checkpoint payload must contain exactly schemaVersion, facts, identityHashes, and sourceHashes",
+    );
+  }
+  const { schemaVersion, facts, identityHashes, sourceHashes } = parsed;
+  if (schemaVersion !== 1) {
+    throw new Error("checkpoint payload schemaVersion must be 1");
+  }
+  if (!Array.isArray(facts)) {
+    throw new Error("checkpoint payload facts must be an array");
+  }
+  if (!Array.isArray(identityHashes)) {
+    throw new Error("checkpoint payload identityHashes must be an array");
+  }
+  if (!isPlainRecord(sourceHashes)) {
+    throw new Error("checkpoint payload sourceHashes must be an object");
+  }
+  if (facts.length !== identityHashes.length) {
+    throw new Error(
+      "checkpoint payload facts length must equal identityHashes length",
+    );
+  }
+  const seenIdentityHashes = new Set<string>();
+  for (const identityHash of identityHashes) {
+    if (typeof identityHash !== "string" || !HEX_64.test(identityHash)) {
+      throw new Error(
+        "checkpoint payload identityHashes must be lowercase SHA-256 strings",
+      );
+    }
+    if (seenIdentityHashes.has(identityHash)) {
+      throw new Error("checkpoint payload identityHashes must be unique");
+    }
+    seenIdentityHashes.add(identityHash);
+  }
+  const sourceHashKeys = Object.keys(sourceHashes);
+  if (!sameStrings(sourceHashKeys, [...seenIdentityHashes])) {
+    throw new Error(
+      "checkpoint payload sourceHashes keys must exactly match identityHashes",
+    );
+  }
+  for (const sourceHash of Object.values(sourceHashes)) {
+    if (typeof sourceHash !== "string" || !HEX_64.test(sourceHash)) {
+      throw new Error(
+        "checkpoint payload sourceHashes values must be lowercase SHA-256 strings",
+      );
+    }
+  }
+  return {
+    schemaVersion: 1,
+    facts,
+    identityHashes: [...seenIdentityHashes],
+    sourceHashes: sourceHashes as Record<string, string>,
+  };
 }
 
 export function createBuildingControlRepository(
@@ -2064,6 +2161,44 @@ export function createBuildingControlRepository(
             "checkpoint totalCount must be a non-negative integer",
           );
         }
+        const payload = parseCheckpointFactPayload(input.factJson);
+        const expectedPages = Math.max(
+          1,
+          Math.ceil(input.totalCount / input.pageSize),
+        );
+        if (input.cursor > expectedPages) {
+          throw new Error(
+            "checkpoint cursor drift: cursor cannot exceed the expected page count",
+          );
+        }
+        const expectedFactCount =
+          input.cursor === expectedPages
+            ? Math.max(
+                0,
+                input.totalCount - (expectedPages - 1) * input.pageSize,
+              )
+            : input.pageSize;
+        if (payload.facts.length !== expectedFactCount) {
+          throw new Error(
+            `checkpoint payload must contain exactly ${expectedFactCount} facts for page ${input.cursor}`,
+          );
+        }
+        const derivedIdentityHash = computeIdentitySetHash([
+          ...payload.identityHashes,
+        ]);
+        if (derivedIdentityHash !== input.identityHash) {
+          throw new Error(
+            "checkpoint identity hash does not match payload identityHashes",
+          );
+        }
+        const derivedSourceHash = createHash("sha256")
+          .update(input.factJson)
+          .digest("hex");
+        if (derivedSourceHash !== input.sourceHash) {
+          throw new Error(
+            "checkpoint source hash does not match payload sourceHash",
+          );
+        }
         const expected = findExpectedRequestId(
           runId,
           input.source,
@@ -2188,6 +2323,45 @@ export function createBuildingControlRepository(
         const checkpoint = readCheckpoint(runId, source, requestKey);
         if (!checkpoint) {
           throw new Error("checkpoint not found for completion");
+        }
+        const totalCount = checkpoint.totalCount;
+        if (totalCount === null) {
+          throw new Error(
+            "checkpoint page coverage is incomplete: totalCount is missing",
+          );
+        }
+        const expectedPageCount = Math.max(
+          1,
+          Math.ceil(totalCount / checkpoint.pageSize),
+        );
+        const chunks = readCheckpointChunks(runId, source, requestKey);
+        if (chunks.length !== expectedPageCount) {
+          throw new Error(
+            `checkpoint page coverage is incomplete: expected ${expectedPageCount} pages, got ${chunks.length}`,
+          );
+        }
+        for (let cursor = 1; cursor <= expectedPageCount; cursor += 1) {
+          const chunk = chunks[cursor - 1];
+          if (!chunk || chunk.cursor !== cursor) {
+            throw new Error(
+              `checkpoint page coverage is incomplete: missing page ${cursor}`,
+            );
+          }
+          if (chunk.pageSize !== checkpoint.pageSize) {
+            throw new Error(
+              `checkpoint page ${cursor} has inconsistent pageSize: expected ${checkpoint.pageSize}, got ${chunk.pageSize}`,
+            );
+          }
+          if (chunk.totalCount !== totalCount) {
+            throw new Error(
+              `checkpoint page ${cursor} has inconsistent totalCount: expected ${totalCount}, got ${chunk.totalCount}`,
+            );
+          }
+        }
+        if (checkpoint.nextCursor !== expectedPageCount + 1) {
+          throw new Error(
+            `checkpoint page coverage is incomplete: nextCursor ${checkpoint.nextCursor} does not advance past final page ${expectedPageCount}`,
+          );
         }
         db.prepare(
           `
@@ -2378,8 +2552,24 @@ export function createBuildingControlRepository(
   ): ResumeSeed | null => {
     const checkpoint = readCheckpoint(runId, source, requestKey);
     if (!checkpoint) return null;
-    const chunks = readCheckpointChunks(runId, source, requestKey);
-    const collectedIdentities = chunks.map((chunk) => chunk.identityHash);
+    const rawChunks = readCheckpointChunks(runId, source, requestKey);
+    const persistedChunks: ResumeValidatedChunk[] = rawChunks.map((chunk) => {
+      const payload = parseCheckpointFactPayload(chunk.factJson);
+      return {
+        source: checkpoint.source,
+        requestKey: checkpoint.requestKey,
+        cursorKind: checkpoint.cursorKind,
+        cursor: chunk.cursor,
+        pageSize: chunk.pageSize,
+        totalCount: chunk.totalCount,
+        facts: payload.facts,
+        identityHashes: payload.identityHashes,
+        sourceHashes: payload.sourceHashes,
+      };
+    });
+    const collectedIdentities = persistedChunks.flatMap(
+      (chunk) => chunk.identityHashes,
+    );
     return {
       checkpointId: checkpoint.checkpointId,
       expectedRequestId: checkpoint.expectedRequestId,
@@ -2391,7 +2581,7 @@ export function createBuildingControlRepository(
       totalCount: checkpoint.totalCount,
       observedCount: checkpoint.observedCount,
       collectedIdentities,
-      persistedChunks: chunks,
+      persistedChunks,
     };
   };
 
@@ -2426,6 +2616,152 @@ export function createBuildingControlRepository(
       throw new Error(
         `snapshot cannot be staged: ${unsealed.count} ${source} expected request(s) are not sealed`,
       );
+    }
+    const checkpointRows = db
+      .prepare(
+        `
+        select
+          er.request_key as request_key,
+          er.id as expected_request_id,
+          ck.id as checkpoint_id,
+          ck.state as checkpoint_state
+        from building_control_sync_expected_requests er
+        left join building_control_sync_checkpoints ck
+          on ck.expected_request_id = er.id
+         and ck.sync_run_id = er.sync_run_id
+         and ck.source = er.source
+         and ck.request_key = er.request_key
+        where er.sync_run_id = ? and er.source = ?
+        `,
+      )
+      .all(runId, source) as Array<{
+        request_key: string;
+        expected_request_id: number;
+        checkpoint_id: number | null;
+        checkpoint_state: string | null;
+      }>;
+    if (checkpointRows.length !== total.count) {
+      throw new Error(
+        `snapshot cannot be staged: missing checkpoint rows for sealed expected requests on ${source}`,
+      );
+    }
+    const checkpointIdsByRequest = new Map<number, number[]>();
+    for (const row of checkpointRows) {
+      if (row.checkpoint_id === null) {
+        throw new Error(
+          `snapshot cannot be staged: expected request ${row.request_key} has no checkpoint`,
+        );
+      }
+      const ids = checkpointIdsByRequest.get(row.expected_request_id) ?? [];
+      ids.push(row.checkpoint_id);
+      checkpointIdsByRequest.set(row.expected_request_id, ids);
+    }
+    for (const [, ids] of checkpointIdsByRequest) {
+      if (ids.length !== 1) {
+        throw new Error(
+          `snapshot cannot be staged: duplicate checkpoint rows found for a sealed expected request on ${source}`,
+        );
+      }
+    }
+    for (const row of checkpointRows) {
+      if (row.checkpoint_state !== "complete") {
+        throw new Error(
+          `snapshot cannot be staged: checkpoint for request ${row.request_key} on ${source} is not complete`,
+        );
+      }
+    }
+  };
+
+  const readCompletedCheckpointEvidence = (
+    runId: number,
+    source: CoverageSource,
+  ): {
+    facts: unknown[];
+    identityHashes: string[];
+    sourceHashes: Record<string, string>;
+    pageCount: number;
+  } => {
+    const requests = readExpectedRequests(runId)
+      .filter((request) => request.source === source)
+      .sort((left, right) => left.id - right.id);
+    const facts: unknown[] = [];
+    const identityHashes: string[] = [];
+    const sourceHashes: Record<string, string> = {};
+    const seenIdentityHashes = new Set<string>();
+    let pageCount = 0;
+    for (const request of requests) {
+      const checkpoint = readCheckpoint(runId, source, request.requestKey);
+      if (!checkpoint || checkpoint.state !== "complete") {
+        throw new Error(
+          "snapshot cannot be staged: checkpoint for request " +
+            request.requestKey +
+            " on " +
+            source +
+            " is not complete",
+        );
+      }
+      const chunks = readCheckpointChunks(runId, source, request.requestKey);
+      for (const chunk of chunks) {
+        const payload = parseCheckpointFactPayload(chunk.factJson);
+        facts.push(...payload.facts);
+        for (const identityHash of payload.identityHashes) {
+          if (seenIdentityHashes.has(identityHash)) {
+            throw new Error(
+              "snapshot cannot be staged: duplicate checkpoint identity hash " +
+                identityHash +
+                " on " +
+                source,
+            );
+          }
+          seenIdentityHashes.add(identityHash);
+          identityHashes.push(identityHash);
+          sourceHashes[identityHash] = payload.sourceHashes[identityHash];
+        }
+        pageCount += 1;
+      }
+    }
+    return { facts, identityHashes, sourceHashes, pageCount };
+  };
+
+  const assertCheckpointSnapshotMatches = (
+    runId: number,
+    source: CoverageSource,
+    facts: readonly unknown[],
+    identityToHash: ReadonlyMap<string, string>,
+    pageCount: number,
+  ): void => {
+    const evidence = readCompletedCheckpointEvidence(runId, source);
+    if (evidence.pageCount !== pageCount) {
+      throw new Error(
+        "snapshot cannot be staged: checkpoint page count mismatch for " +
+          source,
+      );
+    }
+    if (
+      evidence.facts.length !== facts.length ||
+      JSON.stringify(evidence.facts) !== JSON.stringify(facts)
+    ) {
+      throw new Error(
+        "snapshot cannot be staged: checkpoint facts mismatch for " + source,
+      );
+    }
+    const inputIdentityHashes = [...identityToHash.keys()];
+    if (!sameStrings(evidence.identityHashes, inputIdentityHashes)) {
+      throw new Error(
+        "snapshot cannot be staged: checkpoint identity hash set mismatch for " +
+          source,
+      );
+    }
+    for (const identityHash of inputIdentityHashes) {
+      if (
+        evidence.sourceHashes[identityHash] !==
+        identityToHash.get(identityHash)
+      ) {
+        throw new Error(
+          "snapshot cannot be staged: checkpoint source hash mismatch for " +
+            source,
+        );
+      }
     }
   };
 
@@ -2472,6 +2808,13 @@ export function createBuildingControlRepository(
           identityToHash.set(identityHash, notice.sourceHash);
           return notice;
         });
+        assertCheckpointSnapshotMatches(
+          input.runId,
+          "notice-publication",
+          rows,
+          identityToHash,
+          input.pageCount,
+        );
         const identityHashes = [...identityToHash.keys()].sort();
         const identitySetHash = computeIdentitySetHash(identityHashes);
         const sourceHashes: Record<string, string> = {};
@@ -2578,6 +2921,13 @@ export function createBuildingControlRepository(
           noticeIdByKey.set(`${product.noticeNo}|${product.noticeOrder}`, 0);
           return product;
         });
+        assertCheckpointSnapshotMatches(
+          input.runId,
+          "notice-product",
+          productRows,
+          identityToHash,
+          input.pageCount,
+        );
         const distinctNotices = [...noticeIdByKey.keys()];
         if (distinctNotices.length === 0) {
           throw new Error(
@@ -2761,6 +3111,13 @@ export function createBuildingControlRepository(
           }
           observationIdentityToHash.set(identityHash, quarantine.sourceHash);
         }
+        assertCheckpointSnapshotMatches(
+          input.runId,
+          "award-registration",
+          [...awardSeed, ...input.quarantines],
+          observationIdentityToHash,
+          input.pageCount,
+        );
         const distinctNotices = [...noticeIdByKey.keys()];
         if (distinctNotices.length === 0) {
           throw new Error("award snapshot requires at least one notice");
@@ -3029,6 +3386,13 @@ export function createBuildingControlRepository(
           );
           identityToHash.set(identityHash, designation.observation.sourceHash);
         }
+        assertCheckpointSnapshotMatches(
+          input.runId,
+          "designation-history",
+          input.designations,
+          identityToHash,
+          input.pageCount,
+        );
         const identityHashes = [...identityToHash.keys()].sort();
         const identitySetHash = computeIdentitySetHash(identityHashes);
         const sourceHashes: Record<string, string> = {};

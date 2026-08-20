@@ -15,6 +15,33 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function checkpointPayload(seed: string, factCount: number) {
+  const facts = Array.from({ length: factCount }, (_, index) => ({
+    checkpointFact: seed,
+    index,
+  }));
+  const identityHashes = facts.map((_, index) =>
+    sha256(`${seed}-identity-${index}`),
+  );
+  const sourceHashes = Object.fromEntries(
+    identityHashes.map((identityHash, index) => [
+      identityHash,
+      sha256(`${seed}-source-${index}`),
+    ]),
+  );
+  const factJson = JSON.stringify({
+    schemaVersion: 1,
+    facts,
+    identityHashes,
+    sourceHashes,
+  });
+  return {
+    factJson,
+    identityHash: sha256([...identityHashes].sort().join("\n")),
+    sourceHash: sha256(factJson),
+  };
+}
+
 const databases: Database.Database[] = [];
 const paths: string[] = [];
 
@@ -57,6 +84,79 @@ function beginRun(
     fence!,
   );
   return { owner, fence: fence!, runId };
+}
+
+function completeSinglePageCheckpoint(
+  repository: BuildingControlRepository,
+  run: { runId: number; owner: string; fence: number },
+  source: Parameters<BuildingControlRepository["readCheckpoint"]>[1],
+  requestKey: string,
+) {
+  repository.stageCheckpointPage(
+    {
+      source,
+      requestKey,
+      cursor: 1,
+      pageSize: 10,
+      totalCount: 1,
+      ...checkpointPayload(requestKey, 1),
+      now: "2026-08-21T00:02:00.000Z",
+    },
+    run.runId,
+    run.owner,
+    run.fence,
+  );
+  repository.completeCheckpoint(
+    run.runId,
+    source,
+    requestKey,
+    run.owner,
+    run.fence,
+    "2026-08-21T00:03:00.000Z",
+  );
+}
+
+function completeCheckpointForFacts(
+  repository: BuildingControlRepository,
+  run: { runId: number; owner: string; fence: number },
+  source: Parameters<BuildingControlRepository["readCheckpoint"]>[1],
+  requestKey: string,
+  facts: readonly unknown[],
+  sourceHashes: Readonly<Record<string, string>>,
+) {
+  const identityHashes = Object.keys(sourceHashes);
+  const factJson = JSON.stringify({
+    schemaVersion: 1,
+    facts,
+    identityHashes,
+    sourceHashes,
+  });
+  repository.stageCheckpointPage(
+    {
+      source,
+      requestKey,
+      cursor: 1,
+      pageSize: 10,
+      totalCount: facts.length,
+      factJson,
+      identityHash: sha256(
+        [...identityHashes].sort().join(String.fromCharCode(10)),
+      ),
+      sourceHash: sha256(factJson),
+      now: "2026-08-21T00:02:00.000Z",
+    },
+    run.runId,
+    run.owner,
+    run.fence,
+  );
+  repository.completeCheckpoint(
+    run.runId,
+    source,
+    requestKey,
+    run.owner,
+    run.fence,
+    "2026-08-21T00:03:00.000Z",
+  );
 }
 
 describe("building_control_sync_expected_requests", () => {
@@ -193,9 +293,7 @@ describe("building_control_sync_checkpoints", () => {
         cursor: 1,
         pageSize: 10,
         totalCount: 25,
-        factJson: '{"items":[]}',
-        identityHash: sha256("page1-identity"),
-        sourceHash: sha256("page1-source"),
+        ...checkpointPayload("page1", 10),
         now: "2026-08-21T00:02:00.000Z",
       },
       run.runId,
@@ -211,9 +309,7 @@ describe("building_control_sync_checkpoints", () => {
         cursor: 2,
         pageSize: 10,
         totalCount: 25,
-        factJson: '{"items":[]}',
-        identityHash: sha256("page2-identity"),
-        sourceHash: sha256("page2-source"),
+        ...checkpointPayload("page2", 10),
         now: "2026-08-21T00:02:30.000Z",
       },
       run.runId,
@@ -222,12 +318,28 @@ describe("building_control_sync_checkpoints", () => {
     );
     expect(second.nextCursor).toBe(3);
     expect(second.observedCount).toBe(2);
+    const third = repository.stageCheckpointPage(
+      {
+        source: "notice-publication",
+        requestKey: "notice-bulk",
+        cursor: 3,
+        pageSize: 10,
+        totalCount: 25,
+        ...checkpointPayload("page3", 5),
+        now: "2026-08-21T00:02:45.000Z",
+      },
+      run.runId,
+      run.owner,
+      run.fence,
+    );
+    expect(third.nextCursor).toBe(4);
+    expect(third.observedCount).toBe(3);
     const chunks = repository.readCheckpointChunks(
       run.runId,
       "notice-publication",
       "notice-bulk",
     );
-    expect(chunks).toHaveLength(2);
+    expect(chunks).toHaveLength(3);
     const completed = repository.completeCheckpoint(
       run.runId,
       "notice-publication",
@@ -299,6 +411,65 @@ describe("building_control_sync_checkpoints", () => {
         run.fence,
       ),
     ).toThrow(/lease|fence/i);
+  });
+
+  it("rejects completing a checkpoint before every expected page is staged", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    repository.registerCollectorPlan({
+      planId: "plan-a",
+      name: "Plan A",
+      description: "test plan",
+      requestSetHash: sha256("plan-a-hash"),
+      createdAt: "2026-08-21T00:00:00.000Z",
+    });
+    repository.registerExpectedRequests(
+      run.runId,
+      [
+        {
+          source: "notice-publication",
+          role: "notice-publication-bulk",
+          requestKey: "notice-bulk",
+          dependencyRequestKey: null,
+          collectorPlanId: "plan-a",
+          canonicalQueryJson: "{}",
+          now: "2026-08-21T00:00:00.000Z",
+        },
+      ],
+      run.owner,
+      run.fence,
+    );
+    repository.sealExpectedRequestSet(
+      run.runId,
+      "plan-a",
+      run.owner,
+      run.fence,
+      "2026-08-21T00:01:00.000Z",
+    );
+    repository.stageCheckpointPage(
+      {
+        source: "notice-publication",
+        requestKey: "notice-bulk",
+        cursor: 1,
+        pageSize: 10,
+        totalCount: 25,
+        ...checkpointPayload("page1", 10),
+        now: "2026-08-21T00:02:00.000Z",
+      },
+      run.runId,
+      run.owner,
+      run.fence,
+    );
+    expect(() =>
+      repository.completeCheckpoint(
+        run.runId,
+        "notice-publication",
+        "notice-bulk",
+        run.owner,
+        run.fence,
+        "2026-08-21T00:03:00.000Z",
+      ),
+    ).toThrow(/incomplete|missing|page/i);
   });
 });
 
@@ -445,6 +616,32 @@ describe("building_control_award_quarantine staging", () => {
       "2026-08-21T00:01:00.000Z",
     );
     const noticeRawHash = sha256("notice-raw");
+    const noticeFact = {
+      noticeNo: "20250821001",
+      noticeOrder: "00",
+      noticeName: "Notice 1",
+      publicationDate: "2025-08-21",
+      demandAgencyCode: null,
+      demandAgencyName: "Agency",
+      noticeUrl: null,
+      status: "active",
+      targetParentProductCode: null,
+      targetDetailProductCode: null,
+      rawJson: "{}",
+      sourceHash: noticeRawHash,
+    };
+    const noticeIdentityHash = computeSourceIdentityHash(
+      "notice-publication",
+      [noticeFact.noticeNo, noticeFact.noticeOrder],
+    );
+    completeCheckpointForFacts(
+      repository,
+      run,
+      "notice-publication",
+      "notice-bulk-v2",
+      [noticeFact],
+      { [noticeIdentityHash]: noticeRawHash },
+    );
     const noticeIds = repository.stageNoticeSnapshot(
       {
         runId: run.runId,
@@ -453,22 +650,7 @@ describe("building_control_award_quarantine staging", () => {
         dateTo: "2026-08-21",
         expectedCount: 1,
         pageCount: 1,
-        notices: [
-          {
-            noticeNo: "20250821001",
-            noticeOrder: "00",
-            noticeName: "Notice 1",
-            publicationDate: "2025-08-21",
-            demandAgencyCode: null,
-            demandAgencyName: "Agency",
-            noticeUrl: null,
-            status: "active",
-            targetParentProductCode: null,
-            targetDetailProductCode: null,
-            rawJson: "{}",
-            sourceHash: noticeRawHash,
-          },
-        ],
+        notices: [noticeFact],
       },
       run.owner,
       run.fence,
@@ -478,6 +660,31 @@ describe("building_control_award_quarantine staging", () => {
     );
 
     const productRawHash = sha256("product-raw");
+    const productFact = {
+      noticeNo: "20250821001",
+      noticeOrder: "00",
+      bidClassNo: "39121801",
+      parentProductCode: "39121801",
+      detailProductCode: null,
+      providerRowIdentity: "row-1",
+      exactMatch: 1 as const,
+      rawJson: "{}",
+      sourceHash: productRawHash,
+    };
+    const productIdentityHash = computeSourceIdentityHash("notice-product", [
+      productFact.noticeNo,
+      productFact.noticeOrder,
+      productFact.bidClassNo,
+      productFact.providerRowIdentity,
+    ]);
+    completeCheckpointForFacts(
+      repository,
+      run,
+      "notice-product",
+      "notice-product-v2",
+      [productFact],
+      { [productIdentityHash]: productRawHash },
+    );
     const productIds = repository.stageNoticeProductSnapshot(
       {
         runId: run.runId,
@@ -486,19 +693,7 @@ describe("building_control_award_quarantine staging", () => {
         dateTo: "2026-08-21",
         expectedCount: 1,
         pageCount: 1,
-        products: [
-          {
-            noticeNo: "20250821001",
-            noticeOrder: "00",
-            bidClassNo: "39121801",
-            parentProductCode: "39121801",
-            detailProductCode: null,
-            providerRowIdentity: "row-1",
-            exactMatch: 1,
-            rawJson: "{}",
-            sourceHash: productRawHash,
-          },
-        ],
+        products: [productFact],
       },
       run.owner,
       run.fence,
@@ -508,6 +703,70 @@ describe("building_control_award_quarantine staging", () => {
     ).toBeTypeOf("number");
 
     const awardRawHash = sha256("award-raw");
+    const awardFact = {
+      noticeNo: "20250821001",
+      noticeOrder: "00",
+      bidClassNo: "39121801",
+      rbidNo: "001",
+      providerResultIdentity: "20250821001|00|39121801|001",
+      finalAwardDate: "2025-08-22",
+      winnerBizNo: "2148204708",
+      winnerName: "Cooperative",
+      sourceStatus: "final",
+      winnerRowsJson: "[]",
+      rawJson: "{}",
+      sourceHash: awardRawHash,
+      canonicalAward: {
+        finalAwardDate: "2025-08-22",
+        winnerBizNo: "2148204708",
+        winnerName: "Cooperative",
+        awardAmount: 1234567890,
+        awardRate: "95.5",
+        finalResultIdentity: "20250821001|00|39121801|001",
+        rawJson: "{}",
+      },
+    };
+    const quarantineFact = {
+      noticeNo: "20250821001",
+      noticeOrder: "00",
+      bidClassNo: "39121802",
+      rbidNo: "002",
+      providerResultIdentity: "20250821001|00|39121802|002",
+      registeredAt: "2025-08-22 09:30:00",
+      finalAwardDate: null,
+      rawJson: "{}",
+      sourceHash: sha256("quarantine-source"),
+      reason: "missing_final_award_date" as const,
+      pageNo: 1,
+      pageIndex: 0,
+      now: "2026-08-21T00:05:00.000Z",
+    };
+    const awardIdentityHash = computeSourceIdentityHash("award-registration", [
+      awardFact.noticeNo,
+      awardFact.noticeOrder,
+      awardFact.bidClassNo,
+      awardFact.rbidNo,
+    ]);
+    const quarantineIdentityHash = computeSourceIdentityHash(
+      "award-registration",
+      [
+        quarantineFact.noticeNo,
+        quarantineFact.noticeOrder,
+        quarantineFact.bidClassNo,
+        quarantineFact.rbidNo,
+      ],
+    );
+    completeCheckpointForFacts(
+      repository,
+      run,
+      "award-registration",
+      "award-bulk-v2",
+      [awardFact, quarantineFact],
+      {
+        [awardIdentityHash]: awardFact.sourceHash,
+        [quarantineIdentityHash]: quarantineFact.sourceHash,
+      },
+    );
     const result = repository.stageAwardSnapshot(
       {
         runId: run.runId,
@@ -516,48 +775,8 @@ describe("building_control_award_quarantine staging", () => {
         dateTo: "2026-08-21",
         expectedCount: 1,
         pageCount: 1,
-        awards: [
-          {
-            noticeNo: "20250821001",
-            noticeOrder: "00",
-            bidClassNo: "39121801",
-            rbidNo: "001",
-            providerResultIdentity: "20250821001|00|39121801|001",
-            finalAwardDate: "2025-08-22",
-            winnerBizNo: "2148204708",
-            winnerName: "Cooperative",
-            sourceStatus: "final",
-            winnerRowsJson: "[]",
-            rawJson: "{}",
-            sourceHash: awardRawHash,
-            canonicalAward: {
-              finalAwardDate: "2025-08-22",
-              winnerBizNo: "2148204708",
-              winnerName: "Cooperative",
-              awardAmount: 1234567890,
-              awardRate: "95.5",
-              finalResultIdentity: "20250821001|00|39121801|001",
-              rawJson: "{}",
-            },
-          },
-        ],
-        quarantines: [
-          {
-            noticeNo: "20250821001",
-            noticeOrder: "00",
-            bidClassNo: "39121802",
-            rbidNo: "002",
-            providerResultIdentity: "20250821001|00|39121802|002",
-            registeredAt: "2025-08-22 09:30:00",
-            finalAwardDate: null,
-            rawJson: "{}",
-            sourceHash: sha256("quarantine-source"),
-            reason: "missing_final_award_date",
-            pageNo: 1,
-            pageIndex: 0,
-            now: "2026-08-21T00:05:00.000Z",
-          },
-        ],
+        awards: [awardFact],
+        quarantines: [quarantineFact],
       },
       run.owner,
       run.fence,
@@ -567,6 +786,51 @@ describe("building_control_award_quarantine staging", () => {
       "number",
     );
 
+    const designationFact = {
+      certificateNo: "CR-1",
+      demandNo: "DM-1",
+      changeOrder: "00",
+      sequenceNo: "SQ-1",
+      designationNo: "DSG-1",
+      bizNoNormalized: "2148204708",
+      observation: {
+        bizNoNormalized: "2148204708",
+        companyName: "Cooperative",
+        startDate: "2024-01-01",
+        originalEndDate: "2027-01-01",
+        extensionEndDate: null,
+        effectiveEndDate: "2027-01-01",
+        status: "\uC720\uD6A8",
+        productName: "\uC81C\uC5B4\uAE30",
+        classificationCodesJson: '["39121801","3912180101"]',
+        terminationState: "unverified",
+        terminationEvidenceHash: null,
+        cancellationDate: null,
+        revocationDate: null,
+        listIdentity: "list-1",
+        detailIdentity: "detail-1",
+        listRawJson: "{}",
+        detailRawJson: "{}",
+        sourceHash: sha256("designation-source"),
+      },
+    };
+    const designationIdentityHash = computeSourceIdentityHash(
+      "designation-history",
+      [
+        designationFact.certificateNo,
+        designationFact.demandNo,
+        designationFact.changeOrder,
+        designationFact.sequenceNo,
+      ],
+    );
+    completeCheckpointForFacts(
+      repository,
+      run,
+      "designation-history",
+      "designation-list-all-v2",
+      [designationFact],
+      { [designationIdentityHash]: designationFact.observation.sourceHash },
+    );
     const designationIds = repository.stageDesignationSnapshot(
       {
         runId: run.runId,
@@ -575,36 +839,7 @@ describe("building_control_award_quarantine staging", () => {
         dateTo: "2026-08-21",
         expectedCount: 1,
         pageCount: 1,
-        designations: [
-          {
-            certificateNo: "CR-1",
-            demandNo: "DM-1",
-            changeOrder: "00",
-            sequenceNo: "SQ-1",
-            designationNo: "DSG-1",
-            bizNoNormalized: "2148204708",
-            observation: {
-              bizNoNormalized: "2148204708",
-              companyName: "Cooperative",
-              startDate: "2024-01-01",
-              originalEndDate: "2027-01-01",
-              extensionEndDate: null,
-              effectiveEndDate: "2027-01-01",
-              status: "유효",
-              productName: "제어기",
-              classificationCodesJson: '["39121801","3912180101"]',
-              terminationState: "unverified",
-              terminationEvidenceHash: null,
-              cancellationDate: null,
-              revocationDate: null,
-              listIdentity: "list-1",
-              detailIdentity: "detail-1",
-              listRawJson: "{}",
-              detailRawJson: "{}",
-              sourceHash: sha256("designation-source"),
-            },
-          },
-        ],
+        designations: [designationFact],
       },
       run.owner,
       run.fence,
@@ -674,6 +909,32 @@ describe("building_control_award_quarantine staging", () => {
     );
     const noticeRawHash = sha256("notice-raw");
     const productRawHash = sha256("product-raw");
+    const noticeFact = {
+      noticeNo: "20250821001",
+      noticeOrder: "00",
+      noticeName: "Notice 1",
+      publicationDate: "2025-08-21",
+      demandAgencyCode: null,
+      demandAgencyName: "Agency",
+      noticeUrl: null,
+      status: "active",
+      targetParentProductCode: null,
+      targetDetailProductCode: null,
+      rawJson: "{}",
+      sourceHash: noticeRawHash,
+    };
+    const noticeIdentityHash = computeSourceIdentityHash(
+      "notice-publication",
+      [noticeFact.noticeNo, noticeFact.noticeOrder],
+    );
+    completeCheckpointForFacts(
+      repository,
+      run,
+      "notice-publication",
+      "notice-bulk-blocked",
+      [noticeFact],
+      { [noticeIdentityHash]: noticeRawHash },
+    );
     repository.stageNoticeSnapshot(
       {
         runId: run.runId,
@@ -682,25 +943,35 @@ describe("building_control_award_quarantine staging", () => {
         dateTo: "2026-08-21",
         expectedCount: 1,
         pageCount: 1,
-        notices: [
-          {
-            noticeNo: "20250821001",
-            noticeOrder: "00",
-            noticeName: "Notice 1",
-            publicationDate: "2025-08-21",
-            demandAgencyCode: null,
-            demandAgencyName: "Agency",
-            noticeUrl: null,
-            status: "active",
-            targetParentProductCode: null,
-            targetDetailProductCode: null,
-            rawJson: "{}",
-            sourceHash: noticeRawHash,
-          },
-        ],
+        notices: [noticeFact],
       },
       run.owner,
       run.fence,
+    );
+    const productFact = {
+      noticeNo: "20250821001",
+      noticeOrder: "00",
+      bidClassNo: "39121801",
+      parentProductCode: "39121801",
+      detailProductCode: null,
+      providerRowIdentity: "row-1",
+      exactMatch: 0 as const,
+      rawJson: "{}",
+      sourceHash: productRawHash,
+    };
+    const productIdentityHash = computeSourceIdentityHash("notice-product", [
+      productFact.noticeNo,
+      productFact.noticeOrder,
+      productFact.bidClassNo,
+      productFact.providerRowIdentity,
+    ]);
+    completeCheckpointForFacts(
+      repository,
+      run,
+      "notice-product",
+      "notice-product-blocked",
+      [productFact],
+      { [productIdentityHash]: productRawHash },
     );
     repository.stageNoticeProductSnapshot(
       {
@@ -710,22 +981,47 @@ describe("building_control_award_quarantine staging", () => {
         dateTo: "2026-08-21",
         expectedCount: 1,
         pageCount: 1,
-        products: [
-          {
-            noticeNo: "20250821001",
-            noticeOrder: "00",
-            bidClassNo: "39121801",
-            parentProductCode: "39121801",
-            detailProductCode: null,
-            providerRowIdentity: "row-1",
-            exactMatch: 0,
-            rawJson: "{}",
-            sourceHash: productRawHash,
-          },
-        ],
+        products: [productFact],
       },
       run.owner,
       run.fence,
+    );
+    const awardFact = {
+      noticeNo: "20250821001",
+      noticeOrder: "00",
+      bidClassNo: "39121801",
+      rbidNo: "001",
+      providerResultIdentity: "20250821001|00|39121801|001",
+      finalAwardDate: "2025-08-22",
+      winnerBizNo: "2148204708",
+      winnerName: "Cooperative",
+      sourceStatus: "final",
+      winnerRowsJson: "[]",
+      rawJson: "{}",
+      sourceHash: sha256("award-raw"),
+      canonicalAward: {
+        finalAwardDate: "2025-08-22",
+        winnerBizNo: "2148204708",
+        winnerName: "Cooperative",
+        awardAmount: null,
+        awardRate: null,
+        finalResultIdentity: null,
+        rawJson: null,
+      },
+    };
+    const awardIdentityHash = computeSourceIdentityHash("award-registration", [
+      awardFact.noticeNo,
+      awardFact.noticeOrder,
+      awardFact.bidClassNo,
+      awardFact.rbidNo,
+    ]);
+    completeCheckpointForFacts(
+      repository,
+      run,
+      "award-registration",
+      "award-bulk-blocked",
+      [awardFact],
+      { [awardIdentityHash]: awardFact.sourceHash },
     );
     const result = repository.stageAwardSnapshot(
       {
@@ -735,31 +1031,7 @@ describe("building_control_award_quarantine staging", () => {
         dateTo: "2026-08-21",
         expectedCount: 1,
         pageCount: 1,
-        awards: [
-          {
-            noticeNo: "20250821001",
-            noticeOrder: "00",
-            bidClassNo: "39121801",
-            rbidNo: "001",
-            providerResultIdentity: "20250821001|00|39121801|001",
-            finalAwardDate: "2025-08-22",
-            winnerBizNo: "2148204708",
-            winnerName: "Cooperative",
-            sourceStatus: "final",
-            winnerRowsJson: "[]",
-            rawJson: "{}",
-            sourceHash: sha256("award-raw"),
-            canonicalAward: {
-              finalAwardDate: "2025-08-22",
-              winnerBizNo: "2148204708",
-              winnerName: "Cooperative",
-              awardAmount: null,
-              awardRate: null,
-              finalResultIdentity: null,
-              rawJson: null,
-            },
-          },
-        ],
+        awards: [awardFact],
         quarantines: [],
       },
       run.owner,
@@ -811,9 +1083,7 @@ describe("building_control_sync_checkpoints clearCompletedCheckpoints", () => {
         cursor: 1,
         pageSize: 10,
         totalCount: 10,
-        factJson: "{}",
-        identityHash: sha256("page1-identity"),
-        sourceHash: sha256("page1-source"),
+        ...checkpointPayload("clear-page1", 10),
         now: "2026-08-21T00:02:00.000Z",
       },
       run.runId,
@@ -874,6 +1144,32 @@ describe("typed snapshot generation completion", () => {
     );
     const noticeNo = "20250821999";
     const noticeOrder = "00";
+    const noticeFact = {
+      noticeNo,
+      noticeOrder,
+      noticeName: "Typed writer notice",
+      publicationDate: "2025-08-21",
+      demandAgencyCode: null,
+      demandAgencyName: "Agency",
+      noticeUrl: null,
+      status: "active",
+      targetParentProductCode: null,
+      targetDetailProductCode: null,
+      rawJson: "{}",
+      sourceHash: sha256("typed-writer-notice"),
+    };
+    const noticeIdentityHash = computeSourceIdentityHash(
+      "notice-publication",
+      [noticeNo, noticeOrder],
+    );
+    completeCheckpointForFacts(
+      repository,
+      run,
+      "notice-publication",
+      "notice-bulk-typed",
+      [noticeFact],
+      { [noticeIdentityHash]: noticeFact.sourceHash },
+    );
     const staged = repository.stageNoticeSnapshot(
       {
         runId: run.runId,
@@ -882,22 +1178,7 @@ describe("typed snapshot generation completion", () => {
         dateTo: "2026-08-21",
         expectedCount: 1,
         pageCount: 1,
-        notices: [
-          {
-            noticeNo,
-            noticeOrder,
-            noticeName: "Typed writer notice",
-            publicationDate: "2025-08-21",
-            demandAgencyCode: null,
-            demandAgencyName: "Agency",
-            noticeUrl: null,
-            status: "active",
-            targetParentProductCode: null,
-            targetDetailProductCode: null,
-            rawJson: "{}",
-            sourceHash: sha256("typed-writer-notice"),
-          },
-        ],
+        notices: [noticeFact],
       },
       run.owner,
       run.fence,

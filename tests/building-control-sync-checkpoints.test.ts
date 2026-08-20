@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeSqliteSchema } from "@/lib/db/init";
 import {
+  computeSourceIdentityHash,
   createBuildingControlRepository,
   type BuildingControlRepository,
 } from "@/lib/building-control/repository";
@@ -27,6 +28,33 @@ afterEach(() => {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function checkpointPayload(seed: string, factCount: number) {
+  const facts = Array.from({ length: factCount }, (_, index) => ({
+    checkpointFact: seed,
+    index,
+  }));
+  const identityHashes = facts.map((_, index) =>
+    sha256(`${seed}-identity-${index}`),
+  );
+  const sourceHashes = Object.fromEntries(
+    identityHashes.map((identityHash, index) => [
+      identityHash,
+      sha256(`${seed}-source-${index}`),
+    ]),
+  );
+  const factJson = JSON.stringify({
+    schemaVersion: 1,
+    facts,
+    identityHashes,
+    sourceHashes,
+  });
+  return {
+    factJson,
+    identityHash: sha256([...identityHashes].sort().join("\n")),
+    sourceHash: sha256(factJson),
+  };
 }
 
 function openDb() {
@@ -422,13 +450,7 @@ describe("building_control_sync_checkpoints credential rejection", () => {
         cursor: 1,
         pageSize: 10,
         totalCount: 10,
-        factJson: JSON.stringify({
-          items: [
-            { bidNtceNo: "20250821001", bidNtceOrd: "00", bidNtceNm: "Test" },
-          ],
-        }),
-        identityHash: sha256("page-clean"),
-        sourceHash: sha256("page-clean-source"),
+        ...checkpointPayload("page-clean", 10),
         now: "2026-08-21T00:02:00.000Z",
       },
       run.runId,
@@ -437,9 +459,233 @@ describe("building_control_sync_checkpoints credential rejection", () => {
     );
     expect(result.nextCursor).toBe(2);
   });
+
+  it("rejects checkpoint hashes that are not derived from the persisted chunk payload", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    registerBulkNoticePlan(
+      repository,
+      run,
+      "notice-bulk-hash-binding",
+      true,
+    );
+
+    const identity = sha256("notice:20250821001|00");
+    const sourceHash = sha256("notice-source-row");
+    const factJson = JSON.stringify({
+      schemaVersion: 1,
+      facts: [{ noticeNo: "20250821001", noticeOrder: "00" }],
+      identityHashes: [identity],
+      sourceHashes: { [identity]: sourceHash },
+    });
+
+    expect(() =>
+      repository.stageCheckpointPage(
+        {
+          source: "notice-publication",
+          requestKey: "notice-bulk-hash-binding",
+          cursor: 1,
+          pageSize: 10,
+          totalCount: 1,
+          factJson,
+          identityHash: sha256("wrong-identity-set"),
+          sourceHash: sha256(factJson),
+          now: "2026-08-21T00:02:00.000Z",
+        },
+        run.runId,
+        run.owner,
+        run.fence,
+      ),
+    ).toThrow(/identity.*hash|hash.*identity|derived|mismatch/i);
+  });
+
+  it("rejects a checkpoint payload whose source hash map does not match its identities", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    registerBulkNoticePlan(repository, run, "notice-bulk-source-map", true);
+    const identity = sha256("notice:source-map");
+    const factJson = JSON.stringify({
+      schemaVersion: 1,
+      facts: [{ noticeNo: "20250821004", noticeOrder: "00" }],
+      identityHashes: [identity],
+      sourceHashes: {},
+    });
+
+    expect(() =>
+      repository.stageCheckpointPage(
+        {
+          source: "notice-publication",
+          requestKey: "notice-bulk-source-map",
+          cursor: 1,
+          pageSize: 10,
+          totalCount: 1,
+          factJson,
+          identityHash: sha256(identity),
+          sourceHash: sha256(factJson),
+          now: "2026-08-21T00:02:00.000Z",
+        },
+        run.runId,
+        run.owner,
+        run.fence,
+      ),
+    ).toThrow(/source.*hash|hash.*map|missing|identity/i);
+  });
+
+  it("rejects a checkpoint page whose fact count does not match provider cardinality", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    registerBulkNoticePlan(repository, run, "notice-bulk-cardinality", true);
+    const factJson = JSON.stringify({
+      schemaVersion: 1,
+      facts: [],
+      identityHashes: [],
+      sourceHashes: {},
+    });
+
+    expect(() =>
+      repository.stageCheckpointPage(
+        {
+          source: "notice-publication",
+          requestKey: "notice-bulk-cardinality",
+          cursor: 1,
+          pageSize: 10,
+          totalCount: 1,
+          factJson,
+          identityHash: sha256(""),
+          sourceHash: sha256(factJson),
+          now: "2026-08-21T00:02:00.000Z",
+        },
+        run.runId,
+        run.owner,
+        run.fence,
+      ),
+    ).toThrow(/fact|cardinality|count|page/i);
+  });
 });
 
 describe("building_control_sync_checkpoints snapshot writer guards", () => {
+  it("rejects a notice snapshot whose facts differ from its completed checkpoint payload", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    registerBulkNoticePlan(
+      repository,
+      run,
+      "notice-bulk-payload-mismatch",
+      true,
+    );
+    const checkpointNotice = {
+      noticeNo: "20250821998",
+      noticeOrder: "00",
+      noticeName: "Checkpoint Notice",
+      publicationDate: "2025-08-21",
+      demandAgencyCode: null,
+      demandAgencyName: "Agency",
+      noticeUrl: null,
+      status: "active",
+      targetParentProductCode: null,
+      targetDetailProductCode: null,
+      rawJson: "{}",
+      sourceHash: sha256("checkpoint-notice-source"),
+    };
+    const identityHash = computeSourceIdentityHash("notice-publication", [
+      checkpointNotice.noticeNo,
+      checkpointNotice.noticeOrder,
+    ]);
+    const factJson = JSON.stringify({
+      schemaVersion: 1,
+      facts: [checkpointNotice],
+      identityHashes: [identityHash],
+      sourceHashes: { [identityHash]: checkpointNotice.sourceHash },
+    });
+    repository.stageCheckpointPage(
+      {
+        source: "notice-publication",
+        requestKey: "notice-bulk-payload-mismatch",
+        cursor: 1,
+        pageSize: 10,
+        totalCount: 1,
+        factJson,
+        identityHash: sha256(identityHash),
+        sourceHash: sha256(factJson),
+        now: "2026-08-21T00:02:00.000Z",
+      },
+      run.runId,
+      run.owner,
+      run.fence,
+    );
+    repository.completeCheckpoint(
+      run.runId,
+      "notice-publication",
+      "notice-bulk-payload-mismatch",
+      run.owner,
+      run.fence,
+      "2026-08-21T00:03:00.000Z",
+    );
+
+    expect(() =>
+      repository.stageNoticeSnapshot(
+        {
+          runId: run.runId,
+          source: "notice-publication",
+          dateFrom: "2025-01-01",
+          dateTo: "2026-08-21",
+          expectedCount: 1,
+          pageCount: 1,
+          notices: [
+            {
+              ...checkpointNotice,
+              noticeName: "Tampered Notice",
+            },
+          ],
+        },
+        run.owner,
+        run.fence,
+      ),
+    ).toThrow(/checkpoint|payload|mismatch|fact/i);
+  });
+
+  it("rejects stageNoticeSnapshot when a sealed request has no completed checkpoint", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    registerBulkNoticePlan(
+      repository,
+      run,
+      "notice-bulk-no-checkpoint",
+      true,
+    );
+
+    expect(() =>
+      repository.stageNoticeSnapshot(
+        {
+          runId: run.runId,
+          source: "notice-publication",
+          dateFrom: "2025-01-01",
+          dateTo: "2026-08-21",
+          expectedCount: 1,
+          pageCount: 1,
+          notices: [
+            {
+              noticeNo: "20250821003",
+              noticeOrder: "00",
+              noticeName: "Notice 3",
+              publicationDate: "2025-08-21",
+              demandAgencyCode: null,
+              demandAgencyName: "Agency",
+              noticeUrl: null,
+              status: "active",
+              targetParentProductCode: null,
+              targetDetailProductCode: null,
+              rawJson: "{}",
+              sourceHash: sha256("notice-no-checkpoint"),
+            },
+          ],
+        },
+        run.owner,
+        run.fence,
+      ),
+    ).toThrow(/checkpoint|complete|request/i);
+  });
+
   it("rejects stageNoticeSnapshot when the request set is not sealed", () => {
     const { repository } = openDb();
     const run = beginRun(repository);
@@ -604,6 +850,52 @@ describe("building_control_sync_checkpoints snapshot writer guards", () => {
 });
 
 describe("building_control_sync_checkpoints resume behavior", () => {
+  it("rehydrates validated facts and hashes in persisted resume chunks", () => {
+    const { repository } = openDb();
+    const run = beginRun(repository);
+    const requestKey = "notice-bulk-rehydrate";
+    registerBulkNoticePlan(repository, run, requestKey, true);
+    const payload = checkpointPayload("rehydrate-page1", 2);
+    repository.stageCheckpointPage(
+      {
+        source: "notice-publication",
+        requestKey,
+        cursor: 1,
+        pageSize: 2,
+        totalCount: 2,
+        ...payload,
+        now: "2026-08-21T00:02:00.000Z",
+      },
+      run.runId,
+      run.owner,
+      run.fence,
+    );
+    const seed = repository.readResumeSeed(
+      run.runId,
+      "notice-publication",
+      requestKey,
+    );
+    const expectedPayload = JSON.parse(payload.factJson) as {
+      facts: unknown[];
+      identityHashes: string[];
+      sourceHashes: Record<string, string>;
+    };
+    const chunk = seed?.persistedChunks[0];
+
+    expect(seed?.persistedChunks).toHaveLength(1);
+    expect(chunk).toMatchObject({
+      source: "notice-publication",
+      requestKey,
+      cursorKind: "page",
+      cursor: 1,
+      pageSize: 2,
+      totalCount: 2,
+    });
+    expect(chunk?.facts).toEqual(expectedPayload.facts);
+    expect(chunk?.identityHashes).toEqual(expectedPayload.identityHashes);
+    expect(chunk?.sourceHashes).toEqual(expectedPayload.sourceHashes);
+  });
+
   it("returns the saved next cursor as the first fetched page after resume", () => {
     const { repository } = openDb();
     const run = beginRun(repository);
@@ -644,9 +936,7 @@ describe("building_control_sync_checkpoints resume behavior", () => {
         cursor: 1,
         pageSize: 10,
         totalCount: 25,
-        factJson: '{"items":[]}',
-        identityHash: sha256("page1-resume"),
-        sourceHash: sha256("page1-resume-source"),
+        ...checkpointPayload("page1-resume", 10),
         now: "2026-08-21T00:02:00.000Z",
       },
       run.runId,
@@ -660,9 +950,7 @@ describe("building_control_sync_checkpoints resume behavior", () => {
         cursor: 2,
         pageSize: 10,
         totalCount: 25,
-        factJson: '{"items":[]}',
-        identityHash: sha256("page2-resume"),
-        sourceHash: sha256("page2-resume-source"),
+        ...checkpointPayload("page2-resume", 10),
         now: "2026-08-21T00:02:30.000Z",
       },
       run.runId,
@@ -718,9 +1006,7 @@ describe("building_control_sync_checkpoints resume behavior", () => {
         cursor: 1,
         pageSize: 10,
         totalCount: 25,
-        factJson: '{"items":[]}',
-        identityHash: sha256("page1-drift"),
-        sourceHash: sha256("page1-drift-source"),
+        ...checkpointPayload("page1-drift", 10),
         now: "2026-08-21T00:02:00.000Z",
       },
       run.runId,
@@ -735,9 +1021,7 @@ describe("building_control_sync_checkpoints resume behavior", () => {
           cursor: 5,
           pageSize: 10,
           totalCount: 25,
-          factJson: '{"items":[]}',
-          identityHash: sha256("page5-drift"),
-          sourceHash: sha256("page5-drift-source"),
+          ...checkpointPayload("page5-drift", 0),
           now: "2026-08-21T00:02:30.000Z",
         },
         run.runId,
@@ -787,9 +1071,7 @@ describe("building_control_sync_checkpoints resume behavior", () => {
         cursor: 1,
         pageSize: 10,
         totalCount: 25,
-        factJson: '{"items":[]}',
-        identityHash: sha256("page1-reset"),
-        sourceHash: sha256("page1-reset-source"),
+        ...checkpointPayload("page1-reset", 10),
         now: "2026-08-21T00:02:00.000Z",
       },
       run.runId,
