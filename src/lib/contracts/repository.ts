@@ -10,9 +10,9 @@ import type { Db } from "@/lib/db/client";
 import { apiEnrichmentLogs, businesses, contractRecords, importRuns } from "@/lib/db/schema";
 import { parseBusinessNumber, parseBusinessNumberList } from "@/lib/domain/business-number";
 import {
-  EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
+  CONTRACT_BUSINESS_PROFILE_SOURCE_NAME,
   upsertBusinessProfilePriority,
-} from "@/lib/excellent-products/profile";
+} from "@/lib/businesses/profile";
 import type { ParsedContractCsvRow } from "@/lib/import/csv";
 
 const LEGACY_SHOPPING_THIRD_PARTY_SOURCE_DATASET = "g2b-shopping-mall-third-party-unit";
@@ -32,7 +32,7 @@ export function importParsedRows(
   db: Db,
   rows: ParsedContractCsvRow[],
   sourceFileName: string,
-  sourceName = EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
+  sourceName = CONTRACT_BUSINESS_PROFILE_SOURCE_NAME,
 ): ImportResult {
   const startedAt = new Date().toISOString();
   const result = upsertParsedRows(db, rows);
@@ -75,7 +75,7 @@ export function upsertParsedRows(db: Db, rows: ParsedContractCsvRow[]): ImportRe
             representativeName: row.representativeName ?? null,
             address: row.address ?? null,
             phone: null,
-            profileSource: EXCELLENT_PRODUCTS_CONTRACT_SOURCE_NAME,
+            profileSource: CONTRACT_BUSINESS_PROFILE_SOURCE_NAME,
             lastSyncedAt: null,
           }, now);
 
