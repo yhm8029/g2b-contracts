@@ -170,7 +170,7 @@ fn server_responds(port: u16) -> bool {
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
     let request =
-        format!("GET /competitors HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+        format!("GET /market-share HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
     }
@@ -239,7 +239,7 @@ fn main() {
                         .lock()
                         .map_err(|_| "failed to store server state".to_string())? = Some(child);
                     wait_for_server(&state, port)?;
-                    let url = tauri::Url::parse(&format!("http://127.0.0.1:{port}/competitors"))
+                    let url = tauri::Url::parse(&format!("http://127.0.0.1:{port}/market-share"))
                         .map_err(|error| format!("invalid local URL: {error}"))?;
                     window
                         .navigate(url)
