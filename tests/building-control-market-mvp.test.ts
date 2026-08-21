@@ -311,6 +311,7 @@ describe("incremental market persistence", () => {
     const contract = mapShoppingMallContractRow({
       cntrctDlvrReqNo: "C-1",
       cntrctDlvrReqDate: "20260821",
+      IntlCntrctDlvrReqDate: "20250210",
       bizno: "2048145651",
       corpNm: "(주)파노텍",
       dtilPrdctClsfcNo: "3912180101",
@@ -321,7 +322,7 @@ describe("incremental market persistence", () => {
 
     expect(contract).toMatchObject({
       contractNo: "C-1",
-      contractDate: "2026-08-21",
+      contractDate: "2025-02-10",
       winnerBizNo: "2048145651",
       regionName: "부산",
     });

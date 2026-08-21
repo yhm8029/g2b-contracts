@@ -344,7 +344,10 @@ export function mapShoppingMallContractRow(
   noticeByIdentity: Map<string, TargetNotice>,
 ): StoredMarketContract | null {
   const contractNo = text(item.cntrctDlvrReqNo) || text(item.cntrctNo);
-  const contractDate = normalizeDate(item.cntrctDlvrReqDate ?? item.cntrctDate ?? item.cntrctCnclsDate ?? item.dlvrReqRcptDate);
+  const contractDate = normalizeDate(
+    item.IntlCntrctDlvrReqDate ?? item.intlCntrctDlvrReqDate
+      ?? item.cntrctDlvrReqDate ?? item.cntrctDate ?? item.cntrctCnclsDate ?? item.dlvrReqRcptDate,
+  );
   const winnerBizNo = digits(item.bizno) || digits(item.cntrctCorpBizno);
   const winnerName = text(item.corpNm);
   if (!contractNo || !contractDate || !winnerBizNo || !winnerName) return null;
