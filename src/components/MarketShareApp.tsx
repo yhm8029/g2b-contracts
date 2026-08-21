@@ -70,7 +70,9 @@ export function MarketShareApp() {
       if (!response.ok) throw new Error(payload.detail ?? payload.error ?? "동기화에 실패했습니다.");
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "동기화에 실패했습니다.");
+      const message = caught instanceof Error ? caught.message : "동기화에 실패했습니다.";
+      await load();
+      setError(message);
     } finally {
       setSyncing(false);
     }

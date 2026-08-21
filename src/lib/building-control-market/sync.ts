@@ -12,6 +12,8 @@ import {
   replaceMarketAwards,
   replaceMarketContracts,
   setMarketSyncState,
+  upsertMarketAwards,
+  upsertMarketContracts,
   type StoredMarketAward,
   type StoredMarketContract,
 } from "./store";
@@ -38,9 +40,17 @@ export async function syncMarketData(db: Database.Database, now = new Date()) {
   setMarketSyncState(db, "syncing", "\uB098\uB77C\uC7A5\uD130 \uB370\uC774\uD130\uB97C \uC870\uD68C\uD558\uACE0 \uC788\uC2B5\uB2C8\uB2E4.");
   try {
     const notices = await collectTargetNotices(now);
-    const { awards, unresolvedCount } = await collectTargetAwards(notices, now);
-    const contracts = await collectTargetContracts(notices, now);
+    const { awards, unresolvedCount } = await collectTargetAwards(
+      notices,
+      now,
+      (chunk) => upsertMarketAwards(db, chunk),
+    );
     replaceMarketAwards(db, awards);
+    const contracts = await collectTargetContracts(
+      notices,
+      now,
+      (chunk) => upsertMarketContracts(db, chunk),
+    );
     replaceMarketContracts(db, contracts);
     const lastSyncedAt = new Date().toISOString();
     setMarketSyncState(
@@ -57,7 +67,7 @@ export async function syncMarketData(db: Database.Database, now = new Date()) {
       lastSyncedAt,
     };
   } catch (error) {
-    setMarketSyncState(db, "failed", "\uB3D9\uAE30\uD654\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4. \uC774\uC804 \uACB0\uACFC\uB97C \uC720\uC9C0\uD569\uB2C8\uB2E4.");
+    setMarketSyncState(db, "failed", "동기화가 중단되었습니다. 중단 전까지 수집한 데이터는 저장했습니다.");
     throw error;
   }
 }
@@ -104,7 +114,11 @@ async function collectTargetNotices(now: Date) {
   );
 }
 
-async function collectTargetAwards(notices: TargetNotice[], now: Date) {
+async function collectTargetAwards(
+  notices: TargetNotice[],
+  now: Date,
+  onProgress?: (awards: StoredMarketAward[]) => void,
+) {
   const noticeByIdentity = new Map(
     notices.map((notice) => [`${notice.noticeNo}|${notice.noticeOrder}`, notice]),
   );
@@ -120,12 +134,14 @@ async function collectTargetAwards(notices: TargetNotice[], now: Date) {
         `\uB099\uCC30 \uB4F1\uB85D\uAE30\uAC04 ${range.from}-${range.to}: ${error instanceof Error ? error.message : "unknown error"}`,
       );
     }
+    const touchedNoticeKeys = new Set<string>();
     for (const row of batch.awards) {
       const key = `${row.noticeNo}|${row.noticeOrder}`;
       if (!noticeByIdentity.has(key) || !isFinalAwardOnOrAfter(row, "2025-01-01")) continue;
       const existing = rowsByNotice.get(key) ?? [];
       existing.push(row);
       rowsByNotice.set(key, existing);
+      touchedNoticeKeys.add(key);
     }
     unresolvedCount += batch.unresolvedAwards.filter(
       (row) =>
@@ -133,29 +149,40 @@ async function collectTargetAwards(notices: TargetNotice[], now: Date) {
         row.noticeOrder !== null &&
         noticeByIdentity.has(`${row.noticeNo}|${row.noticeOrder}`),
     ).length;
+    if (onProgress && touchedNoticeKeys.size > 0) {
+      onProgress([...touchedNoticeKeys].map((key) => marketAwardFromRows(
+        noticeByIdentity.get(key)!,
+        rowsByNotice.get(key)!,
+      )));
+    }
   }
 
-  const awards: StoredMarketAward[] = [];
-  for (const [key, rows] of rowsByNotice) {
-    const notice = noticeByIdentity.get(key)!;
-    const award = collapseNoticeWinner(rows);
-    awards.push({
-      noticeNo: notice.noticeNo,
-      noticeOrder: notice.noticeOrder,
-      finalAwardDate: award.finalAwardDate,
-      winnerBizNo: award.winnerBizNo,
-      winnerName: award.winnerName,
-      amount: award.amount,
-      noticeName: notice.noticeName || null,
-      demandAgencyName: notice.demandAgencyName,
-      regionName: marketRegionName(notice.demandAgencyName),
-      sourceUrl: notice.sourceUrl,
-    });
-  }
+  const awards = [...rowsByNotice].map(([key, rows]) =>
+    marketAwardFromRows(noticeByIdentity.get(key)!, rows));
   return { awards, unresolvedCount };
 }
 
-async function collectTargetContracts(notices: TargetNotice[], now: Date) {
+function marketAwardFromRows(notice: TargetNotice, rows: AwardResultRow[]): StoredMarketAward {
+  const award = collapseNoticeWinner(rows);
+  return {
+    noticeNo: notice.noticeNo,
+    noticeOrder: notice.noticeOrder,
+    finalAwardDate: award.finalAwardDate,
+    winnerBizNo: award.winnerBizNo,
+    winnerName: award.winnerName,
+    amount: award.amount,
+    noticeName: notice.noticeName || null,
+    demandAgencyName: notice.demandAgencyName,
+    regionName: marketRegionName(notice.demandAgencyName),
+    sourceUrl: notice.sourceUrl,
+  };
+}
+
+async function collectTargetContracts(
+  notices: TargetNotice[],
+  now: Date,
+  onProgress?: (contracts: StoredMarketContract[]) => void,
+) {
   const noticeByIdentity = new Map(
     notices.map((notice) => [`${notice.noticeNo}|${notice.noticeOrder}`, notice] as const),
   );
@@ -169,12 +196,15 @@ async function collectTargetContracts(notices: TargetNotice[], now: Date) {
       if (payload.pageNo !== pageNo || payload.pageSize !== PAGE_SIZE) {
         throw new Error("\uD45C\uC900\uACC4\uC57D \uD398\uC774\uC9C0 \uC815\uBCF4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
       }
+      const pageContracts: StoredMarketContract[] = [];
       for (const item of payload.items) {
         const contract = mapStandardContractRow(item, noticeByIdentity);
         if (!contract) continue;
         if (contract.contractDate < startDate || contract.contractDate > endDate) continue;
         contractByIdentity.set(contract.sourceIdentity, contract);
+        pageContracts.push(contract);
       }
+      if (pageContracts.length > 0) onProgress?.(pageContracts);
       if (pageNo >= Math.max(1, Math.ceil(payload.totalCount / PAGE_SIZE))) break;
     }
   }
@@ -185,12 +215,15 @@ async function collectTargetContracts(notices: TargetNotice[], now: Date) {
       if (payload.pageNo !== pageNo || payload.pageSize !== PAGE_SIZE) {
         throw new Error("\uC1A1\uC77C\uB9C8\uC744 \uACC4\uC57D \uD398\uC774\uC9C0 \uC815\uBCF4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
       }
+      const pageContracts: StoredMarketContract[] = [];
       for (const item of payload.items) {
         const contract = mapShoppingMallContractRow(item, noticeByIdentity);
         if (!contract) continue;
         if (contract.contractDate < startDate || contract.contractDate > endDate) continue;
         contractByIdentity.set(contract.sourceIdentity, contract);
+        pageContracts.push(contract);
       }
+      if (pageContracts.length > 0) onProgress?.(pageContracts);
       if (pageNo >= Math.max(1, Math.ceil(payload.totalCount / PAGE_SIZE))) break;
     }
   }

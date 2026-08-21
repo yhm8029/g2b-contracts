@@ -141,21 +141,38 @@ export function updateExcellentRegistry(db: Database.Database, input: StoredExce
 }
 
 export function replaceMarketAwards(db: Database.Database, awards: StoredMarketAward[]) {
+  db.transaction(() => {
+    db.prepare("DELETE FROM market_awards").run();
+    writeMarketAwards(db, awards);
+  })();
+}
+
+export function upsertMarketAwards(db: Database.Database, awards: StoredMarketAward[]) {
+  db.transaction(() => writeMarketAwards(db, awards))();
+}
+
+function writeMarketAwards(db: Database.Database, awards: StoredMarketAward[]) {
   const insert = db.prepare(`INSERT INTO market_awards
     (notice_no, notice_order, final_award_date, winner_biz_no, winner_name, amount,
      notice_name, demand_agency_name, region_name, source_url)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  db.transaction(() => {
-    db.prepare("DELETE FROM market_awards").run();
-    for (const award of awards) {
-      insert.run(
-        award.noticeNo, award.noticeOrder, award.finalAwardDate, normalizeBizNo(award.winnerBizNo),
-        award.winnerName.trim(), award.amount,
-        award.noticeName ?? null, award.demandAgencyName ?? null, deriveRegionName(award.demandAgencyName),
-        award.sourceUrl,
-      );
-    }
-  })();
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(notice_no, notice_order) DO UPDATE SET
+      final_award_date=excluded.final_award_date,
+      winner_biz_no=excluded.winner_biz_no,
+      winner_name=excluded.winner_name,
+      amount=excluded.amount,
+      notice_name=excluded.notice_name,
+      demand_agency_name=excluded.demand_agency_name,
+      region_name=excluded.region_name,
+      source_url=excluded.source_url`);
+  for (const award of awards) {
+    insert.run(
+      award.noticeNo, award.noticeOrder, award.finalAwardDate, normalizeBizNo(award.winnerBizNo),
+      award.winnerName.trim(), award.amount,
+      award.noticeName ?? null, award.demandAgencyName ?? null, deriveRegionName(award.demandAgencyName),
+      award.sourceUrl,
+    );
+  }
 }
 
 export function listMarketAwards(db: Database.Database): StoredMarketAward[] {
@@ -174,21 +191,41 @@ export function listMarketAwards(db: Database.Database): StoredMarketAward[] {
 }
 
 export function replaceMarketContracts(db: Database.Database, contracts: StoredMarketContract[]) {
+  db.transaction(() => {
+    db.prepare("DELETE FROM market_contracts").run();
+    writeMarketContracts(db, contracts);
+  })();
+}
+
+export function upsertMarketContracts(db: Database.Database, contracts: StoredMarketContract[]) {
+  db.transaction(() => writeMarketContracts(db, contracts))();
+}
+
+function writeMarketContracts(db: Database.Database, contracts: StoredMarketContract[]) {
   const insert = db.prepare(`INSERT INTO market_contracts
     (source_identity, contract_no, contract_name, contract_date, notice_no, notice_order,
      winner_biz_no, winner_name, amount, demand_agency_name, region_name, source_url)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  db.transaction(() => {
-    db.prepare("DELETE FROM market_contracts").run();
-    for (const contract of contracts) {
-      insert.run(
-        contract.sourceIdentity, contract.contractNo, contract.contractName, contract.contractDate,
-        contract.noticeNo, contract.noticeOrder,
-        normalizeBizNo(contract.winnerBizNo), contract.winnerName.trim(), contract.amount,
-        contract.demandAgencyName, deriveRegionName(contract.demandAgencyName), contract.sourceUrl,
-      );
-    }
-  })();
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source_identity) DO UPDATE SET
+      contract_no=excluded.contract_no,
+      contract_name=excluded.contract_name,
+      contract_date=excluded.contract_date,
+      notice_no=excluded.notice_no,
+      notice_order=excluded.notice_order,
+      winner_biz_no=excluded.winner_biz_no,
+      winner_name=excluded.winner_name,
+      amount=excluded.amount,
+      demand_agency_name=excluded.demand_agency_name,
+      region_name=excluded.region_name,
+      source_url=excluded.source_url`);
+  for (const contract of contracts) {
+    insert.run(
+      contract.sourceIdentity, contract.contractNo, contract.contractName, contract.contractDate,
+      contract.noticeNo, contract.noticeOrder,
+      normalizeBizNo(contract.winnerBizNo), contract.winnerName.trim(), contract.amount,
+      contract.demandAgencyName, deriveRegionName(contract.demandAgencyName), contract.sourceUrl,
+    );
+  }
 }
 
 export function listMarketContracts(db: Database.Database): StoredMarketContract[] {

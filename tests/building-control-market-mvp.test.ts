@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import Database from "better-sqlite3";
 
 import {
   buildMarketShareReport,
@@ -9,6 +10,13 @@ import {
   type MarketAwardInput,
   type MarketContractInput,
 } from "@/lib/building-control-market/report";
+import {
+  initMarketStore,
+  listMarketAwards,
+  listMarketContracts,
+  upsertMarketAwards,
+  upsertMarketContracts,
+} from "@/lib/building-control-market/store";
 
 const cooperative = "111-22-33333";
 
@@ -141,5 +149,31 @@ describe("market share UI text", () => {
     expect(source).not.toMatch(/풍목|폐맨|업숍|평집|마료/);
     expect(source).toContain("품목번호");
     expect(source).toContain("엑셀 다운로드");
+  });
+});
+
+describe("incremental market persistence", () => {
+  it("keeps completed rows when later chunks are upserted", () => {
+    const db = new Database(":memory:");
+    initMarketStore(db);
+    upsertMarketAwards(db, [{
+      noticeNo: "N-1", noticeOrder: "1", finalAwardDate: "2026-01-01",
+      winnerBizNo: "1111111111", winnerName: "업체1", amount: 100,
+      noticeName: "공고1", demandAgencyName: "부산광역시", regionName: "부산", sourceUrl: null,
+    }]);
+    upsertMarketAwards(db, [{
+      noticeNo: "N-2", noticeOrder: "1", finalAwardDate: "2026-01-02",
+      winnerBizNo: "2222222222", winnerName: "업체2", amount: 200,
+      noticeName: "공고2", demandAgencyName: "서울특별시", regionName: "기타", sourceUrl: null,
+    }]);
+    upsertMarketContracts(db, [{
+      sourceIdentity: "contract-1", contractNo: "C-1", contractName: "계약1",
+      contractDate: "2026-01-03", noticeNo: "N-1", noticeOrder: "1",
+      winnerBizNo: "1111111111", winnerName: "업체1", amount: 100,
+      demandAgencyName: "부산광역시", regionName: "부산", sourceUrl: null,
+    }]);
+    expect(listMarketAwards(db)).toHaveLength(2);
+    expect(listMarketContracts(db)).toHaveLength(1);
+    db.close();
   });
 });

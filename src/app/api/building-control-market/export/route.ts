@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
     });
   } catch {
     return NextResponse.json(
-      { error: "\uc5c5\uc20d\uc744 \uc0dd\uc131\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4." },
+      { error: "엑셀 파일을 생성하지 못했습니다." },
       { status: 400 },
     );
   } finally {
