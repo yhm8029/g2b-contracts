@@ -110,6 +110,7 @@ export function initMarketStore(db: Database.Database) {
 
   upgradeMarketStore(db);
   removeExcludedMarketContracts(db);
+  removeDuplicateMarketContracts(db);
 
   const insert = db.prepare(`INSERT OR IGNORE INTO market_excellent_registry
     (biz_no, company_name, designation_no, designation_start_date, designation_end_date, enabled, display_order)
@@ -122,6 +123,23 @@ function removeExcludedMarketContracts(db: Database.Database) {
   db.prepare(`DELETE FROM market_contracts
     WHERE replace(replace(replace(replace(contract_name, ' ', ''), char(9), ''), char(10), ''), char(13), '')
       LIKE ?`).run(`%${THIRD_PARTY_UNIT_PRICE_CONTRACT}%`);
+}
+
+function removeDuplicateMarketContracts(db: Database.Database) {
+  const normalizedName = "replace(replace(replace(replace(trim(contract_name), ' ', ''), char(9), ''), char(10), ''), char(13), '')";
+  const normalizedAgency = "replace(replace(replace(replace(trim(coalesce(demand_agency_name, '')), ' ', ''), char(9), ''), char(10), ''), char(13), '')";
+  db.exec(`DELETE FROM market_contracts
+    WHERE source_identity IN (
+      SELECT source_identity FROM (
+        SELECT source_identity,
+          row_number() OVER (
+            PARTITION BY winner_biz_no, ${normalizedName}, ${normalizedAgency}
+            ORDER BY contract_date ASC, contract_no ASC, source_identity ASC
+          ) AS duplicate_rank
+        FROM market_contracts
+      )
+      WHERE duplicate_rank > 1
+    )`);
 }
 
 function upgradeMarketStore(db: Database.Database) {
@@ -269,6 +287,7 @@ function writeMarketContracts(db: Database.Database, contracts: StoredMarketCont
       contract.demandAgencyName, deriveRegionName(contract.demandAgencyName), contract.sourceUrl,
     );
   }
+  removeDuplicateMarketContracts(db);
 }
 
 export function listMarketContracts(db: Database.Database): StoredMarketContract[] {

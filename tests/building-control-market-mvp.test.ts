@@ -215,6 +215,41 @@ describe("shopping mall workbook", () => {
 });
 
 describe("incremental market persistence", () => {
+  it("keeps only the earliest contract when a later change contract repeats it", () => {
+    const db = new Database(":memory:");
+    initMarketStore(db);
+    const shared = {
+      contractName: "\uAE30\uCD08\uC0DD\uD65C\uAC70\uC810 \uBE4C\uB529\uC790\uB3D9\uC81C\uC5B4\uC7A5\uCE58 \uAD6C\uB9E4",
+      noticeNo: null,
+      noticeOrder: null,
+      winnerBizNo: "3148613145",
+      winnerName: "company",
+      amount: 100,
+      demandAgencyName: "\uD55C\uAD6D\uB18D\uC5B4\uCD0C\uACF5\uC0AC \uD64D\uC131\uC9C0\uC0AC",
+      regionName: "\uAE30\uD0C0",
+      sourceUrl: null,
+    };
+    upsertMarketContracts(db, [{
+      ...shared,
+      sourceIdentity: "original",
+      contractNo: "R25TA00357976",
+      contractDate: "2025-12-10",
+    }]);
+    upsertMarketContracts(db, [{
+      ...shared,
+      sourceIdentity: "changed",
+      contractNo: "R26TA01557413",
+      contractDate: "2026-03-10",
+    }]);
+
+    expect(listMarketContracts(db)).toMatchObject([{
+      sourceIdentity: "original",
+      contractNo: "R25TA00357976",
+      contractDate: "2025-12-10",
+    }]);
+    db.close();
+  });
+
   it("removes previously stored framework contracts during initialization", () => {
     const db = new Database(":memory:");
     initMarketStore(db);
