@@ -58,6 +58,7 @@ export interface CollectAwardRegistrationInput {
   dateTo: string;
   pageSize: number;
   maxPages: number;
+  allowDuplicateGrains?: boolean;
   fetchJson?: G2bFetchJson;
 }
 
@@ -584,7 +585,9 @@ export async function collectAwardRegistration(
   const result = await collectCompletePages<AwardObservationRow>({
     pageSize: input.pageSize,
     maxPages: input.maxPages,
-    identity: (item) => item.providerResultIdentity,
+    identity: (item) => input.allowDuplicateGrains
+      ? `${item.providerResultIdentity}|${item.sourceHash}`
+      : item.providerResultIdentity,
     fetchPage: async (pageNo, pageSize) => {
       const payload = await fetchJson(G2B_OPERATION, {
         inqryDiv: "1",
@@ -623,7 +626,7 @@ export async function collectAwardRegistration(
       item.rebidNo !== null
     ) {
       const key = `${item.noticeNo}|${item.noticeOrder}|${item.bidClassNo}`;
-      if (seenGrain.has(key)) {
+      if (!input.allowDuplicateGrains && seenGrain.has(key)) {
         throw new Error("duplicate final award grain");
       }
       seenGrain.add(key);

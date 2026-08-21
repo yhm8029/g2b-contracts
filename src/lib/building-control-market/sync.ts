@@ -137,6 +137,7 @@ async function collectAwardRange(range: { from: string; to: string }): Promise<A
       dateTo: range.to,
       pageSize: PAGE_SIZE,
       maxPages: 50,
+      allowDuplicateGrains: true,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -150,6 +151,7 @@ async function collectAwardRange(range: { from: string; to: string }): Promise<A
         dateTo: day.to,
         pageSize: PAGE_SIZE,
         maxPages: 10,
+        allowDuplicateGrains: true,
       }));
     }
     return {

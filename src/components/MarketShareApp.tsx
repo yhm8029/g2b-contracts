@@ -54,8 +54,8 @@ export function MarketShareApp() {
     setError(null);
     try {
       const response = await fetch("/api/building-control-market/sync", { method: "POST" });
-      const payload = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "동기화에 실패했습니다.");
+      const payload = await response.json() as { error?: string; detail?: string };
+      if (!response.ok) throw new Error(payload.detail ?? payload.error ?? "동기화에 실패했습니다.");
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "동기화에 실패했습니다.");

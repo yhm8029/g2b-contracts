@@ -22,8 +22,8 @@ export async function POST() {
     const detail = redactG2bSecrets(message);
     console.error("building-control-market sync failed:", detail);
     return NextResponse.json({
-      error: "나라장터 동기화에 실패했습니다. API 키와 네트워크를 확인해 주세요.",
-      ...(process.env.NODE_ENV === "development" ? { detail } : {}),
+      error: "나라장터 동기화에 실패했습니다.",
+      detail,
     }, { status: 502 });
   } finally {
     inFlight = null;
