@@ -373,7 +373,7 @@ export async function collectNoticeInventory(
     inqryEndDt: input.dateTo,
   };
 
-  const noticeResult = await collectCompletePages<NoticeInventoryRow>({
+  const noticeResult = await withCollectionLabel("notice", () => collectCompletePages<NoticeInventoryRow>({
     pageSize: input.pageSize,
     maxPages: input.maxPages,
     identity: (item) => `${item.noticeNo}|${item.noticeOrder}`,
@@ -385,9 +385,9 @@ export async function collectNoticeInventory(
       });
       return parseNoticePage(payload);
     },
-  });
+  }));
 
-  const productResult = await collectCompletePages<NoticeProductRow>({
+  const productResult = await withCollectionLabel("notice-product", () => collectCompletePages<NoticeProductRow>({
     pageSize: input.pageSize,
     maxPages: input.maxPages,
     identity: (item) => item.providerRowIdentity,
@@ -399,7 +399,7 @@ export async function collectNoticeInventory(
       });
       return parseNoticeProductPage(payload);
     },
-  });
+  }));
 
   const noticeKeySet = new Set<string>(
     noticeResult.items.map((item) => `${item.noticeNo}|${item.noticeOrder}`),
@@ -437,6 +437,14 @@ export async function collectNoticeInventory(
     notices: filteredNotices,
     products: filteredProducts,
   };
+}
+
+async function withCollectionLabel<T>(label: string, operation: () => Promise<T>) {
+  try {
+    return await operation();
+  } catch (error) {
+    throw new Error(`${label}: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
 }
 
 export async function collectNoticeInventoryByIdentity(

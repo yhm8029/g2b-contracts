@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { initMarketStore } from "@/lib/building-control-market/store";
 import { syncMarketData } from "@/lib/building-control-market/sync";
 import { createSqliteConnection } from "@/lib/db/client";
+import { redactG2bSecrets } from "@/lib/g2b/http";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -16,7 +17,9 @@ export async function POST() {
   inFlight = syncMarketData(db);
   try {
     return NextResponse.json(await inFlight);
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("building-control-market sync failed:", redactG2bSecrets(message));
     return NextResponse.json({ error: "나라장터 동기화에 실패했습니다. API 키와 네트워크를 확인해 주세요." }, { status: 502 });
   } finally {
     inFlight = null;

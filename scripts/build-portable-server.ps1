@@ -181,6 +181,18 @@ if (-not (Test-Path -LiteralPath $standaloneSource -PathType Container)) {
     throw "Standalone output missing. Run 'npm run build' first to produce .next/standalone."
 }
 
+$standaloneAppSource = $standaloneSource
+if (-not (Test-Path -LiteralPath (Join-Path $standaloneAppSource 'server.js') -PathType Leaf)) {
+    $serverCandidates = @(
+        Get-ChildItem -LiteralPath $standaloneSource -Recurse -Filter 'server.js' -File |
+            Where-Object { $_.FullName -notmatch '[\\/]node_modules[\\/]' }
+    )
+    if ($serverCandidates.Count -ne 1) {
+        throw "Expected exactly one standalone application server.js, found $($serverCandidates.Count)."
+    }
+    $standaloneAppSource = Split-Path -Parent $serverCandidates[0].FullName
+}
+
 if (Test-Path -LiteralPath $script:ResolvedOutputPath) {
     Remove-Item -LiteralPath $script:ResolvedOutputPath -Recurse -Force -ErrorAction Stop
 }
@@ -192,7 +204,7 @@ New-Item -ItemType Directory -Path $appRoot -Force | Out-Null
 
 
 Copy-DirectorySafely `
-    -SourcePath $standaloneSource `
+    -SourcePath $standaloneAppSource `
     -DestinationPath $appRoot
 
 Copy-DirectorySafely `
