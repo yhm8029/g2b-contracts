@@ -21,7 +21,6 @@ import {
 import {
   demandAgencyNameFromNotice,
   mapShoppingMallContractRow,
-  standardContractRanges,
 } from "@/lib/building-control-market/sync";
 
 const cooperative = "111-22-33333";
@@ -142,6 +141,12 @@ describe("selectAwardRecords / selectContractRecords", () => {
     const records = selectAwardRecords({ basis: "contract", region: "all", awards, contracts: sameNotice });
     expect(records).toHaveLength(2);
   });
+
+  it("combines notice awards and shopping mall requests", () => {
+    const records = selectAwardRecords({ basis: "combined", region: "all", awards, contracts });
+
+    expect(records).toHaveLength(4);
+  });
 });
 
 describe("market share UI text", () => {
@@ -193,14 +198,6 @@ describe("incremental market persistence", () => {
 
   it("reads the live notice API demand agency field", () => {
     expect(demandAgencyNameFromNotice({ dminsttNm: "부산광역시 동구" })).toBe("부산광역시 동구");
-  });
-
-  it("splits standard contract requests into provider-supported seven-day ranges", () => {
-    expect(standardContractRanges("2026-08-01", "2026-08-21")).toEqual([
-      { from: "20260801", to: "20260807" },
-      { from: "20260808", to: "20260814" },
-      { from: "20260815", to: "20260821" },
-    ]);
   });
 
   it("keeps exact-code shopping mall contracts without a notice keyword", () => {

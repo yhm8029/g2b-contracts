@@ -44,7 +44,7 @@ export async function syncMarketData(db: Database.Database, now = new Date()) {
       now,
       (chunk) => updateMarketAwardNoticeMetadata(db, chunk),
     );
-    setMarketSyncState(db, "syncing", "계약 데이터를 조회하고 있습니다.");
+    setMarketSyncState(db, "syncing", "종합쇼핑몰 데이터를 조회하고 있습니다.");
     const contracts = await collectTargetContracts(
       notices,
       now,
@@ -62,7 +62,7 @@ export async function syncMarketData(db: Database.Database, now = new Date()) {
     setMarketSyncState(
       db,
       "ready",
-      `\uB3D9\uAE30\uD654 \uC644\uB8CC: \uB300\uC0C1 \uACF5\uACE0 ${notices.length}\uAC74, \uB099\uCC30 ${awards.length}\uAC74, \uACC4\uC57D ${contracts.length}\uAC74`,
+      `\uB3D9\uAE30\uD654 \uC644\uB8CC: \uB300\uC0C1 \uACF5\uACE0 ${notices.length}\uAC74, \uB099\uCC30 ${awards.length}\uAC74, \uC885\uD569\uC1FC\uD551\uBAB0 ${contracts.length}\uAC74`,
       lastSyncedAt,
     );
     return {
@@ -216,25 +216,6 @@ async function collectTargetContracts(
       const pageContracts: StoredMarketContract[] = [];
       for (const item of payload.items) {
         const contract = mapShoppingMallContractRow(item, noticeByIdentity);
-        if (!contract) continue;
-        if (contract.contractDate < startDate || contract.contractDate > endDate) continue;
-        contractByIdentity.set(contract.sourceIdentity, contract);
-        pageContracts.push(contract);
-      }
-      if (pageContracts.length > 0) onProgress?.(pageContracts);
-      if (pageNo >= Math.max(1, Math.ceil(payload.totalCount / PAGE_SIZE))) break;
-    }
-  }
-
-  for (const range of standardContractRanges(startDate, endDate)) {
-    for (let pageNo = 1; ; pageNo += 1) {
-      const payload = await fetchContractPage(range.from, range.to, pageNo);
-      if (payload.pageNo !== pageNo || payload.pageSize !== PAGE_SIZE) {
-        throw new Error("\uD45C\uC900\uACC4\uC57D \uD398\uC774\uC9C0 \uC815\uBCF4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
-      }
-      const pageContracts: StoredMarketContract[] = [];
-      for (const item of payload.items) {
-        const contract = mapStandardContractRow(item, noticeByIdentity);
         if (!contract) continue;
         if (contract.contractDate < startDate || contract.contractDate > endDate) continue;
         contractByIdentity.set(contract.sourceIdentity, contract);
@@ -409,13 +390,6 @@ function containsKeyword(value: string) {
 
 function marketRegionName(demandAgencyName: string | null) {
   return demandAgencyName?.includes("\uBD80\uC0B0") ? "\uBD80\uC0B0" : "\uAE30\uD0C0";
-}
-
-export function standardContractRanges(startDate: string, endDate: string) {
-  return weeklyRanges(
-    `${startDate.replaceAll("-", "")}0000`,
-    `${endDate.replaceAll("-", "")}2359`,
-  ).map((range) => ({ from: range.from.slice(0, 8), to: range.to.slice(0, 8) }));
 }
 
 async function collectAwardRange(range: { from: string; to: string }): Promise<AwardRegistrationBatch> {

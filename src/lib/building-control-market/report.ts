@@ -43,14 +43,14 @@ export type MarketShareReport = {
   rows: MarketShareRow[];
 };
 
-export type ReportBasis = "award" | "contract";
+export type ReportBasis = "award" | "contract" | "combined";
 export type ReportRegion = "all" | "busan";
 
 export const COOPERATIVE_NAME = "\uBE4C\uB529\uC790\uB3D9\uC81C\uC5B4\uACF5\uC5C5\uD611\uB3D9\uC870\uD569";
 export const NON_EXCELLENT_NAME = "\uC870\uB2EC\uC6B0\uC218X";
 
 export function isReportBasis(value: unknown): value is ReportBasis {
-  return value === "award" || value === "contract";
+  return value === "award" || value === "contract" || value === "combined";
 }
 
 export function isReportRegion(value: unknown): value is ReportRegion {
@@ -71,8 +71,7 @@ export function selectAwardRecords(input: {
   awards: MarketAwardInput[];
   contracts: MarketContractInput[];
 }): AwardRecord[] {
-  if (input.basis === "award") {
-    return input.awards.map((award) => ({
+  const awardRecords = input.awards.map((award) => ({
       noticeNo: award.noticeNo,
       noticeOrder: award.noticeOrder,
       finalAwardDate: award.finalAwardDate,
@@ -82,8 +81,10 @@ export function selectAwardRecords(input: {
       demandAgencyName: award.demandAgencyName,
       referenceDate: award.finalAwardDate,
     })).filter((record) => matchesRegion(record.demandAgencyName, input.region));
-  }
-  return aggregateContractsAsAwards(input.contracts, input.region);
+  const contractRecords = aggregateContractsAsAwards(input.contracts, input.region);
+  if (input.basis === "award") return awardRecords;
+  if (input.basis === "contract") return contractRecords;
+  return [...awardRecords, ...contractRecords];
 }
 
 export function selectContractRecords(input: {
@@ -92,8 +93,7 @@ export function selectContractRecords(input: {
   awards: MarketAwardInput[];
   contracts: MarketContractInput[];
 }): ContractRecord[] {
-  if (input.basis === "contract") {
-    return input.contracts.map((contract) => ({
+  const contractRecords = input.contracts.map((contract) => ({
       contractNo: contract.contractNo,
       contractName: contract.contractName,
       contractDate: contract.contractDate,
@@ -104,8 +104,10 @@ export function selectContractRecords(input: {
       demandAgencyName: contract.demandAgencyName,
       referenceDate: contract.contractDate,
     })).filter((record) => matchesRegion(record.demandAgencyName, input.region));
-  }
-  return aggregateAwardsAsContracts(input.awards, input.region);
+  const awardRecords = aggregateAwardsAsContracts(input.awards, input.region);
+  if (input.basis === "contract") return contractRecords;
+  if (input.basis === "award") return awardRecords;
+  return [...awardRecords, ...contractRecords];
 }
 
 function aggregateContractsAsAwards(contracts: MarketContractInput[], region: ReportRegion): AwardRecord[] {

@@ -1,7 +1,7 @@
 "use client";
 
 import { Download, RefreshCw, Save, Settings, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import styles from "./MarketShareApp.module.css";
 
@@ -13,11 +13,11 @@ type ReportResponse = {
   totalAwardCount: number;
   rows: ReportRow[];
   registry: RegistryRow[];
-  basis: "award" | "contract";
+  basis: "award" | "contract" | "combined";
   region: "all" | "busan";
   sync: { status: string; lastSyncedAt: string | null; message: string | null };
 };
-type Basis = "award" | "contract";
+type Basis = "award" | "contract" | "combined";
 type Region = "all" | "busan";
 
 const COLORS = ["#156f4a", "#d97706", "#2563eb", "#be123c", "#7c3aed", "#0891b2", "#4d7c0f", "#c2410c", "#4338ca", "#0f766e", "#a16207", "#0369a1", "#9f1239", "#6d28d9", "#15803d", "#b45309", "#1d4ed8", "#b91c1c", "#5b21b6", "#0e7490", "#3f6212", "#9a3412", "#3730a3", "#047857"];
@@ -36,6 +36,7 @@ export function MarketShareApp() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const loadSequence = useRef(0);
 
   const query = useMemo(() => {
     const params = new URLSearchParams({ year: String(year), basis, region });
@@ -44,18 +45,21 @@ export function MarketShareApp() {
   }, [basis, quarter, region, year]);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError(null);
     try {
       const response = await fetch(`/api/building-control-market/report?${query}`);
       const payload = (await response.json()) as ReportResponse & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "보고서를 불러오지 못했습니다.");
+      if (sequence !== loadSequence.current) return;
       setData(payload);
       setRegistry(payload.registry);
     } catch (caught) {
+      if (sequence !== loadSequence.current) return;
       setError(caught instanceof Error ? caught.message : "보고서를 불러오지 못했습니다.");
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }, [query]);
 
@@ -106,7 +110,7 @@ export function MarketShareApp() {
       <header className={styles.header}>
         <div>
           <h1>빌딩자동제어 시장점유율</h1>
-          <p>품목번호 39121801 / 3912180101 · {basis === "award" ? "낙찰일" : "계약체결일"} 기준 · {region === "all" ? "전국" : "부산"}</p>
+          <p>품목번호 39121801 / 3912180101 · {basisDateLabel(basis)} 기준 · {region === "all" ? "전국" : "부산"}</p>
         </div>
         <div className={styles.toolbar}>
           <button onClick={() => void load()} disabled={loading} title="새로고침" type="button"><RefreshCw size={16} />새로고침</button>
@@ -120,8 +124,9 @@ export function MarketShareApp() {
         <div className={styles.filterGroup}>
           <span className={styles.filterLabel}>기준</span>
           <div className={styles.segments} role="group" aria-label="집계 기준">
-            <button className={basis === "award" ? styles.active : undefined} onClick={() => setBasis("award")} type="button">공고 기준</button>
-            <button className={basis === "contract" ? styles.active : undefined} onClick={() => setBasis("contract")} type="button">계약 기준</button>
+            <button className={basis === "award" ? styles.active : undefined} onClick={() => setBasis("award")} type="button">나라장터 공고</button>
+            <button className={basis === "contract" ? styles.active : undefined} onClick={() => setBasis("contract")} type="button">종합쇼핑몰</button>
+            <button className={basis === "combined" ? styles.active : undefined} onClick={() => setBasis("combined")} type="button">통합</button>
           </div>
         </div>
         <div className={styles.filterGroup}>
@@ -151,7 +156,7 @@ export function MarketShareApp() {
         <>
           <section className={styles.metrics}>
             <Metric label="조회 기간" value={data.periodLabel} />
-            <Metric label={basis === "award" ? "전체 공고 수" : "전체 계약 수"} value={`${data.totalAwardCount.toLocaleString("ko-KR")}건`} />
+            <Metric label={basisCountLabel(basis)} value={`${data.totalAwardCount.toLocaleString("ko-KR")}건`} />
             <Metric label="조회 지역" value={region === "all" ? "전국" : "부산"} />
             <Metric label="마지막 동기화" value={formatTimestamp(data.sync.lastSyncedAt)} />
           </section>
@@ -160,13 +165,13 @@ export function MarketShareApp() {
             <div className={styles.chartSection}>
               <h2>시장점유율</h2>
               <div className={styles.chartBody}>
-                <div aria-label="시장점유율 원형 그래프" className={styles.pie} role="img" style={{ background: pie }}><div><strong>{data.totalAwardCount}</strong><span>{basis === "award" ? "전체 공고" : "전체 계약"}</span></div></div>
+                <div aria-label="시장점유율 원형 그래프" className={styles.pie} role="img" style={{ background: pie }}><div><strong>{data.totalAwardCount}</strong><span>{basisCountLabel(basis).replace(" 수", "")}</span></div></div>
                 <ol className={styles.legend}>{data.rows.map((row, index) => <li key={`${row.category}-${row.bizNo ?? "bucket"}`}><i style={{ backgroundColor: COLORS[index % COLORS.length] }} /><span>{row.companyName}</span><strong>{row.marketSharePercent.toFixed(1)}%</strong></li>)}</ol>
               </div>
             </div>
             <div className={styles.tableSection}>
               <h2>업체별 점유율</h2>
-              <div className={styles.scroll}><table><thead><tr><th>업체</th><th>분류</th><th>{basis === "award" ? "낙찰" : "계약"}</th><th>점유율</th><th>지정 만료일</th></tr></thead><tbody>{data.rows.map((row) => <tr key={`${row.category}-${row.bizNo ?? "bucket"}`}><td>{row.companyName}</td><td><span className={`${styles.badge} ${styles[row.category]}`}>{CATEGORY_LABEL[row.category]}</span></td><td className={styles.number}>{row.awardCount}건</td><td className={styles.number}>{row.marketSharePercent.toFixed(1)}%</td><td>{row.designationEndDate ?? "-"}</td></tr>)}</tbody></table></div>
+              <div className={styles.scroll}><table><thead><tr><th>업체</th><th>분류</th><th>{basis === "award" ? "낙찰 공고" : basis === "contract" ? "납품요구" : "통합"}</th><th>점유율</th><th>지정 만료일</th></tr></thead><tbody>{data.rows.map((row) => <tr key={`${row.category}-${row.bizNo ?? "bucket"}`}><td>{row.companyName}</td><td><span className={`${styles.badge} ${styles[row.category]}`}>{CATEGORY_LABEL[row.category]}</span></td><td className={styles.number}>{row.awardCount}건</td><td className={styles.number}>{row.marketSharePercent.toFixed(1)}%</td><td>{row.designationEndDate ?? "-"}</td></tr>)}</tbody></table></div>
             </div>
           </section>
         </>
@@ -191,3 +196,15 @@ function pieGradient(rows: ReportRow[]) {
 function seoulYearQuarter() { const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit" }).formatToParts(new Date()); const value = (type: string) => Number(parts.find((part) => part.type === type)?.value); return { year: value("year"), quarter: Math.ceil(value("month") / 3) }; }
 
 function formatTimestamp(value: string | null) { return value ? new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Seoul" }).format(new Date(value)) : "미수집"; }
+
+function basisDateLabel(basis: Basis) {
+  if (basis === "award") return "낙찰일";
+  if (basis === "contract") return "납품요구일";
+  return "낙찰일 + 납품요구일";
+}
+
+function basisCountLabel(basis: Basis) {
+  if (basis === "award") return "전체 공고 수";
+  if (basis === "contract") return "전체 쇼핑몰 수";
+  return "전체 통합 수";
+}
