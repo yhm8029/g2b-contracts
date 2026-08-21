@@ -27,6 +27,14 @@ export type StoredMarketContract = {
   sourceUrl: string | null;
 };
 
+export type MarketAwardNoticeMetadata = {
+  noticeNo: string;
+  noticeOrder: string;
+  noticeName: string;
+  demandAgencyName: string | null;
+  sourceUrl: string | null;
+};
+
 export type MarketContractInputStored = MarketContractInput & {
   amount?: number | null;
   sourceUrl?: string | null;
@@ -149,6 +157,27 @@ export function replaceMarketAwards(db: Database.Database, awards: StoredMarketA
 
 export function upsertMarketAwards(db: Database.Database, awards: StoredMarketAward[]) {
   db.transaction(() => writeMarketAwards(db, awards))();
+}
+
+export function updateMarketAwardNoticeMetadata(
+  db: Database.Database,
+  notices: MarketAwardNoticeMetadata[],
+) {
+  const update = db.prepare(`UPDATE market_awards SET
+    notice_name=?, demand_agency_name=?, region_name=?, source_url=?
+    WHERE notice_no=? AND notice_order=?`);
+  db.transaction(() => {
+    for (const notice of notices) {
+      update.run(
+        notice.noticeName || null,
+        notice.demandAgencyName,
+        deriveRegionName(notice.demandAgencyName),
+        notice.sourceUrl,
+        notice.noticeNo,
+        notice.noticeOrder,
+      );
+    }
+  })();
 }
 
 function writeMarketAwards(db: Database.Database, awards: StoredMarketAward[]) {

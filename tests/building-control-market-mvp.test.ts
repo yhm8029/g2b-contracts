@@ -14,9 +14,11 @@ import {
   initMarketStore,
   listMarketAwards,
   listMarketContracts,
+  updateMarketAwardNoticeMetadata,
   upsertMarketAwards,
   upsertMarketContracts,
 } from "@/lib/building-control-market/store";
+import { demandAgencyNameFromNotice } from "@/lib/building-control-market/sync";
 
 const cooperative = "111-22-33333";
 
@@ -172,8 +174,20 @@ describe("incremental market persistence", () => {
       winnerBizNo: "1111111111", winnerName: "업체1", amount: 100,
       demandAgencyName: "부산광역시", regionName: "부산", sourceUrl: null,
     }]);
+    updateMarketAwardNoticeMetadata(db, [{
+      noticeNo: "N-1", noticeOrder: "1", noticeName: "공고1",
+      demandAgencyName: "부산광역시 기장군", sourceUrl: null,
+    }]);
     expect(listMarketAwards(db)).toHaveLength(2);
+    expect(listMarketAwards(db).find((row) => row.noticeNo === "N-1")).toMatchObject({
+      demandAgencyName: "부산광역시 기장군",
+      regionName: "부산",
+    });
     expect(listMarketContracts(db)).toHaveLength(1);
     db.close();
+  });
+
+  it("reads the live notice API demand agency field", () => {
+    expect(demandAgencyNameFromNotice({ dminsttNm: "부산광역시 동구" })).toBe("부산광역시 동구");
   });
 });

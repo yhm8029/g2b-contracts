@@ -12,6 +12,7 @@ import {
   replaceMarketAwards,
   replaceMarketContracts,
   setMarketSyncState,
+  updateMarketAwardNoticeMetadata,
   upsertMarketAwards,
   upsertMarketContracts,
   type StoredMarketAward,
@@ -39,7 +40,10 @@ type TargetNotice = {
 export async function syncMarketData(db: Database.Database, now = new Date()) {
   setMarketSyncState(db, "syncing", "\uB098\uB77C\uC7A5\uD130 \uB370\uC774\uD130\uB97C \uC870\uD68C\uD558\uACE0 \uC788\uC2B5\uB2C8\uB2E4.");
   try {
-    const notices = await collectTargetNotices(now);
+    const notices = await collectTargetNotices(
+      now,
+      (chunk) => updateMarketAwardNoticeMetadata(db, chunk),
+    );
     const { awards, unresolvedCount } = await collectTargetAwards(
       notices,
       now,
@@ -72,7 +76,10 @@ export async function syncMarketData(db: Database.Database, now = new Date()) {
   }
 }
 
-async function collectTargetNotices(now: Date) {
+async function collectTargetNotices(
+  now: Date,
+  onProgress?: (notices: TargetNotice[]) => void,
+) {
   const byIdentity = new Map<string, TargetNotice>();
   for (const range of monthlyRanges("202401010000", seoulEndOfDay(now))) {
     let totalCount: number | null = null;
@@ -93,25 +100,33 @@ async function collectTargetNotices(now: Date) {
       if (page.totalCount !== totalCount) {
         throw new Error("\uB300\uC0C1 \uACF5\uACE0 \uCD1D\uAC74\uC218\uAC00 \uC870\uD68C \uC911 \uBCC0\uACBD\uB418\uC5C8\uC2B5\uB2C8\uB2E4.");
       }
+      const pageNotices: TargetNotice[] = [];
       for (const item of page.items) {
         if (digits(item.dtilPrdctClsfcNo) !== TARGET_DETAIL_CODE) continue;
         const noticeNo = text(item.bidNtceNo);
         const noticeOrder = text(item.bidNtceOrd);
         if (!noticeNo || !noticeOrder) throw new Error("\uB300\uC0C1 \uACF5\uACE0 \uC2DD\uBCC4\uC790\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.");
-        byIdentity.set(`${noticeNo}|${noticeOrder}`, {
+        const notice: TargetNotice = {
           noticeNo,
           noticeOrder,
           noticeName: text(item.bidNtceNm),
-          demandAgencyName: text(item.dmndInsttNm) || null,
+          demandAgencyName: demandAgencyNameFromNotice(item),
           sourceUrl: safeUrl(item.bidNtceDtlUrl),
-        });
+        };
+        byIdentity.set(`${noticeNo}|${noticeOrder}`, notice);
+        pageNotices.push(notice);
       }
+      if (pageNotices.length > 0) onProgress?.(pageNotices);
       if (pageNo >= Math.max(1, Math.ceil(totalCount / PAGE_SIZE))) break;
     }
   }
   return [...byIdentity.values()].sort((a, b) =>
     `${a.noticeNo}|${a.noticeOrder}`.localeCompare(`${b.noticeNo}|${b.noticeOrder}`),
   );
+}
+
+export function demandAgencyNameFromNotice(item: Record<string, unknown>) {
+  return text(item.dminsttNm) || text(item.dmndInsttNm) || null;
 }
 
 async function collectTargetAwards(
