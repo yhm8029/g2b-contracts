@@ -1,25 +1,40 @@
 import ExcelJS from "exceljs";
 import { PNG } from "pngjs";
 
-import type { MarketShareReport } from "./report";
-import type { StoredMarketAward } from "./store";
+import type {
+  MarketShareReport,
+  ReportBasis,
+  ReportRegion,
+} from "./report";
+import type { StoredMarketAward, StoredMarketContract } from "./store";
 
 const COLORS = ["156f4a", "d97706", "2563eb", "be123c", "7c3aed", "0891b2", "4d7c0f", "c2410c", "4338ca", "0f766e", "a16207", "0369a1", "9f1239", "6d28d9", "15803d", "b45309", "1d4ed8", "b91c1c", "5b21b6", "0e7490", "3f6212", "9a3412", "3730a3", "047857"];
 
-export async function buildMarketWorkbook(report: MarketShareReport, awards: StoredMarketAward[]) {
+export async function buildMarketWorkbook(input: {
+  report: MarketShareReport;
+  basis: ReportBasis;
+  region: ReportRegion;
+  awards: StoredMarketAward[];
+  contracts: StoredMarketContract[];
+}) {
+  const { report, basis, region, awards, contracts } = input;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "g2b-contracts";
-  const summary = workbook.addWorksheet("시장점유율", { views: [{ state: "frozen", ySplit: 5 }] });
+
+  const summary = workbook.addWorksheet("\uc2dc\uc7a5\uc810\uc720\uc728", { views: [{ state: "frozen", ySplit: 5 }] });
   summary.columns = [32, 14, 18, 15, 12, 14].map((width) => ({ width }));
   summary.mergeCells("A1:F1");
-  summary.getCell("A1").value = "빌딩자동제어 시장점유율";
+  summary.getCell("A1").value = "\ube4c\ub529\uc790\ub3d9\uc81c\uc5b4 \uc2dc\uc7a5\uc810\uc720\uc728";
   summary.getCell("A1").font = { bold: true, size: 17, color: { argb: "FF153D2E" } };
   summary.mergeCells("A2:F2");
-  summary.getCell("A2").value = `조회 기간: ${report.periodLabel}`;
+  summary.getCell("A2").value = `\uc870\ud68c \uae30\uac04: ${report.periodLabel}`;
   summary.mergeCells("A3:F3");
-  summary.getCell("A3").value = `전체 공고 수: ${report.totalAwardCount}건`;
-  const header = summary.getRow(5);
-  header.values = ["업체명", "분류", "사업자번호", "지정 만료일", "낙찰 건수", "시장점유율"];
+  summary.getCell("A3").value = `\uae30\uc900: ${basis === "award" ? "\uacf5\uace0 \uae30\uc900" : "\uacc4\uc57d \uae30\uc900"} \u00b7 \uc9c0\uc5ed: ${region === "all" ? "\uc804\uad6d" : "\ubd80\uc0b0"}`;
+  summary.mergeCells("A4:F4");
+  summary.getCell("A4").value = `\uc804\uccb4 ${basis === "award" ? "\uacf5\uace0" : "\uacc4\uc57d"} \uc218: ${report.totalAwardCount}\uac74`;
+
+  const header = summary.getRow(6);
+  header.values = ["\uc5c5\uccb4\uba85", "\ubd84\ub958", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uc9c0\uc815 \ub9c8\ub8cc\uc77c", (basis === "award" ? "\ub099\ucc30" : "\uacc4\uc57d") + " \uac74\uc218", "\uc2dc\uc7a5\uc810\uc720\uc728"];
   styleHeader(header);
   for (const row of report.rows) {
     const added = summary.addRow([
@@ -28,26 +43,63 @@ export async function buildMarketWorkbook(report: MarketShareReport, awards: Sto
     ]);
     added.getCell(6).numFmt = "0.0%";
   }
-  summary.autoFilter = { from: "A5", to: `F${Math.max(5, summary.rowCount)}` };
+  summary.autoFilter = { from: "A6", to: `F${Math.max(6, summary.rowCount)}` };
   const imageId = workbook.addImage({
     base64: `data:image/png;base64,${buildPiePng(report).toString("base64")}`,
     extension: "png",
   });
   summary.addImage(imageId, { tl: { col: 7, row: 1 }, ext: { width: 720, height: 420 } });
 
-  const details = workbook.addWorksheet("낙찰내역", { views: [{ state: "frozen", ySplit: 1 }] });
-  details.columns = [26, 8, 14, 30, 18, 18, 48].map((width) => ({ width }));
-  details.getRow(1).values = ["공고번호", "차수", "낙찰일", "업체명", "사업자번호", "낙찰금액", "원문 URL"];
+  const details = workbook.addWorksheet(basis === "award" ? "\uacf5\uace0\ub0b4\uc5ed" : "\uacc4\uc57d\ub0b4\uc5ed", { views: [{ state: "frozen", ySplit: 1 }] });
+  details.columns = [14, 14, 36, 14, 20, 22, 18, 18, 28, 48].map((width) => ({ width }));
+  details.getRow(1).values = basis === "award"
+    ? ["\uae30\uc900", "\uc9c0\uc5ed", "\uacf5\uace0\uba85", "\ub099\ucc30\uc77c", "\uacf5\uace0\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"]
+    : ["\uae30\uc900", "\uc9c0\uc5ed", "\uacc4\uc57d\uba85", "\uacc4\uc57d\uc77c", "\uacc4\uc57d\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"];
   styleHeader(details.getRow(1));
-  for (const award of awards.filter((item) => inReportPeriod(item.finalAwardDate, report.period))) {
-    const row = details.addRow([award.noticeNo, award.noticeOrder, award.finalAwardDate, award.winnerName, award.winnerBizNo, award.amount, award.sourceUrl ?? ""]);
-    row.getCell(6).numFmt = "#,##0";
-    if (award.sourceUrl && /^https?:\/\//i.test(award.sourceUrl)) {
-      row.getCell(7).value = { text: award.sourceUrl, hyperlink: award.sourceUrl };
-      row.getCell(7).font = { color: { argb: "FF0563C1" }, underline: true };
+
+  if (basis === "award") {
+    for (const award of awards.filter((item) => inReportPeriod(item.finalAwardDate, report.period) && matchesExportRegion(item.regionName, region))) {
+      const row = details.addRow([
+        "\uacf5\uace0 \uae30\uc900",
+        award.regionName,
+        award.noticeName ?? "",
+        award.finalAwardDate,
+        award.noticeNo,
+        award.winnerName,
+        award.winnerBizNo,
+        award.amount,
+        award.demandAgencyName ?? "",
+        award.sourceUrl ?? "",
+      ]);
+      if (award.sourceUrl && /^https?:\/\//i.test(award.sourceUrl)) {
+        row.getCell(10).value = { text: award.sourceUrl, hyperlink: award.sourceUrl };
+        row.getCell(10).font = { color: { argb: "FF0563C1" }, underline: true };
+      }
+    }
+  } else {
+    for (const contract of contracts.filter((item) => inReportPeriod(item.contractDate, report.period) && matchesExportRegion(item.regionName, region))) {
+      const row = details.addRow([
+        "\uacc4\uc57d \uae30\uc900",
+        contract.regionName,
+        contract.contractName,
+        contract.contractDate,
+        contract.contractNo,
+        contract.winnerName,
+        contract.winnerBizNo,
+        contract.amount,
+        contract.demandAgencyName ?? "",
+        contract.sourceUrl ?? "",
+      ]);
+      if (contract.sourceUrl && /^https?:\/\//i.test(contract.sourceUrl)) {
+        row.getCell(10).value = { text: contract.sourceUrl, hyperlink: contract.sourceUrl };
+        row.getCell(10).font = { color: { argb: "FF0563C1" }, underline: true };
+      }
     }
   }
-  details.autoFilter = { from: "A1", to: `G${Math.max(1, details.rowCount)}` };
+
+  details.getColumn(8).numFmt = "#,##0";
+  details.autoFilter = { from: "A1", to: `J${Math.max(1, details.rowCount)}` };
+
   const output = await workbook.xlsx.writeBuffer();
   const bytes = Buffer.from(output);
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -100,8 +152,12 @@ function inReportPeriod(date: string, period: { year: number; quarter?: number }
     && (period.quarter === undefined || Math.ceil(Number(date.slice(5, 7)) / 3) === period.quarter);
 }
 
+function matchesExportRegion(regionName: string, region: ReportRegion) {
+  return region === "all" || regionName === "\uBD80\uC0B0";
+}
+
 function categoryLabel(category: string) {
-  if (category === "excellent") return "조달우수";
-  if (category === "cooperative") return "협동조합";
-  return "조달우수X";
+  if (category === "excellent") return "\uc870\ub2ec\uc6b0\uc218";
+  if (category === "cooperative") return "\ud611\ub3d9\uc870\ud569";
+  return "\uc870\ub2ec\uc6b0\uc218X";
 }

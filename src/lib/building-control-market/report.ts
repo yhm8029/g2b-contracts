@@ -4,6 +4,19 @@ export type MarketAwardInput = {
   finalAwardDate: string;
   winnerBizNo: string;
   winnerName: string;
+  noticeName?: string | null;
+  demandAgencyName?: string | null;
+};
+
+export type MarketContractInput = {
+  contractNo: string;
+  contractName: string;
+  contractDate: string;
+  winnerBizNo: string;
+  winnerName: string;
+  noticeNo?: string | null;
+  noticeOrder?: string | null;
+  demandAgencyName?: string | null;
 };
 
 export type ExcellentRegistryEntry = {
@@ -30,16 +43,119 @@ export type MarketShareReport = {
   rows: MarketShareRow[];
 };
 
-const COOPERATIVE_NAME = "빌딩자동제어공업협동조합";
-const NON_EXCELLENT_NAME = "조달우수X";
+export type ReportBasis = "award" | "contract";
+export type ReportRegion = "all" | "busan";
+
+export const COOPERATIVE_NAME = "\uBE4C\uB529\uC790\uB3D9\uC81C\uC5B4\uACF5\uC5C5\uD611\uB3D9\uC870\uD569";
+export const NON_EXCELLENT_NAME = "\uC870\uB2EC\uC6B0\uC218X";
+
+export function isReportBasis(value: unknown): value is ReportBasis {
+  return value === "award" || value === "contract";
+}
+
+export function isReportRegion(value: unknown): value is ReportRegion {
+  return value === "all" || value === "busan";
+}
+
+export function isBusanDemandAgency(name: string | undefined | null): boolean {
+  if (!name) return false;
+  return name.toLowerCase().includes("\uBD80\uC0B0");
+}
+
+export type AwardRecord = MarketAwardInput & { referenceDate: string };
+export type ContractRecord = MarketContractInput & { referenceDate: string };
+
+export function selectAwardRecords(input: {
+  basis: ReportBasis;
+  region: ReportRegion;
+  awards: MarketAwardInput[];
+  contracts: MarketContractInput[];
+}): AwardRecord[] {
+  if (input.basis === "award") {
+    return input.awards.map((award) => ({
+      noticeNo: award.noticeNo,
+      noticeOrder: award.noticeOrder,
+      finalAwardDate: award.finalAwardDate,
+      winnerBizNo: award.winnerBizNo,
+      winnerName: award.winnerName,
+      noticeName: award.noticeName,
+      demandAgencyName: award.demandAgencyName,
+      referenceDate: award.finalAwardDate,
+    })).filter((record) => matchesRegion(record.demandAgencyName, input.region));
+  }
+  return aggregateContractsAsAwards(input.contracts, input.region);
+}
+
+export function selectContractRecords(input: {
+  basis: ReportBasis;
+  region: ReportRegion;
+  awards: MarketAwardInput[];
+  contracts: MarketContractInput[];
+}): ContractRecord[] {
+  if (input.basis === "contract") {
+    return input.contracts.map((contract) => ({
+      contractNo: contract.contractNo,
+      contractName: contract.contractName,
+      contractDate: contract.contractDate,
+      winnerBizNo: contract.winnerBizNo,
+      winnerName: contract.winnerName,
+      noticeNo: contract.noticeNo,
+      noticeOrder: contract.noticeOrder,
+      demandAgencyName: contract.demandAgencyName,
+      referenceDate: contract.contractDate,
+    })).filter((record) => matchesRegion(record.demandAgencyName, input.region));
+  }
+  return aggregateAwardsAsContracts(input.awards, input.region);
+}
+
+function aggregateContractsAsAwards(contracts: MarketContractInput[], region: ReportRegion): AwardRecord[] {
+  return contracts
+    .filter((contract) => matchesRegion(contract.demandAgencyName, region))
+    .map((contract) => ({
+      noticeNo: contract.noticeNo ?? contract.contractNo,
+      noticeOrder: contract.noticeOrder ?? "",
+      finalAwardDate: contract.contractDate,
+      winnerBizNo: contract.winnerBizNo,
+      winnerName: contract.winnerName,
+      noticeName: contract.contractName,
+      demandAgencyName: contract.demandAgencyName,
+      referenceDate: contract.contractDate,
+    }));
+}
+
+function aggregateAwardsAsContracts(awards: MarketAwardInput[], region: ReportRegion): ContractRecord[] {
+  return awards
+    .filter((award) => matchesRegion(award.demandAgencyName, region))
+    .map((award) => ({
+      contractNo: `${award.noticeNo}-${award.noticeOrder}`,
+      contractName: award.noticeName ?? "",
+      contractDate: award.finalAwardDate,
+      winnerBizNo: award.winnerBizNo,
+      winnerName: award.winnerName,
+      noticeNo: award.noticeNo,
+      noticeOrder: award.noticeOrder,
+      demandAgencyName: award.demandAgencyName,
+      referenceDate: award.finalAwardDate,
+    }));
+}
+
+function matchesRegion(demandAgencyName: string | null | undefined, region: ReportRegion): boolean {
+  if (region === "all") return true;
+  return isBusanDemandAgency(demandAgencyName);
+}
 
 export function buildMarketShareReport(input: {
   period: { year: number; quarter?: number };
   awards: MarketAwardInput[];
+  contracts?: MarketContractInput[];
+  basis?: ReportBasis;
+  region?: ReportRegion;
   excellentRegistry: ExcellentRegistryEntry[];
   cooperativeBizNo: string;
 }): MarketShareReport {
   validatePeriod(input.period);
+  const basis: ReportBasis = input.basis ?? "award";
+  const region: ReportRegion = input.region ?? "all";
   const excellent = input.excellentRegistry.filter((entry) => entry.enabled);
   const rows: MarketShareRow[] = excellent.map((entry) => ({
     companyName: entry.companyName,
@@ -69,7 +185,9 @@ export function buildMarketShareReport(input: {
     marketSharePercent: 0,
   };
 
-  for (const award of input.awards) {
+  const records = selectAwardRecords({ basis, region, awards: input.awards, contracts: input.contracts ?? [] });
+
+  for (const award of records) {
     if (!isValidDate(award.finalAwardDate) || !isInPeriod(award.finalAwardDate, input.period)) continue;
     const winnerBizNo = normalizeBizNo(award.winnerBizNo);
     if (winnerBizNo && winnerBizNo === cooperative.bizNo) {
@@ -99,8 +217,8 @@ export function buildMarketShareReport(input: {
   return {
     period: input.period,
     periodLabel: input.period.quarter
-      ? `${input.period.year}년 ${input.period.quarter}분기`
-      : `${input.period.year}년`,
+      ? `${input.period.year}\uB144 ${input.period.quarter}\uBD84\uAE30`
+      : `${input.period.year}\uB144`,
     totalAwardCount,
     rows,
   };

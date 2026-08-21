@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { buildMarketWorkbook } from "@/lib/building-control-market/excel";
-import { buildMarketShareReport } from "@/lib/building-control-market/report";
-import { COOPERATIVE_BIZ_NO, initMarketStore, listExcellentRegistry, listMarketAwards } from "@/lib/building-control-market/store";
+import {
+  buildMarketShareReport,
+  isReportBasis,
+  isReportRegion,
+  type ReportBasis,
+  type ReportRegion,
+} from "@/lib/building-control-market/report";
+import {
+  COOPERATIVE_BIZ_NO,
+  initMarketStore,
+  listExcellentRegistry,
+  listMarketAwards,
+  listMarketContracts,
+} from "@/lib/building-control-market/store";
 import { createSqliteConnection } from "@/lib/db/client";
 
 export const runtime = "nodejs";
@@ -10,21 +22,42 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest) {
   const year = Number(request.nextUrl.searchParams.get("year"));
   const quarterValue = request.nextUrl.searchParams.get("quarter");
+  const basisValue = request.nextUrl.searchParams.get("basis");
+  const regionValue = request.nextUrl.searchParams.get("region");
+
+  const basis: ReportBasis = isReportBasis(basisValue) ? basisValue : "award";
+  const region: ReportRegion = isReportRegion(regionValue) ? regionValue : "all";
   const period = quarterValue ? { year, quarter: Number(quarterValue) } : { year };
+
   const db = createSqliteConnection();
   try {
     initMarketStore(db);
     const awards = listMarketAwards(db);
-    const report = buildMarketShareReport({ period, awards, excellentRegistry: listExcellentRegistry(db), cooperativeBizNo: COOPERATIVE_BIZ_NO });
-    const workbook = await buildMarketWorkbook(report, awards);
+    const contracts = listMarketContracts(db);
+    const registry = listExcellentRegistry(db);
+    const report = buildMarketShareReport({
+      period,
+      awards,
+      contracts,
+      basis,
+      region,
+      excellentRegistry: registry,
+      cooperativeBizNo: COOPERATIVE_BIZ_NO,
+    });
+    const workbook = await buildMarketWorkbook({ report, basis, region, awards, contracts });
     const suffix = period.quarter ? `-Q${period.quarter}` : "";
-    return new NextResponse(workbook, { headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="building-control-market-${period.year}${suffix}.xlsx"`,
-      "Cache-Control": "no-store",
-    } });
+    return new NextResponse(workbook, {
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="building-control-market-${period.year}${suffix}.xlsx"`,
+        "Cache-Control": "no-store",
+      },
+    });
   } catch {
-    return NextResponse.json({ error: "엑셀을 생성하지 못했습니다." }, { status: 400 });
+    return NextResponse.json(
+      { error: "\uc5c5\uc20d\uc744 \uc0dd\uc131\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4." },
+      { status: 400 },
+    );
   } finally {
     db.close();
   }
