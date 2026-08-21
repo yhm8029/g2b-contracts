@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 
 import {
   buildMarketShareReport,
@@ -126,5 +127,12 @@ describe("selectAwardRecords / selectContractRecords", () => {
     const sameNotice = contracts.map((contract) => ({ ...contract, noticeNo: "N-1", noticeOrder: "1" }));
     const records = selectAwardRecords({ basis: "contract", region: "all", awards, contracts: sameNotice });
     expect(records).toHaveLength(2);
+  });
+});
+
+describe("market share UI text", () => {
+  it("does not ship raw unicode escape sequences to JSX text nodes", () => {
+    const source = readFileSync("src/components/MarketShareApp.tsx", "utf8");
+    expect(source).not.toMatch(/\\u[0-9a-f]{4}/i);
   });
 });
