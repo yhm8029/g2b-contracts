@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { buildMarketWorkbook } from "@/lib/building-control-market/excel";
+import {
+  buildMarketWorkbook,
+  marketWorkbookFileName,
+} from "@/lib/building-control-market/excel";
 import {
   buildMarketShareReport,
   isReportBasis,
@@ -45,11 +48,11 @@ export async function GET(request: NextRequest) {
       cooperativeBizNo: COOPERATIVE_BIZ_NO,
     });
     const workbook = await buildMarketWorkbook({ report, basis, region, awards, contracts });
-    const suffix = period.quarter ? `-Q${period.quarter}` : "";
+    const fileName = marketWorkbookFileName(basis, region, period);
     return new NextResponse(workbook, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="building-control-market-${period.year}${suffix}.xlsx"`,
+        "Content-Disposition": `attachment; filename="market-report.xlsx"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
         "Cache-Control": "no-store",
       },
     });

@@ -11,7 +11,10 @@ import {
   type MarketAwardInput,
   type MarketContractInput,
 } from "@/lib/building-control-market/report";
-import { buildMarketWorkbook } from "@/lib/building-control-market/excel";
+import {
+  buildMarketWorkbook,
+  marketWorkbookFileName,
+} from "@/lib/building-control-market/excel";
 import {
   initMarketStore,
   listMarketAwards,
@@ -166,6 +169,15 @@ describe("market share UI text", () => {
 });
 
 describe("shopping mall workbook", () => {
+  it("names annual and quarterly exports from the selected filters", () => {
+    expect(marketWorkbookFileName("award", "busan", { year: 2026 })).toBe(
+      "\uB098\uB77C\uC7A5\uD130_\uBD80\uC0B0_2026\uC5F0\uAC04.xlsx",
+    );
+    expect(marketWorkbookFileName("combined", "all", { year: 2026, quarter: 3 })).toBe(
+      "\uD1B5\uD569_\uC804\uAD6D_2026\uB1443\uBD84\uAE30.xlsx",
+    );
+  });
+
   it("exports the delivery request and original unit-price contract numbers separately", async () => {
     const contracts = [{
       sourceIdentity: "shopping-1",

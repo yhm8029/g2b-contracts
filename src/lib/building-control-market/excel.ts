@@ -10,6 +10,23 @@ import type { StoredMarketAward, StoredMarketContract } from "./store";
 
 const COLORS = ["156f4a", "d97706", "2563eb", "be123c", "7c3aed", "0891b2", "4d7c0f", "c2410c", "4338ca", "0f766e", "a16207", "0369a1", "9f1239", "6d28d9", "15803d", "b45309", "1d4ed8", "b91c1c", "5b21b6", "0e7490", "3f6212", "9a3412", "3730a3", "047857"];
 
+export function marketWorkbookFileName(
+  basis: ReportBasis,
+  region: ReportRegion,
+  period: MarketShareReport["period"],
+): string {
+  const basisLabel = basis === "award"
+    ? "\uB098\uB77C\uC7A5\uD130"
+    : basis === "contract"
+      ? "\uC885\uD569\uC1FC\uD551\uBAB0"
+      : "\uD1B5\uD569";
+  const regionLabel = region === "busan" ? "\uBD80\uC0B0" : "\uC804\uAD6D";
+  const periodLabel = period.quarter
+    ? `${period.year}\uB144${period.quarter}\uBD84\uAE30`
+    : `${period.year}\uC5F0\uAC04`;
+  return `${basisLabel}_${regionLabel}_${periodLabel}.xlsx`;
+}
+
 export async function buildMarketWorkbook(input: {
   report: MarketShareReport;
   basis: ReportBasis;
