@@ -4,6 +4,7 @@ import {
   collapseNoticeWinner,
   collectAwardRegistration,
   isFinalAwardOnOrAfter,
+  type AwardRegistrationBatch,
   type AwardResultRow,
 } from "@/lib/building-control/g2b/award-client";
 import { fetchG2bJson } from "@/lib/g2b/http";
@@ -88,13 +89,15 @@ async function collectTargetAwards(notices: TargetNotice[], now: Date) {
   const rowsByNotice = new Map<string, AwardResultRow[]>();
   let unresolvedCount = 0;
 
-  for (const range of monthlyRanges("202501010000", seoulEndOfDay(now))) {
-    const batch = await collectAwardRegistration({
-      dateFrom: range.from,
-      dateTo: range.to,
-      pageSize: PAGE_SIZE,
-      maxPages: 500,
-    });
+  for (const range of weeklyRanges("202501010000", seoulEndOfDay(now))) {
+    let batch;
+    try {
+      batch = await collectAwardRange(range);
+    } catch (error) {
+      throw new Error(
+        `낙찰 등록기간 ${range.from}-${range.to}: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
     for (const row of batch.awards) {
       const key = `${row.noticeNo}|${row.noticeOrder}`;
       if (!noticeByIdentity.has(key) || !isFinalAwardOnOrAfter(row, "2025-01-01")) continue;
@@ -125,6 +128,39 @@ async function collectTargetAwards(notices: TargetNotice[], now: Date) {
     });
   }
   return { awards, unresolvedCount };
+}
+
+async function collectAwardRange(range: { from: string; to: string }): Promise<AwardRegistrationBatch> {
+  try {
+    return await collectAwardRegistration({
+      dateFrom: range.from,
+      dateTo: range.to,
+      pageSize: PAGE_SIZE,
+      maxPages: 50,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("duplicate identity across pages") || range.from.slice(0, 8) === range.to.slice(0, 8)) {
+      throw error;
+    }
+    const batches: AwardRegistrationBatch[] = [];
+    for (const day of dailyRanges(range.from, range.to)) {
+      batches.push(await collectAwardRegistration({
+        dateFrom: day.from,
+        dateTo: day.to,
+        pageSize: PAGE_SIZE,
+        maxPages: 10,
+      }));
+    }
+    return {
+      dateFrom: range.from,
+      dateTo: range.to,
+      totalCount: batches.reduce((sum, batch) => sum + batch.totalCount, 0),
+      awards: batches.flatMap((batch) => batch.awards),
+      unresolvedAwards: batches.flatMap((batch) => batch.unresolvedAwards),
+      registrationWindowComplete: batches.every((batch) => batch.registrationWindowComplete),
+    };
+  }
 }
 
 function parseSearchPage(payload: unknown) {
@@ -204,6 +240,37 @@ function monthlyRanges(start: string, end: string) {
       month = 1;
       year += 1;
     }
+  }
+  return ranges;
+}
+
+function weeklyRanges(start: string, end: string) {
+  const ranges: Array<{ from: string; to: string }> = [];
+  const startDay = Date.UTC(Number(start.slice(0, 4)), Number(start.slice(4, 6)) - 1, Number(start.slice(6, 8)));
+  const endDay = Date.UTC(Number(end.slice(0, 4)), Number(end.slice(4, 6)) - 1, Number(end.slice(6, 8)));
+  for (let cursor = startDay; cursor <= endDay; cursor += 7 * 86_400_000) {
+    const rangeEnd = Math.min(cursor + 6 * 86_400_000, endDay);
+    ranges.push({
+      from: `${compactUtcDay(cursor)}0000`,
+      to: rangeEnd === endDay ? end : `${compactUtcDay(rangeEnd)}2359`,
+    });
+  }
+  return ranges;
+}
+
+function compactUtcDay(timestamp: number) {
+  return new Date(timestamp).toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+function dailyRanges(start: string, end: string) {
+  const ranges: Array<{ from: string; to: string }> = [];
+  const startDay = Date.UTC(Number(start.slice(0, 4)), Number(start.slice(4, 6)) - 1, Number(start.slice(6, 8)));
+  const endDay = Date.UTC(Number(end.slice(0, 4)), Number(end.slice(4, 6)) - 1, Number(end.slice(6, 8)));
+  for (let cursor = startDay; cursor <= endDay; cursor += 86_400_000) {
+    ranges.push({
+      from: `${compactUtcDay(cursor)}0000`,
+      to: cursor === endDay ? end : `${compactUtcDay(cursor)}2359`,
+    });
   }
   return ranges;
 }
