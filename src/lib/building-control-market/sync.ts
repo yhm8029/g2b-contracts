@@ -44,18 +44,20 @@ export async function syncMarketData(db: Database.Database, now = new Date()) {
       now,
       (chunk) => updateMarketAwardNoticeMetadata(db, chunk),
     );
-    const { awards, unresolvedCount } = await collectTargetAwards(
-      notices,
-      now,
-      (chunk) => upsertMarketAwards(db, chunk),
-    );
-    replaceMarketAwards(db, awards);
+    setMarketSyncState(db, "syncing", "계약 데이터를 조회하고 있습니다.");
     const contracts = await collectTargetContracts(
       notices,
       now,
       (chunk) => upsertMarketContracts(db, chunk),
     );
     replaceMarketContracts(db, contracts);
+    setMarketSyncState(db, "syncing", "낙찰 데이터를 조회하고 있습니다.");
+    const { awards, unresolvedCount } = await collectTargetAwards(
+      notices,
+      now,
+      (chunk) => upsertMarketAwards(db, chunk),
+    );
+    replaceMarketAwards(db, awards);
     const lastSyncedAt = new Date().toISOString();
     setMarketSyncState(
       db,
@@ -207,13 +209,13 @@ async function collectTargetContracts(
 
   for (const range of monthlyRanges(startDate + "0000", endDate + "2359")) {
     for (let pageNo = 1; ; pageNo += 1) {
-      const payload = await fetchContractPage(range.from, range.to, pageNo);
+      const payload = await fetchShoppingMallPage(range.from.slice(0, 8), range.to.slice(0, 8), pageNo);
       if (payload.pageNo !== pageNo || payload.pageSize !== PAGE_SIZE) {
-        throw new Error("\uD45C\uC900\uACC4\uC57D \uD398\uC774\uC9C0 \uC815\uBCF4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
+        throw new Error("\uC1A1\uC77C\uB9C8\uC744 \uACC4\uC57D \uD398\uC774\uC9C0 \uC815\uBCF4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
       }
       const pageContracts: StoredMarketContract[] = [];
       for (const item of payload.items) {
-        const contract = mapStandardContractRow(item, noticeByIdentity);
+        const contract = mapShoppingMallContractRow(item, noticeByIdentity);
         if (!contract) continue;
         if (contract.contractDate < startDate || contract.contractDate > endDate) continue;
         contractByIdentity.set(contract.sourceIdentity, contract);
@@ -224,15 +226,15 @@ async function collectTargetContracts(
     }
   }
 
-  for (const range of monthlyRanges(startDate + "0000", endDate + "2359")) {
+  for (const range of standardContractRanges(startDate, endDate)) {
     for (let pageNo = 1; ; pageNo += 1) {
-      const payload = await fetchShoppingMallPage(range.from.slice(0, 8), range.to.slice(0, 8), pageNo);
+      const payload = await fetchContractPage(range.from, range.to, pageNo);
       if (payload.pageNo !== pageNo || payload.pageSize !== PAGE_SIZE) {
-        throw new Error("\uC1A1\uC77C\uB9C8\uC744 \uACC4\uC57D \uD398\uC774\uC9C0 \uC815\uBCF4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
+        throw new Error("\uD45C\uC900\uACC4\uC57D \uD398\uC774\uC9C0 \uC815\uBCF4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
       }
       const pageContracts: StoredMarketContract[] = [];
       for (const item of payload.items) {
-        const contract = mapShoppingMallContractRow(item, noticeByIdentity);
+        const contract = mapStandardContractRow(item, noticeByIdentity);
         if (!contract) continue;
         if (contract.contractDate < startDate || contract.contractDate > endDate) continue;
         contractByIdentity.set(contract.sourceIdentity, contract);
@@ -355,7 +357,7 @@ function mapStandardContractRow(
   } as StoredMarketContract;
 }
 
-function mapShoppingMallContractRow(
+export function mapShoppingMallContractRow(
   item: Record<string, unknown>,
   noticeByIdentity: Map<string, TargetNotice>,
 ): StoredMarketContract | null {
@@ -373,9 +375,6 @@ function mapShoppingMallContractRow(
   const notice = detailNo ? noticeByIdentity.get(detailNo) : undefined;
   const contractName = text(item.cntrctDlvrReqNm) || notice?.noticeName || text(item.prdctNm);
   const noticeName = notice?.noticeName ?? contractName;
-  if (!notice) {
-    if (!containsKeyword(contractName) && !containsKeyword(noticeName)) return null;
-  }
   const sourceUrl = safeUrl(item.cntrctDlvrReqUrl) || null;
   const sourceIdentity = [
     "shopping-mall",
@@ -410,6 +409,13 @@ function containsKeyword(value: string) {
 
 function marketRegionName(demandAgencyName: string | null) {
   return demandAgencyName?.includes("\uBD80\uC0B0") ? "\uBD80\uC0B0" : "\uAE30\uD0C0";
+}
+
+export function standardContractRanges(startDate: string, endDate: string) {
+  return weeklyRanges(
+    `${startDate.replaceAll("-", "")}0000`,
+    `${endDate.replaceAll("-", "")}2359`,
+  ).map((range) => ({ from: range.from.slice(0, 8), to: range.to.slice(0, 8) }));
 }
 
 async function collectAwardRange(range: { from: string; to: string }): Promise<AwardRegistrationBatch> {

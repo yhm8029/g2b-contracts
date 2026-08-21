@@ -18,7 +18,11 @@ import {
   upsertMarketAwards,
   upsertMarketContracts,
 } from "@/lib/building-control-market/store";
-import { demandAgencyNameFromNotice } from "@/lib/building-control-market/sync";
+import {
+  demandAgencyNameFromNotice,
+  mapShoppingMallContractRow,
+  standardContractRanges,
+} from "@/lib/building-control-market/sync";
 
 const cooperative = "111-22-33333";
 
@@ -189,5 +193,33 @@ describe("incremental market persistence", () => {
 
   it("reads the live notice API demand agency field", () => {
     expect(demandAgencyNameFromNotice({ dminsttNm: "부산광역시 동구" })).toBe("부산광역시 동구");
+  });
+
+  it("splits standard contract requests into provider-supported seven-day ranges", () => {
+    expect(standardContractRanges("2026-08-01", "2026-08-21")).toEqual([
+      { from: "20260801", to: "20260807" },
+      { from: "20260808", to: "20260814" },
+      { from: "20260815", to: "20260821" },
+    ]);
+  });
+
+  it("keeps exact-code shopping mall contracts without a notice keyword", () => {
+    const contract = mapShoppingMallContractRow({
+      cntrctDlvrReqNo: "C-1",
+      cntrctDlvrReqDate: "20260821",
+      bizno: "2048145651",
+      corpNm: "(주)파노텍",
+      dtilPrdctClsfcNo: "3912180101",
+      cntrctDlvrReqNm: "통합관제 설비",
+      dminsttNm: "부산광역시 동구",
+      prdctAmt: "1000000",
+    }, new Map());
+
+    expect(contract).toMatchObject({
+      contractNo: "C-1",
+      contractDate: "2026-08-21",
+      winnerBizNo: "2048145651",
+      regionName: "부산",
+    });
   });
 });
