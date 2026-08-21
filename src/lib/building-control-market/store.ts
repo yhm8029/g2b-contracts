@@ -41,6 +41,12 @@ export type MarketContractInputStored = MarketContractInput & {
   demandAgencyName?: string | null;
 };
 
+const THIRD_PARTY_UNIT_PRICE_CONTRACT = "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D";
+
+export function isExcludedMarketContractName(value: string): boolean {
+  return value.replace(/\s+/g, "").includes(THIRD_PARTY_UNIT_PRICE_CONTRACT);
+}
+
 export type StoredExcellentRegistryEntry = ExcellentRegistryEntry & {
   designationNo: string;
   displayOrder: number;
@@ -103,12 +109,19 @@ export function initMarketStore(db: Database.Database) {
   `);
 
   upgradeMarketStore(db);
+  removeExcludedMarketContracts(db);
 
   const insert = db.prepare(`INSERT OR IGNORE INTO market_excellent_registry
     (biz_no, company_name, designation_no, designation_start_date, designation_end_date, enabled, display_order)
     VALUES (?, ?, ?, ?, ?, 1, ?)`);
   db.transaction(() => SEED_REGISTRY.forEach(([name, bizNo, designationNo, start], index) =>
     insert.run(bizNo, name, designationNo, start, designationEndDate(start), index + 1)))();
+}
+
+function removeExcludedMarketContracts(db: Database.Database) {
+  db.prepare(`DELETE FROM market_contracts
+    WHERE replace(replace(replace(replace(contract_name, ' ', ''), char(9), ''), char(10), ''), char(13), '')
+      LIKE ?`).run(`%${THIRD_PARTY_UNIT_PRICE_CONTRACT}%`);
 }
 
 function upgradeMarketStore(db: Database.Database) {
@@ -248,6 +261,7 @@ function writeMarketContracts(db: Database.Database, contracts: StoredMarketCont
       region_name=excluded.region_name,
       source_url=excluded.source_url`);
   for (const contract of contracts) {
+    if (isExcludedMarketContractName(contract.contractName)) continue;
     insert.run(
       contract.sourceIdentity, contract.contractNo, contract.contractName, contract.contractDate,
       contract.noticeNo, contract.noticeOrder,

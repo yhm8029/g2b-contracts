@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
+import ExcelJS from "exceljs";
 
 import {
   buildMarketShareReport,
@@ -10,6 +11,7 @@ import {
   type MarketAwardInput,
   type MarketContractInput,
 } from "@/lib/building-control-market/report";
+import { buildMarketWorkbook } from "@/lib/building-control-market/excel";
 import {
   initMarketStore,
   listMarketAwards,
@@ -163,7 +165,58 @@ describe("market share UI text", () => {
   });
 });
 
+describe("shopping mall workbook", () => {
+  it("exports the delivery request and original unit-price contract numbers separately", async () => {
+    const contracts = [{
+      sourceIdentity: "shopping-1",
+      contractNo: "R26TB01528402",
+      contractName: "빌딩자동제어장치 구입",
+      contractDate: "2026-02-10",
+      noticeNo: "R25TA00246561",
+      noticeOrder: null,
+      winnerBizNo: "2048169430",
+      winnerName: "주식회사 삼원씨앤지",
+      amount: 99_794_000,
+      demandAgencyName: "강원특별자치도교육청",
+      regionName: "기타",
+      sourceUrl: null,
+    }];
+    const report = buildMarketShareReport({
+      period: { year: 2026 },
+      awards: [],
+      contracts,
+      basis: "contract",
+      region: "all",
+      excellentRegistry,
+      cooperativeBizNo: cooperative,
+    });
+    const bytes = await buildMarketWorkbook({ report, basis: "contract", region: "all", awards: [], contracts });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    const details = workbook.getWorksheet("쇼핑몰내역")!;
+
+    expect(details.getCell("E1").value).toBe("납품요구번호");
+    expect(details.getCell("F1").value).toBe("원 단가계약번호");
+    expect(details.getCell("E2").value).toBe("R26TB01528402");
+    expect(details.getCell("F2").value).toBe("R25TA00246561");
+  });
+});
+
 describe("incremental market persistence", () => {
+  it("removes previously stored framework contracts during initialization", () => {
+    const db = new Database(":memory:");
+    initMarketStore(db);
+    db.prepare(`INSERT INTO market_contracts
+      (source_identity, contract_no, contract_name, contract_date, winner_biz_no, winner_name, region_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run("legacy-framework", "F-1", "\uC6B0\uC218\uC870\uB2EC\uBB3C\uD488 \uC81C3\uC790 \uB2E8\uAC00\uACC4\uC57D", "2026-01-01", "1111111111", "legacy", "\uAE30\uD0C0");
+
+    initMarketStore(db);
+
+    expect(listMarketContracts(db)).toHaveLength(0);
+    db.close();
+  });
+
   it("keeps completed rows when later chunks are upserted", () => {
     const db = new Database(":memory:");
     initMarketStore(db);
@@ -182,6 +235,13 @@ describe("incremental market persistence", () => {
       contractDate: "2026-01-03", noticeNo: "N-1", noticeOrder: "1",
       winnerBizNo: "1111111111", winnerName: "업체1", amount: 100,
       demandAgencyName: "부산광역시", regionName: "부산", sourceUrl: null,
+    }]);
+    upsertMarketContracts(db, [{
+      sourceIdentity: "framework-1", contractNo: "F-1",
+      contractName: "\uC218\uC758 \uC6B0\uC218\uC870\uB2EC\uBB3C\uD488 \uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D",
+      contractDate: "2026-01-03", noticeNo: null, noticeOrder: null,
+      winnerBizNo: "1111111111", winnerName: "framework", amount: 100,
+      demandAgencyName: "\uC870\uB2EC\uCCAD", regionName: "\uAE30\uD0C0", sourceUrl: null,
     }]);
     updateMarketAwardNoticeMetadata(db, [{
       noticeNo: "N-1", noticeOrder: "1", noticeName: "공고1",
@@ -218,5 +278,20 @@ describe("incremental market persistence", () => {
       winnerBizNo: "2048145651",
       regionName: "부산",
     });
+  });
+
+  it("rejects procurement framework contracts from shopping mall facts", () => {
+    const contract = mapShoppingMallContractRow({
+      cntrctDlvrReqNo: "R25TA00246561",
+      cntrctDlvrReqDate: "20250308",
+      bizno: "2048169430",
+      corpNm: "주식회사 삼원씨앤지",
+      dtilPrdctClsfcNo: "3912180101",
+      cntrctDlvrReqNm: "수의 우수조달물품(2024018, 빌딩자동제어장치) 제3자단가계약",
+      dminsttNm: "조달청",
+      prdctAmt: "1000000",
+    }, new Map());
+
+    expect(contract).toBeNull();
   });
 });

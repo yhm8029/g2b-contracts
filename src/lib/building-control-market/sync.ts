@@ -11,6 +11,7 @@ import { fetchG2bJson } from "@/lib/g2b/http";
 import {
   replaceMarketAwards,
   replaceMarketContracts,
+  isExcludedMarketContractName,
   setMarketSyncState,
   updateMarketAwardNoticeMetadata,
   upsertMarketAwards,
@@ -355,6 +356,7 @@ export function mapShoppingMallContractRow(
   const detailNo = noticeNo && noticeOrder ? `${noticeNo}|${noticeOrder}` : "";
   const notice = detailNo ? noticeByIdentity.get(detailNo) : undefined;
   const contractName = text(item.cntrctDlvrReqNm) || notice?.noticeName || text(item.prdctNm);
+  if (isExcludedMarketContractName(contractName)) return null;
   const noticeName = notice?.noticeName ?? contractName;
   const sourceUrl = safeUrl(item.cntrctDlvrReqUrl) || null;
   const sourceIdentity = [

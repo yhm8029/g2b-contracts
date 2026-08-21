@@ -51,12 +51,12 @@ export async function buildMarketWorkbook(input: {
   summary.addImage(imageId, { tl: { col: 7, row: 1 }, ext: { width: 720, height: 420 } });
 
   const details = workbook.addWorksheet(basis === "award" ? "\uacf5\uace0\ub0b4\uc5ed" : basis === "contract" ? "\uc1fc\ud551\ubab0\ub0b4\uc5ed" : "\ud1b5\ud569\ub0b4\uc5ed", { views: [{ state: "frozen", ySplit: 1 }] });
-  details.columns = [14, 14, 36, 14, 20, 22, 18, 18, 28, 48].map((width) => ({ width }));
+  details.columns = [14, 14, 36, 14, 20, 20, 22, 18, 18, 28, 48].map((width) => ({ width }));
   details.getRow(1).values = basis === "award"
-    ? ["\uae30\uc900", "\uc9c0\uc5ed", "\uacf5\uace0\uba85", "\ub099\ucc30\uc77c", "\uacf5\uace0\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"]
+    ? ["\uae30\uc900", "\uc9c0\uc5ed", "\uacf5\uace0\uba85", "\ub099\ucc30\uc77c", "\uacf5\uace0\ubc88\ud638", "\uc5f0\uacc4\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"]
     : basis === "contract"
-      ? ["\uae30\uc900", "\uc9c0\uc5ed", "\ub0a9\ud488\uc694\uad6c\uba85", "\ub0a9\ud488\uc694\uad6c\uc77c", "\ub0a9\ud488\uc694\uad6c\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"]
-      : ["\uae30\uc900", "\uc9c0\uc5ed", "\ub0b4\uc5ed\uba85", "\uae30\uc900\uc77c", "\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"];
+      ? ["\uae30\uc900", "\uc9c0\uc5ed", "\ub0a9\ud488\uc694\uad6c\uba85", "\ub0a9\ud488\uc694\uad6c\uc77c", "\ub0a9\ud488\uc694\uad6c\ubc88\ud638", "\uc6d0 \ub2e8\uac00\uacc4\uc57d\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"]
+      : ["\uae30\uc900", "\uc9c0\uc5ed", "\ub0b4\uc5ed\uba85", "\uae30\uc900\uc77c", "\ubc88\ud638", "\uc6d0 \ub2e8\uac00\uacc4\uc57d\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"];
   styleHeader(details.getRow(1));
 
   if (basis !== "contract") {
@@ -67,6 +67,7 @@ export async function buildMarketWorkbook(input: {
         award.noticeName ?? "",
         award.finalAwardDate,
         award.noticeNo,
+        "",
         award.winnerName,
         award.winnerBizNo,
         award.amount,
@@ -74,8 +75,8 @@ export async function buildMarketWorkbook(input: {
         award.sourceUrl ?? "",
       ]);
       if (award.sourceUrl && /^https?:\/\//i.test(award.sourceUrl)) {
-        row.getCell(10).value = { text: award.sourceUrl, hyperlink: award.sourceUrl };
-        row.getCell(10).font = { color: { argb: "FF0563C1" }, underline: true };
+        row.getCell(11).value = { text: award.sourceUrl, hyperlink: award.sourceUrl };
+        row.getCell(11).font = { color: { argb: "FF0563C1" }, underline: true };
       }
     }
   }
@@ -87,6 +88,7 @@ export async function buildMarketWorkbook(input: {
         contract.contractName,
         contract.contractDate,
         contract.contractNo,
+        contract.noticeNo ?? "",
         contract.winnerName,
         contract.winnerBizNo,
         contract.amount,
@@ -94,14 +96,14 @@ export async function buildMarketWorkbook(input: {
         contract.sourceUrl ?? "",
       ]);
       if (contract.sourceUrl && /^https?:\/\//i.test(contract.sourceUrl)) {
-        row.getCell(10).value = { text: contract.sourceUrl, hyperlink: contract.sourceUrl };
-        row.getCell(10).font = { color: { argb: "FF0563C1" }, underline: true };
+        row.getCell(11).value = { text: contract.sourceUrl, hyperlink: contract.sourceUrl };
+        row.getCell(11).font = { color: { argb: "FF0563C1" }, underline: true };
       }
     }
   }
 
-  details.getColumn(8).numFmt = "#,##0";
-  details.autoFilter = { from: "A1", to: `J${Math.max(1, details.rowCount)}` };
+  details.getColumn(9).numFmt = "#,##0";
+  details.autoFilter = { from: "A1", to: `K${Math.max(1, details.rowCount)}` };
 
   const output = await workbook.xlsx.writeBuffer();
   const bytes = Buffer.from(output);
