@@ -104,32 +104,41 @@ export function MarketShareApp() {
       <header className={styles.header}>
         <div>
           <h1>빌딩자동제어 시장점유율</h1>
-          <p>풍목번호 39121801 / 3912180101 · {basis === "award" ? "낙찰일" : "계약체결일"} 기준 {region === "all" ? "전국" : "부산"} 폐맨</p>
+          <p>품목번호 39121801 / 3912180101 · {basis === "award" ? "낙찰일" : "계약체결일"} 기준 · {region === "all" ? "전국" : "부산"}</p>
         </div>
         <div className={styles.toolbar}>
           <button onClick={() => void load()} disabled={loading} title="새로고침" type="button"><RefreshCw size={16} />새로고침</button>
-          <a className={styles.export} href={`/api/building-control-market/export?${query}`}><Download size={16} />업숍 다운로드</a>
-          <button onClick={() => setEditorOpen((open) => !open)} type="button">{editorOpen ? <X size={16} /> : <Settings size={16} />}{editorOpen ? "평집 닫기" : "업체 평집"}</button>
+          <a className={styles.export} href={`/api/building-control-market/export?${query}`}><Download size={16} />엑셀 다운로드</a>
+          <button onClick={() => setEditorOpen((open) => !open)} type="button">{editorOpen ? <X size={16} /> : <Settings size={16} />}{editorOpen ? "편집 닫기" : "업체 편집"}</button>
           <button className={styles.primary} onClick={() => void sync()} disabled={syncing} type="button"><RefreshCw className={syncing ? styles.spin : undefined} size={16} />{syncing ? "동기화 중" : "나라장터 동기화"}</button>
         </div>
       </header>
 
       <section className={styles.filters} aria-label="조회 조건">
-        <div className={styles.segments} role="group" aria-label="기준">
-          <span className={styles.segmentLabel}>기준</span>
-          <button className={basis === "award" ? styles.active : undefined} onClick={() => setBasis("award")} type="button">공고 기준</button>
-          <button className={basis === "contract" ? styles.active : undefined} onClick={() => setBasis("contract")} type="button">계약 기준</button>
+        <div className={styles.filterGroup}>
+          <span className={styles.filterLabel}>기준</span>
+          <div className={styles.segments} role="group" aria-label="집계 기준">
+            <button className={basis === "award" ? styles.active : undefined} onClick={() => setBasis("award")} type="button">공고 기준</button>
+            <button className={basis === "contract" ? styles.active : undefined} onClick={() => setBasis("contract")} type="button">계약 기준</button>
+          </div>
         </div>
-        <div className={styles.segments} role="group" aria-label="지역">
-          <span className={styles.segmentLabel}>지역</span>
-          <button className={region === "all" ? styles.active : undefined} onClick={() => setRegion("all")} type="button">전국</button>
-          <button className={region === "busan" ? styles.active : undefined} onClick={() => setRegion("busan")} type="button">부산</button>
+        <div className={styles.filterGroup}>
+          <span className={styles.filterLabel}>지역</span>
+          <div className={styles.segments} role="group" aria-label="지역 선택">
+            <button className={region === "all" ? styles.active : undefined} onClick={() => setRegion("all")} type="button">전국</button>
+            <button className={region === "busan" ? styles.active : undefined} onClick={() => setRegion("busan")} type="button">부산</button>
+          </div>
         </div>
-        <div className={styles.segments} role="group" aria-label="분기">
-          <label className={styles.segmentLabel}>연도</label>
-          <select value={year} onChange={(event) => setYear(Number(event.target.value))}>{years.map((value) => <option key={value}>{value}</option>)}</select>
-          <button className={quarter === null ? styles.active : undefined} onClick={() => setQuarter(null)} type="button">연간</button>
-          {[1, 2, 3, 4].map((value) => <button className={quarter === value ? styles.active : undefined} key={value} onClick={() => setQuarter(value)} type="button">{value}분기</button>)}
+        <div className={styles.filterGroup}>
+          <label className={styles.filterLabel} htmlFor="market-year">연도</label>
+          <select id="market-year" value={year} onChange={(event) => setYear(Number(event.target.value))}>{years.map((value) => <option key={value}>{value}</option>)}</select>
+        </div>
+        <div className={styles.filterGroup}>
+          <span className={styles.filterLabel}>기간</span>
+          <div className={styles.segments} role="group" aria-label="기간 선택">
+            <button className={quarter === null ? styles.active : undefined} onClick={() => setQuarter(null)} type="button">연간</button>
+            {[1, 2, 3, 4].map((value) => <button className={quarter === value ? styles.active : undefined} key={value} onClick={() => setQuarter(value)} type="button">{value}분기</button>)}
+          </div>
         </div>
       </section>
 
@@ -141,10 +150,10 @@ export function MarketShareApp() {
           <section className={styles.metrics}>
             <Metric label="조회 기간" value={data.periodLabel} />
             <Metric label={basis === "award" ? "전체 공고 수" : "전체 계약 수"} value={`${data.totalAwardCount.toLocaleString("ko-KR")}건`} />
-            <Metric label="지역 폐맨" value={region === "all" ? "전국" : "부산"} />
+            <Metric label="조회 지역" value={region === "all" ? "전국" : "부산"} />
             <Metric label="마지막 동기화" value={formatTimestamp(data.sync.lastSyncedAt)} />
-            <Metric label="상태" value={data.sync.message ?? "아직 동기화하지 않았습니다."} />
           </section>
+          <div className={styles.syncStatus} aria-live="polite"><span>상태</span><strong>{data.sync.message ?? "아직 동기화하지 않았습니다."}</strong></div>
           <section className={styles.content}>
             <div className={styles.chartSection}>
               <h2>시장점유율</h2>
@@ -155,13 +164,13 @@ export function MarketShareApp() {
             </div>
             <div className={styles.tableSection}>
               <h2>업체별 점유율</h2>
-              <div className={styles.scroll}><table><thead><tr><th>업체</th><th>분류</th><th>{basis === "award" ? "낙찰" : "계약"}</th><th>점유율</th><th>지정 마료일</th></tr></thead><tbody>{data.rows.map((row) => <tr key={`${row.category}-${row.bizNo ?? "bucket"}`}><td>{row.companyName}</td><td><span className={`${styles.badge} ${styles[row.category]}`}>{CATEGORY_LABEL[row.category]}</span></td><td className={styles.number}>{row.awardCount}건</td><td className={styles.number}>{row.marketSharePercent.toFixed(1)}%</td><td>{row.designationEndDate ?? "-"}</td></tr>)}</tbody></table></div>
+              <div className={styles.scroll}><table><thead><tr><th>업체</th><th>분류</th><th>{basis === "award" ? "낙찰" : "계약"}</th><th>점유율</th><th>지정 만료일</th></tr></thead><tbody>{data.rows.map((row) => <tr key={`${row.category}-${row.bizNo ?? "bucket"}`}><td>{row.companyName}</td><td><span className={`${styles.badge} ${styles[row.category]}`}>{CATEGORY_LABEL[row.category]}</span></td><td className={styles.number}>{row.awardCount}건</td><td className={styles.number}>{row.marketSharePercent.toFixed(1)}%</td><td>{row.designationEndDate ?? "-"}</td></tr>)}</tbody></table></div>
             </div>
           </section>
         </>
       ) : null}
 
-      {editorOpen ? <section className={styles.editor}><h2>조달우수업체 평집</h2><div className={styles.scroll}><table><thead><tr><th>지정번호</th><th>사업자번호</th><th>업체명</th><th>지정 시작일</th><th>지정 마료일</th><th>사용</th><th /></tr></thead><tbody>{registry.map((row, index) => <tr key={row.bizNo}><td>{row.designationNo}</td><td>{row.bizNo}</td><td><input value={row.companyName} onChange={(event) => updateRegistry(setRegistry, index, { companyName: event.target.value })} /></td><td><input type="date" value={row.designationStartDate} onChange={(event) => updateRegistry(setRegistry, index, { designationStartDate: event.target.value })} /></td><td><input type="date" value={row.designationEndDate} onChange={(event) => updateRegistry(setRegistry, index, { designationEndDate: event.target.value })} /></td><td><input checked={row.enabled} onChange={(event) => updateRegistry(setRegistry, index, { enabled: event.target.checked })} type="checkbox" /></td><td><button className={styles.save} disabled={saving === row.bizNo} onClick={() => void save(row)} title="저장" type="button"><Save size={15} /></button></td></tr>)}</tbody></table></div></section> : null}
+      {editorOpen ? <section className={styles.editor}><h2>조달우수업체 편집</h2><div className={styles.scroll}><table><thead><tr><th>지정번호</th><th>사업자번호</th><th>업체명</th><th>지정 시작일</th><th>지정 만료일</th><th>사용</th><th /></tr></thead><tbody>{registry.map((row, index) => <tr key={row.bizNo}><td>{row.designationNo}</td><td>{row.bizNo}</td><td><input value={row.companyName} onChange={(event) => updateRegistry(setRegistry, index, { companyName: event.target.value })} /></td><td><input type="date" value={row.designationStartDate} onChange={(event) => updateRegistry(setRegistry, index, { designationStartDate: event.target.value })} /></td><td><input type="date" value={row.designationEndDate} onChange={(event) => updateRegistry(setRegistry, index, { designationEndDate: event.target.value })} /></td><td><input checked={row.enabled} onChange={(event) => updateRegistry(setRegistry, index, { enabled: event.target.checked })} type="checkbox" /></td><td><button className={styles.save} disabled={saving === row.bizNo} onClick={() => void save(row)} title="저장" type="button"><Save size={15} /></button></td></tr>)}</tbody></table></div></section> : null}
     </main>
   );
 }

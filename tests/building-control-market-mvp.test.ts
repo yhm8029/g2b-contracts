@@ -135,4 +135,11 @@ describe("market share UI text", () => {
     const source = readFileSync("src/components/MarketShareApp.tsx", "utf8");
     expect(source).not.toMatch(/\\u[0-9a-f]{4}/i);
   });
+
+  it("uses reviewed Korean labels", () => {
+    const source = readFileSync("src/components/MarketShareApp.tsx", "utf8");
+    expect(source).not.toMatch(/풍목|폐맨|업숍|평집|마료/);
+    expect(source).toContain("품목번호");
+    expect(source).toContain("엑셀 다운로드");
+  });
 });
