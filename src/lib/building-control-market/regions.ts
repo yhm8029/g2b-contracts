@@ -78,8 +78,17 @@ export function classifyMarketRegion(demandAgencyName: string | null | undefined
 export function matchesMarketRegion(
   demandAgencyName: string | null | undefined,
   region: ReportRegion,
+  subjectName?: string | null,
 ): boolean {
-  return region === "all" || classifyMarketRegion(demandAgencyName) === region;
+  return region === "all" || resolveMarketRegion(demandAgencyName, subjectName) === region;
+}
+
+export function resolveMarketRegion(
+  demandAgencyName: string | null | undefined,
+  subjectName?: string | null,
+): ClassifiedMarketRegion {
+  const agencyRegion = classifyMarketRegion(demandAgencyName);
+  return agencyRegion === "other" ? classifyMarketRegion(subjectName) : agencyRegion;
 }
 
 function normalizeAgency(value: string | null | undefined): string {

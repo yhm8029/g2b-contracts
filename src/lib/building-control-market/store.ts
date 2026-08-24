@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 
 import type { ExcellentRegistryEntry, MarketAwardInput, MarketContractInput } from "./report";
-import { classifyMarketRegion, marketRegionLabel } from "./regions";
+import { marketRegionLabel, resolveMarketRegion } from "./regions";
 import { isExcludedMarketFrameworkName } from "./rules";
 
 export const COOPERATIVE_BIZ_NO = "2148204708";
@@ -135,19 +135,19 @@ function removeExcludedMarketAwards(db: Database.Database) {
 
 function refreshStoredRegionNames(db: Database.Database) {
   const updateAwards = db.prepare("UPDATE market_awards SET region_name=? WHERE notice_no=? AND notice_order=?");
-  const awards = db.prepare("SELECT notice_no, notice_order, demand_agency_name FROM market_awards").all() as Array<{
-    notice_no: string; notice_order: string; demand_agency_name: string | null;
+  const awards = db.prepare("SELECT notice_no, notice_order, notice_name, demand_agency_name FROM market_awards").all() as Array<{
+    notice_no: string; notice_order: string; notice_name: string | null; demand_agency_name: string | null;
   }>;
   const updateContracts = db.prepare("UPDATE market_contracts SET region_name=? WHERE source_identity=?");
-  const contracts = db.prepare("SELECT source_identity, demand_agency_name FROM market_contracts").all() as Array<{
-    source_identity: string; demand_agency_name: string | null;
+  const contracts = db.prepare("SELECT source_identity, contract_name, demand_agency_name FROM market_contracts").all() as Array<{
+    source_identity: string; contract_name: string; demand_agency_name: string | null;
   }>;
   db.transaction(() => {
     for (const award of awards) {
-      updateAwards.run(deriveRegionName(award.demand_agency_name), award.notice_no, award.notice_order);
+      updateAwards.run(deriveRegionName(award.demand_agency_name, award.notice_name), award.notice_no, award.notice_order);
     }
     for (const contract of contracts) {
-      updateContracts.run(deriveRegionName(contract.demand_agency_name), contract.source_identity);
+      updateContracts.run(deriveRegionName(contract.demand_agency_name, contract.contract_name), contract.source_identity);
     }
   })();
 }
@@ -229,7 +229,7 @@ export function updateMarketAwardNoticeMetadata(
       update.run(
         notice.noticeName || null,
         notice.demandAgencyName,
-        deriveRegionName(notice.demandAgencyName),
+        deriveRegionName(notice.demandAgencyName, notice.noticeName),
         notice.sourceUrl,
         notice.noticeNo,
         notice.noticeOrder,
@@ -257,7 +257,7 @@ function writeMarketAwards(db: Database.Database, awards: StoredMarketAward[]) {
     insert.run(
       award.noticeNo, award.noticeOrder, award.finalAwardDate, normalizeBizNo(award.winnerBizNo),
       award.winnerName.trim(), award.amount,
-      award.noticeName ?? null, award.demandAgencyName ?? null, deriveRegionName(award.demandAgencyName),
+      award.noticeName ?? null, award.demandAgencyName ?? null, deriveRegionName(award.demandAgencyName, award.noticeName),
       award.sourceUrl,
     );
   }
@@ -312,7 +312,7 @@ function writeMarketContracts(db: Database.Database, contracts: StoredMarketCont
       contract.sourceIdentity, contract.contractNo, contract.contractName, contract.contractDate,
       contract.noticeNo, contract.noticeOrder,
       normalizeBizNo(contract.winnerBizNo), contract.winnerName.trim(), contract.amount,
-      contract.demandAgencyName, deriveRegionName(contract.demandAgencyName), contract.sourceUrl,
+      contract.demandAgencyName, deriveRegionName(contract.demandAgencyName, contract.contractName), contract.sourceUrl,
     );
   }
   removeDuplicateMarketContracts(db);
@@ -351,8 +351,11 @@ export function setMarketSyncState(db: Database.Database, status: "never" | "syn
     .run(status, message, lastSyncedAt ?? null, lastSyncedAt ?? null);
 }
 
-export function deriveRegionName(demandAgencyName: string | null | undefined): string {
-  return marketRegionLabel(classifyMarketRegion(demandAgencyName));
+export function deriveRegionName(
+  demandAgencyName: string | null | undefined,
+  subjectName?: string | null,
+): string {
+  return marketRegionLabel(resolveMarketRegion(demandAgencyName, subjectName));
 }
 
 function normalizeBizNo(value: string) { return value.replace(/\D/g, ""); }

@@ -8,9 +8,9 @@ import {
   type ReportRegion,
 } from "./report";
 import {
-  classifyMarketRegion,
   marketRegionLabel,
   matchesMarketRegion,
+  resolveMarketRegion,
 } from "./regions";
 import { isExcludedMarketFrameworkName } from "./rules";
 import type { StoredMarketAward, StoredMarketContract } from "./store";
@@ -81,10 +81,10 @@ export async function buildMarketWorkbook(input: {
     for (const award of awards.filter((item) =>
       !isExcludedMarketFrameworkName(item.noticeName)
       && inReportPeriod(item.finalAwardDate, report.period)
-      && matchesMarketRegion(item.demandAgencyName, region))) {
+      && matchesMarketRegion(item.demandAgencyName, region, item.noticeName))) {
       const row = details.addRow([
         "\ub098\ub77c\uc7a5\ud130 \uacf5\uace0",
-        marketRegionLabel(classifyMarketRegion(award.demandAgencyName)),
+        marketRegionLabel(resolveMarketRegion(award.demandAgencyName, award.noticeName)),
         award.noticeName ?? "",
         award.finalAwardDate,
         award.noticeNo,
@@ -107,10 +107,10 @@ export async function buildMarketWorkbook(input: {
       : contracts;
     for (const contract of sourceContracts.filter((item) =>
       inReportPeriod(item.contractDate, report.period)
-      && matchesMarketRegion(item.demandAgencyName, region))) {
+      && matchesMarketRegion(item.demandAgencyName, region, item.contractName))) {
       const row = details.addRow([
         "\uc885\ud569\uc1fc\ud551\ubab0",
-        marketRegionLabel(classifyMarketRegion(contract.demandAgencyName)),
+        marketRegionLabel(resolveMarketRegion(contract.demandAgencyName, contract.contractName)),
         contract.contractName,
         contract.contractDate,
         contract.contractNo,

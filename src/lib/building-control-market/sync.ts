@@ -8,7 +8,7 @@ import {
   type AwardResultRow,
 } from "@/lib/building-control/g2b/award-client";
 import { fetchG2bJson } from "@/lib/g2b/http";
-import { classifyMarketRegion, marketRegionLabel } from "./regions";
+import { marketRegionLabel, resolveMarketRegion } from "./regions";
 import { isExcludedMarketFrameworkName } from "./rules";
 import {
   replaceMarketAwards,
@@ -195,7 +195,7 @@ function marketAwardFromRows(notice: TargetNotice, rows: AwardResultRow[]): Stor
     amount: award.amount,
     noticeName: notice.noticeName || null,
     demandAgencyName: notice.demandAgencyName,
-    regionName: marketRegionName(notice.demandAgencyName),
+    regionName: marketRegionName(notice.demandAgencyName, notice.noticeName),
     sourceUrl: notice.sourceUrl,
   };
 }
@@ -338,7 +338,7 @@ function mapStandardContractRow(
     winnerName,
     amount,
     demandAgencyName,
-    regionName: marketRegionName(demandAgencyName),
+    regionName: marketRegionName(demandAgencyName, contractName),
     sourceUrl,
   } as StoredMarketContract;
 }
@@ -386,7 +386,7 @@ export function mapShoppingMallContractRow(
     winnerName,
     amount,
     demandAgencyName,
-    regionName: marketRegionName(demandAgencyName),
+    regionName: marketRegionName(demandAgencyName, contractName),
     sourceUrl,
   } as StoredMarketContract;
 }
@@ -397,8 +397,8 @@ function containsKeyword(value: string) {
   return CONTRACT_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
-function marketRegionName(demandAgencyName: string | null) {
-  return marketRegionLabel(classifyMarketRegion(demandAgencyName));
+function marketRegionName(demandAgencyName: string | null, subjectName?: string | null) {
+  return marketRegionLabel(resolveMarketRegion(demandAgencyName, subjectName));
 }
 
 async function collectAwardRange(range: { from: string; to: string }): Promise<AwardRegistrationBatch> {

@@ -82,7 +82,7 @@ export function selectAwardRecords(input: {
       demandAgencyName: award.demandAgencyName,
       amount: award.amount,
       referenceDate: award.finalAwardDate,
-    })).filter((record) => matchesMarketRegion(record.demandAgencyName, input.region));
+    })).filter((record) => matchesMarketRegion(record.demandAgencyName, input.region, record.noticeName));
   const sourceContracts = input.basis === "combined"
     ? removeCrossSourceDuplicateContracts(input.awards, input.contracts)
     : input.contracts;
@@ -112,7 +112,7 @@ export function selectContractRecords(input: {
       demandAgencyName: contract.demandAgencyName,
       amount: contract.amount,
       referenceDate: contract.contractDate,
-    })).filter((record) => matchesMarketRegion(record.demandAgencyName, input.region));
+    })).filter((record) => matchesMarketRegion(record.demandAgencyName, input.region, record.contractName));
   const awardRecords = aggregateAwardsAsContracts(input.awards, input.region);
   if (input.basis === "contract") return contractRecords;
   if (input.basis === "award") return awardRecords;
@@ -121,7 +121,7 @@ export function selectContractRecords(input: {
 
 function aggregateContractsAsAwards(contracts: MarketContractInput[], region: ReportRegion): AwardRecord[] {
   return contracts
-    .filter((contract) => matchesMarketRegion(contract.demandAgencyName, region))
+    .filter((contract) => matchesMarketRegion(contract.demandAgencyName, region, contract.contractName))
     .map((contract) => ({
       noticeNo: contract.noticeNo ?? contract.contractNo,
       noticeOrder: contract.noticeOrder ?? "",
@@ -138,7 +138,7 @@ function aggregateContractsAsAwards(contracts: MarketContractInput[], region: Re
 function aggregateAwardsAsContracts(awards: MarketAwardInput[], region: ReportRegion): ContractRecord[] {
   return awards
     .filter((award) => !isExcludedMarketFrameworkName(award.noticeName))
-    .filter((award) => matchesMarketRegion(award.demandAgencyName, region))
+    .filter((award) => matchesMarketRegion(award.demandAgencyName, region, award.noticeName))
     .map((award) => ({
       contractNo: `${award.noticeNo}-${award.noticeOrder}`,
       contractName: award.noticeName ?? "",

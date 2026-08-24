@@ -31,6 +31,7 @@ import {
 import {
   classifyMarketRegion,
   marketRegionLabel,
+  resolveMarketRegion,
 } from "@/lib/building-control-market/regions";
 
 const cooperative = "111-22-33333";
@@ -193,6 +194,13 @@ describe("market regions", () => {
   ] as const)("classifies %s", (agency, region, label) => {
     expect(classifyMarketRegion(agency)).toBe(region);
     expect(marketRegionLabel(region)).toBe(label);
+  });
+
+  it("uses the notice name when a national agency name has no region", () => {
+    expect(resolveMarketRegion(
+      "문화체육관광부",
+      "국립광주박물관 전시관 빌딩자동제어장치(기계)설치공사",
+    )).toBe("gwangju");
   });
 });
 
