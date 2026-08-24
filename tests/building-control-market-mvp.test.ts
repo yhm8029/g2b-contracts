@@ -189,6 +189,7 @@ describe("market regions", () => {
     ["인천광역시", "incheon", "인천"], ["대구광역시", "daegu", "대구"],
     ["대전광역시", "daejeon", "대전"], ["광주광역시", "gwangju", "광주"],
     ["울산광역시", "ulsan", "울산"], ["세종특별자치시", "sejong", "세종"],
+    ["조달청 각 수요기관", "other", "기타"],
   ] as const)("classifies %s", (agency, region, label) => {
     expect(classifyMarketRegion(agency)).toBe(region);
     expect(marketRegionLabel(region)).toBe(label);

@@ -16,10 +16,11 @@ export const REPORT_REGION_OPTIONS = [
   { value: "gwangju", label: "광주" },
   { value: "ulsan", label: "울산" },
   { value: "sejong", label: "세종" },
+  { value: "other", label: "기타" },
 ] as const;
 
 export type ReportRegion = (typeof REPORT_REGION_OPTIONS)[number]["value"];
-export type ClassifiedMarketRegion = Exclude<ReportRegion, "all"> | "other";
+export type ClassifiedMarketRegion = Exclude<ReportRegion, "all">;
 
 const REGION_LABELS: Record<ReportRegion | "other", string> = {
   all: "전국",
@@ -84,4 +85,3 @@ export function matchesMarketRegion(
 function normalizeAgency(value: string | null | undefined): string {
   return value?.normalize("NFKC").toLowerCase().replace(/\s+/g, "") ?? "";
 }
-
