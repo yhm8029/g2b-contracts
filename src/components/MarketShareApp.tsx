@@ -3,6 +3,11 @@
 import { Download, RefreshCw, Save, Settings, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  marketRegionLabel,
+  REPORT_REGION_OPTIONS,
+  type ReportRegion,
+} from "@/lib/building-control-market/regions";
 import styles from "./MarketShareApp.module.css";
 
 type Category = "excellent" | "non_excellent" | "cooperative";
@@ -14,11 +19,10 @@ type ReportResponse = {
   rows: ReportRow[];
   registry: RegistryRow[];
   basis: "award" | "contract" | "combined";
-  region: "all" | "busan";
+  region: ReportRegion;
   sync: { status: string; lastSyncedAt: string | null; message: string | null };
 };
 type Basis = "award" | "contract" | "combined";
-type Region = "all" | "busan";
 
 const COLORS = ["#156f4a", "#d97706", "#2563eb", "#be123c", "#7c3aed", "#0891b2", "#4d7c0f", "#c2410c", "#4338ca", "#0f766e", "#a16207", "#0369a1", "#9f1239", "#6d28d9", "#15803d", "#b45309", "#1d4ed8", "#b91c1c", "#5b21b6", "#0e7490", "#3f6212", "#9a3412", "#3730a3", "#047857"];
 const CATEGORY_LABEL: Record<Category, string> = { excellent: "조달우수", non_excellent: "조달우수X", cooperative: "협동조합" };
@@ -28,7 +32,7 @@ export function MarketShareApp() {
   const [year, setYear] = useState(current.year);
   const [quarter, setQuarter] = useState<number | null>(current.quarter);
   const [basis, setBasis] = useState<Basis>("award");
-  const [region, setRegion] = useState<Region>("all");
+  const [region, setRegion] = useState<ReportRegion>("all");
   const [data, setData] = useState<ReportResponse | null>(null);
   const [registry, setRegistry] = useState<RegistryRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,7 +114,7 @@ export function MarketShareApp() {
       <header className={styles.header}>
         <div>
           <h1>빌딩자동제어 시장점유율</h1>
-          <p>품목번호 39121801 / 3912180101 · {basisDateLabel(basis)} 기준 · {region === "all" ? "전국" : "부산"}</p>
+          <p>품목번호 39121801 / 3912180101 · {basisDateLabel(basis)} 기준 · {marketRegionLabel(region)}</p>
         </div>
         <div className={styles.toolbar}>
           <button onClick={() => void load()} disabled={loading} title="새로고침" type="button"><RefreshCw size={16} />새로고침</button>
@@ -130,11 +134,17 @@ export function MarketShareApp() {
           </div>
         </div>
         <div className={styles.filterGroup}>
-          <span className={styles.filterLabel}>지역</span>
-          <div className={styles.segments} role="group" aria-label="지역 선택">
-            <button className={region === "all" ? styles.active : undefined} onClick={() => setRegion("all")} type="button">전국</button>
-            <button className={region === "busan" ? styles.active : undefined} onClick={() => setRegion("busan")} type="button">부산</button>
-          </div>
+          <label className={styles.filterLabel} htmlFor="market-region">지역</label>
+          <select
+            className={styles.regionSelect}
+            id="market-region"
+            value={region}
+            onChange={(event) => setRegion(event.target.value as ReportRegion)}
+          >
+            {REPORT_REGION_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
         </div>
         <div className={styles.filterGroup}>
           <label className={styles.filterLabel} htmlFor="market-year">연도</label>
@@ -157,7 +167,7 @@ export function MarketShareApp() {
           <section className={styles.metrics}>
             <Metric label="조회 기간" value={data.periodLabel} />
             <Metric label={basisCountLabel(basis)} value={`${data.totalAwardCount.toLocaleString("ko-KR")}건`} />
-            <Metric label="조회 지역" value={region === "all" ? "전국" : "부산"} />
+            <Metric label="조회 지역" value={marketRegionLabel(region)} />
             <Metric label="마지막 동기화" value={formatTimestamp(data.sync.lastSyncedAt)} />
           </section>
           <div className={styles.syncStatus} aria-live="polite"><span>상태</span><strong>{data.sync.message ?? "아직 동기화하지 않았습니다."}</strong></div>

@@ -8,6 +8,8 @@ import {
   type AwardResultRow,
 } from "@/lib/building-control/g2b/award-client";
 import { fetchG2bJson } from "@/lib/g2b/http";
+import { classifyMarketRegion, marketRegionLabel } from "./regions";
+import { isExcludedMarketFrameworkName } from "./rules";
 import {
   replaceMarketAwards,
   replaceMarketContracts,
@@ -109,10 +111,12 @@ async function collectTargetNotices(
         const noticeNo = text(item.bidNtceNo);
         const noticeOrder = text(item.bidNtceOrd);
         if (!noticeNo || !noticeOrder) throw new Error("\uB300\uC0C1 \uACF5\uACE0 \uC2DD\uBCC4\uC790\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.");
+        const noticeName = text(item.bidNtceNm);
+        if (isExcludedMarketFrameworkName(noticeName)) continue;
         const notice: TargetNotice = {
           noticeNo,
           noticeOrder,
-          noticeName: text(item.bidNtceNm),
+          noticeName,
           demandAgencyName: demandAgencyNameFromNotice(item),
           sourceUrl: safeUrl(item.bidNtceDtlUrl),
         };
@@ -394,7 +398,7 @@ function containsKeyword(value: string) {
 }
 
 function marketRegionName(demandAgencyName: string | null) {
-  return demandAgencyName?.includes("\uBD80\uC0B0") ? "\uBD80\uC0B0" : "\uAE30\uD0C0";
+  return marketRegionLabel(classifyMarketRegion(demandAgencyName));
 }
 
 async function collectAwardRange(range: { from: string; to: string }): Promise<AwardRegistrationBatch> {

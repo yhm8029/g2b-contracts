@@ -1,6 +1,8 @@
 import type Database from "better-sqlite3";
 
 import type { ExcellentRegistryEntry, MarketAwardInput, MarketContractInput } from "./report";
+import { classifyMarketRegion, marketRegionLabel } from "./regions";
+import { isExcludedMarketFrameworkName } from "./rules";
 
 export const COOPERATIVE_BIZ_NO = "2148204708";
 
@@ -41,10 +43,8 @@ export type MarketContractInputStored = MarketContractInput & {
   demandAgencyName?: string | null;
 };
 
-const THIRD_PARTY_UNIT_PRICE_CONTRACT = "\uC81C3\uC790\uB2E8\uAC00\uACC4\uC57D";
-
 export function isExcludedMarketContractName(value: string): boolean {
-  return value.replace(/\s+/g, "").includes(THIRD_PARTY_UNIT_PRICE_CONTRACT);
+  return isExcludedMarketFrameworkName(value);
 }
 
 export type StoredExcellentRegistryEntry = ExcellentRegistryEntry & {
@@ -109,8 +109,10 @@ export function initMarketStore(db: Database.Database) {
   `);
 
   upgradeMarketStore(db);
+  removeExcludedMarketAwards(db);
   removeExcludedMarketContracts(db);
   removeDuplicateMarketContracts(db);
+  refreshStoredRegionNames(db);
 
   const insert = db.prepare(`INSERT OR IGNORE INTO market_excellent_registry
     (biz_no, company_name, designation_no, designation_start_date, designation_end_date, enabled, display_order)
@@ -122,7 +124,32 @@ export function initMarketStore(db: Database.Database) {
 function removeExcludedMarketContracts(db: Database.Database) {
   db.prepare(`DELETE FROM market_contracts
     WHERE replace(replace(replace(replace(contract_name, ' ', ''), char(9), ''), char(10), ''), char(13), '')
-      LIKE ?`).run(`%${THIRD_PARTY_UNIT_PRICE_CONTRACT}%`);
+      LIKE ?`).run("%제3자단가계약%");
+}
+
+function removeExcludedMarketAwards(db: Database.Database) {
+  db.prepare(`DELETE FROM market_awards
+    WHERE replace(replace(replace(replace(coalesce(notice_name, ''), ' ', ''), char(9), ''), char(10), ''), char(13), '')
+      LIKE ?`).run("%제3자단가계약%");
+}
+
+function refreshStoredRegionNames(db: Database.Database) {
+  const updateAwards = db.prepare("UPDATE market_awards SET region_name=? WHERE notice_no=? AND notice_order=?");
+  const awards = db.prepare("SELECT notice_no, notice_order, demand_agency_name FROM market_awards").all() as Array<{
+    notice_no: string; notice_order: string; demand_agency_name: string | null;
+  }>;
+  const updateContracts = db.prepare("UPDATE market_contracts SET region_name=? WHERE source_identity=?");
+  const contracts = db.prepare("SELECT source_identity, demand_agency_name FROM market_contracts").all() as Array<{
+    source_identity: string; demand_agency_name: string | null;
+  }>;
+  db.transaction(() => {
+    for (const award of awards) {
+      updateAwards.run(deriveRegionName(award.demand_agency_name), award.notice_no, award.notice_order);
+    }
+    for (const contract of contracts) {
+      updateContracts.run(deriveRegionName(contract.demand_agency_name), contract.source_identity);
+    }
+  })();
 }
 
 function removeDuplicateMarketContracts(db: Database.Database) {
@@ -226,6 +253,7 @@ function writeMarketAwards(db: Database.Database, awards: StoredMarketAward[]) {
       region_name=excluded.region_name,
       source_url=excluded.source_url`);
   for (const award of awards) {
+    if (isExcludedMarketFrameworkName(award.noticeName)) continue;
     insert.run(
       award.noticeNo, award.noticeOrder, award.finalAwardDate, normalizeBizNo(award.winnerBizNo),
       award.winnerName.trim(), award.amount,
@@ -324,8 +352,7 @@ export function setMarketSyncState(db: Database.Database, status: "never" | "syn
 }
 
 export function deriveRegionName(demandAgencyName: string | null | undefined): string {
-  if (!demandAgencyName) return "\uAE30\uD0C0";
-  return demandAgencyName.toLowerCase().includes("\uBD80\uC0B0") ? "\uBD80\uC0B0" : "\uAE30\uD0C0";
+  return marketRegionLabel(classifyMarketRegion(demandAgencyName));
 }
 
 function normalizeBizNo(value: string) { return value.replace(/\D/g, ""); }

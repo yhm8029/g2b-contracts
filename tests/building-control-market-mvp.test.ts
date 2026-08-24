@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 
 import {
   buildMarketShareReport,
@@ -27,6 +28,10 @@ import {
   demandAgencyNameFromNotice,
   mapShoppingMallContractRow,
 } from "@/lib/building-control-market/sync";
+import {
+  classifyMarketRegion,
+  marketRegionLabel,
+} from "@/lib/building-control-market/regions";
 
 const cooperative = "111-22-33333";
 
@@ -152,6 +157,42 @@ describe("selectAwardRecords / selectContractRecords", () => {
 
     expect(records).toHaveLength(4);
   });
+
+  it("keeps the G2B notice when the combined view contains the same shopping fact", () => {
+    const duplicateAward: MarketAwardInput = {
+      noticeNo: "R26BK0001", noticeOrder: "000", noticeName: "학교 자동제어장치 구매",
+      finalAwardDate: "2026-02-10", winnerBizNo: "2048145651", winnerName: "(주)파노텍",
+      amount: 99_794_000, demandAgencyName: "강원특별자치도교육청",
+    };
+    const duplicateContract: MarketContractInput = {
+      contractNo: "R26TB0002", contractName: "학교 자동제어장치 (구매)",
+      contractDate: "2026-02-11", winnerBizNo: "204-81-45651", winnerName: "(주)파노텍",
+      amount: 99_794_000, demandAgencyName: "강원특별자치도 교육청",
+    };
+
+    expect(selectAwardRecords({ basis: "combined", region: "all", awards: [duplicateAward], contracts: [duplicateContract] }))
+      .toMatchObject([{ noticeNo: "R26BK0001" }]);
+    expect(selectAwardRecords({ basis: "contract", region: "all", awards: [duplicateAward], contracts: [duplicateContract] }))
+      .toHaveLength(1);
+  });
+});
+
+describe("market regions", () => {
+  it.each([
+    ["서울특별시교육청", "capital", "수도권(서울·경기)"],
+    ["경기도 광주시", "capital", "수도권(서울·경기)"],
+    ["부산광역시 기장군", "busan", "부산"],
+    ["충청남도교육청", "chungnam", "충남"], ["충청북도교육청", "chungbuk", "충북"],
+    ["전라남도청", "jeonnam", "전남"], ["전북특별자치도", "jeonbuk", "전북"],
+    ["경상남도교육청", "gyeongnam", "경남"], ["경상북도청", "gyeongbuk", "경북"],
+    ["강원특별자치도교육청", "gangwon", "강원"], ["제주특별자치도", "jeju", "제주"],
+    ["인천광역시", "incheon", "인천"], ["대구광역시", "daegu", "대구"],
+    ["대전광역시", "daejeon", "대전"], ["광주광역시", "gwangju", "광주"],
+    ["울산광역시", "ulsan", "울산"], ["세종특별자치시", "sejong", "세종"],
+  ] as const)("classifies %s", (agency, region, label) => {
+    expect(classifyMarketRegion(agency)).toBe(region);
+    expect(marketRegionLabel(region)).toBe(label);
+  });
 });
 
 describe("market share UI text", () => {
@@ -212,6 +253,20 @@ describe("shopping mall workbook", () => {
     expect(details.getCell("E2").value).toBe("R26TB01528402");
     expect(details.getCell("F2").value).toBe("R25TA00246561");
   });
+
+  it("exports an editable native Excel pie chart linked to company and count cells", async () => {
+    const report = buildMarketShareReport({
+      period: { year: 2026 }, awards: [], contracts: [], basis: "award", region: "all",
+      excellentRegistry, cooperativeBizNo: cooperative,
+    });
+    const bytes = await buildMarketWorkbook({ report, basis: "award", region: "all", awards: [], contracts: [] });
+    const archive = await JSZip.loadAsync(bytes);
+    const chartXml = await archive.file("xl/charts/chart1.xml")?.async("string");
+
+    expect(chartXml).toContain("<c:pieChart>");
+    expect(chartXml).toContain("'시장점유율'!$A$7:$A$10");
+    expect(chartXml).toContain("'시장점유율'!$E$7:$E$10");
+  });
 });
 
 describe("incremental market persistence", () => {
@@ -261,6 +316,20 @@ describe("incremental market persistence", () => {
     initMarketStore(db);
 
     expect(listMarketContracts(db)).toHaveLength(0);
+    db.close();
+  });
+
+  it("rejects procurement framework notices from award storage", () => {
+    const db = new Database(":memory:");
+    initMarketStore(db);
+    upsertMarketAwards(db, [{
+      noticeNo: "R26BK01602969", noticeOrder: "000", finalAwardDate: "2026-06-30",
+      winnerBizNo: "2048145651", winnerName: "(주)파노텍", amount: 728_010_000,
+      noticeName: "우수조달물품(2025135, 빌딩자동제어장치) 제3자단가계약",
+      demandAgencyName: "각 수요기관", regionName: "기타", sourceUrl: null,
+    }]);
+
+    expect(listMarketAwards(db)).toHaveLength(0);
     db.close();
   });
 

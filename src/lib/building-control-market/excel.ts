@@ -1,11 +1,18 @@
 import ExcelJS from "exceljs";
-import { PNG } from "pngjs";
+import JSZip from "jszip";
 
-import type {
-  MarketShareReport,
-  ReportBasis,
-  ReportRegion,
+import {
+  removeCrossSourceDuplicateContracts,
+  type MarketShareReport,
+  type ReportBasis,
+  type ReportRegion,
 } from "./report";
+import {
+  classifyMarketRegion,
+  marketRegionLabel,
+  matchesMarketRegion,
+} from "./regions";
+import { isExcludedMarketFrameworkName } from "./rules";
 import type { StoredMarketAward, StoredMarketContract } from "./store";
 
 const COLORS = ["156f4a", "d97706", "2563eb", "be123c", "7c3aed", "0891b2", "4d7c0f", "c2410c", "4338ca", "0f766e", "a16207", "0369a1", "9f1239", "6d28d9", "15803d", "b45309", "1d4ed8", "b91c1c", "5b21b6", "0e7490", "3f6212", "9a3412", "3730a3", "047857"];
@@ -20,7 +27,7 @@ export function marketWorkbookFileName(
     : basis === "contract"
       ? "\uC885\uD569\uC1FC\uD551\uBAB0"
       : "\uD1B5\uD569";
-  const regionLabel = region === "busan" ? "\uBD80\uC0B0" : "\uC804\uAD6D";
+  const regionLabel = marketRegionLabel(region);
   const periodLabel = period.quarter
     ? `${period.year}\uB144${period.quarter}\uBD84\uAE30`
     : `${period.year}\uC5F0\uAC04`;
@@ -46,7 +53,7 @@ export async function buildMarketWorkbook(input: {
   summary.mergeCells("A2:F2");
   summary.getCell("A2").value = `\uc870\ud68c \uae30\uac04: ${report.periodLabel}`;
   summary.mergeCells("A3:F3");
-  summary.getCell("A3").value = `\uae30\uc900: ${basisLabel(basis)} \u00b7 \uc9c0\uc5ed: ${region === "all" ? "\uc804\uad6d" : "\ubd80\uc0b0"}`;
+  summary.getCell("A3").value = `\uae30\uc900: ${basisLabel(basis)} \u00b7 \uc9c0\uc5ed: ${marketRegionLabel(region)}`;
   summary.mergeCells("A4:F4");
   summary.getCell("A4").value = `${basisCountLabel(basis)}: ${report.totalAwardCount}\uac74`;
 
@@ -61,12 +68,6 @@ export async function buildMarketWorkbook(input: {
     added.getCell(6).numFmt = "0.0%";
   }
   summary.autoFilter = { from: "A6", to: `F${Math.max(6, summary.rowCount)}` };
-  const imageId = workbook.addImage({
-    base64: `data:image/png;base64,${buildPiePng(report).toString("base64")}`,
-    extension: "png",
-  });
-  summary.addImage(imageId, { tl: { col: 7, row: 1 }, ext: { width: 720, height: 420 } });
-
   const details = workbook.addWorksheet(basis === "award" ? "\uacf5\uace0\ub0b4\uc5ed" : basis === "contract" ? "\uc1fc\ud551\ubab0\ub0b4\uc5ed" : "\ud1b5\ud569\ub0b4\uc5ed", { views: [{ state: "frozen", ySplit: 1 }] });
   details.columns = [14, 14, 36, 14, 20, 20, 22, 18, 18, 28, 48].map((width) => ({ width }));
   details.getRow(1).values = basis === "award"
@@ -77,10 +78,13 @@ export async function buildMarketWorkbook(input: {
   styleHeader(details.getRow(1));
 
   if (basis !== "contract") {
-    for (const award of awards.filter((item) => inReportPeriod(item.finalAwardDate, report.period) && matchesExportRegion(item.regionName, region))) {
+    for (const award of awards.filter((item) =>
+      !isExcludedMarketFrameworkName(item.noticeName)
+      && inReportPeriod(item.finalAwardDate, report.period)
+      && matchesMarketRegion(item.demandAgencyName, region))) {
       const row = details.addRow([
         "\ub098\ub77c\uc7a5\ud130 \uacf5\uace0",
-        award.regionName,
+        marketRegionLabel(classifyMarketRegion(award.demandAgencyName)),
         award.noticeName ?? "",
         award.finalAwardDate,
         award.noticeNo,
@@ -98,10 +102,15 @@ export async function buildMarketWorkbook(input: {
     }
   }
   if (basis !== "award") {
-    for (const contract of contracts.filter((item) => inReportPeriod(item.contractDate, report.period) && matchesExportRegion(item.regionName, region))) {
+    const sourceContracts = basis === "combined"
+      ? removeCrossSourceDuplicateContracts(awards, contracts)
+      : contracts;
+    for (const contract of sourceContracts.filter((item) =>
+      inReportPeriod(item.contractDate, report.period)
+      && matchesMarketRegion(item.demandAgencyName, region))) {
       const row = details.addRow([
         "\uc885\ud569\uc1fc\ud551\ubab0",
-        contract.regionName,
+        marketRegionLabel(classifyMarketRegion(contract.demandAgencyName)),
         contract.contractName,
         contract.contractDate,
         contract.contractNo,
@@ -123,8 +132,10 @@ export async function buildMarketWorkbook(input: {
   details.autoFilter = { from: "A1", to: `K${Math.max(1, details.rowCount)}` };
 
   const output = await workbook.xlsx.writeBuffer();
-  const bytes = Buffer.from(output);
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const bytes = await addNativePieChart(Buffer.from(output), report);
+  const result = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(result).set(bytes);
+  return result;
 }
 
 function styleHeader(row: ExcelJS.Row) {
@@ -136,46 +147,116 @@ function styleHeader(row: ExcelJS.Row) {
   });
 }
 
-function buildPiePng(report: MarketShareReport) {
-  const png = new PNG({ width: 720, height: 420 });
-  png.data.fill(255);
-  const total = report.rows.reduce((sum, row) => sum + row.awardCount, 0);
-  const cumulative: number[] = [];
-  report.rows.reduce((sum, row) => { const next = sum + (total ? row.awardCount / total : 0); cumulative.push(next); return next; }, 0);
-  for (let y = 0; y < png.height; y += 1) {
-    for (let x = 0; x < 390; x += 1) {
-      const dx = x - 195;
-      const dy = y - 210;
-      if (dx * dx + dy * dy > 155 * 155) continue;
-      const ratio = ((Math.atan2(dy, dx) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2);
-      const colorIndex = total ? Math.max(0, cumulative.findIndex((limit) => ratio <= limit)) : -1;
-      setPixel(png, x, y, colorIndex >= 0 ? COLORS[colorIndex % COLORS.length] : "e5e7eb");
-    }
+async function addNativePieChart(source: Buffer, report: MarketShareReport): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(source);
+  const contentTypes = await requiredZipText(zip, "[Content_Types].xml");
+  const sheet = await requiredZipText(zip, "xl/worksheets/sheet1.xml");
+  const sheetRelsPath = "xl/worksheets/_rels/sheet1.xml.rels";
+  const existingSheetRels = await zip.file(sheetRelsPath)?.async("string");
+  const relationshipId = "rIdMarketChart";
+
+  if (sheet.includes("<drawing ") || existingSheetRels?.includes(`Id="${relationshipId}"`)) {
+    throw new Error("시장점유율 시트에 이미 충돌하는 차트 관계가 있습니다.");
   }
-  report.rows.forEach((_, index) => fillRect(png, 415, 20 + index * 16, 12, 12, COLORS[index % COLORS.length]));
-  return PNG.sync.write(png);
+
+  zip.file("[Content_Types].xml", addContentTypeOverrides(contentTypes));
+  zip.file("xl/worksheets/sheet1.xml", sheet.replace(
+    "</worksheet>",
+    `<drawing r:id="${relationshipId}"/></worksheet>`,
+  ));
+  zip.file(sheetRelsPath, addSheetDrawingRelationship(existingSheetRels, relationshipId));
+  zip.file("xl/drawings/drawing1.xml", drawingXml());
+  zip.file("xl/drawings/_rels/drawing1.xml.rels", drawingRelationshipsXml());
+  zip.file("xl/charts/chart1.xml", pieChartXml(report));
+
+  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
 }
 
-function fillRect(png: PNG, x: number, y: number, width: number, height: number, color: string) {
-  for (let py = y; py < y + height; py += 1) for (let px = x; px < x + width; px += 1) setPixel(png, px, py, color);
+async function requiredZipText(zip: JSZip, path: string): Promise<string> {
+  const file = zip.file(path);
+  if (!file) throw new Error(`엑셀 내부 파일이 없습니다: ${path}`);
+  return file.async("string");
 }
 
-function setPixel(png: PNG, x: number, y: number, color: string) {
-  const offset = (y * png.width + x) * 4;
-  const value = Number.parseInt(color, 16);
-  png.data[offset] = value >> 16;
-  png.data[offset + 1] = value >> 8 & 255;
-  png.data[offset + 2] = value & 255;
-  png.data[offset + 3] = 255;
+function addContentTypeOverrides(xml: string): string {
+  const drawingOverride = '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>';
+  const chartOverride = '<Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>';
+  return xml.replace("</Types>", `${drawingOverride}${chartOverride}</Types>`);
+}
+
+function addSheetDrawingRelationship(existing: string | undefined, relationshipId: string): string {
+  const relationship = `<Relationship Id="${relationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>`;
+  if (existing) return existing.replace("</Relationships>", `${relationship}</Relationships>`);
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationship}</Relationships>`;
+}
+
+function drawingRelationshipsXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>` +
+    `</Relationships>`;
+}
+
+function drawingXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <xdr:twoCellAnchor editAs="oneCell">
+    <xdr:from><xdr:col>7</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
+    <xdr:to><xdr:col>16</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>23</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+    <xdr:graphicFrame macro="">
+      <xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="시장점유율 차트"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>
+      <xdr:xfrm/>
+      <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rId1"/></a:graphicData></a:graphic>
+    </xdr:graphicFrame>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>
+</xdr:wsDr>`;
+}
+
+function pieChartXml(report: MarketShareReport): string {
+  const firstRow = 7;
+  const lastRow = 6 + report.rows.length;
+  const categories = report.rows.map((row, index) =>
+    `<c:pt idx="${index}"><c:v>${escapeXml(row.companyName)}</c:v></c:pt>`).join("");
+  const values = report.rows.map((row, index) =>
+    `<c:pt idx="${index}"><c:v>${row.awardCount}</c:v></c:pt>`).join("");
+  const colors = report.rows.map((_, index) =>
+    `<c:dPt><c:idx val="${index}"/><c:spPr><a:solidFill><a:srgbClr val="${COLORS[index % COLORS.length]}"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr></c:dPt>`).join("");
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <c:lang val="ko-KR"/><c:roundedCorners val="0"/>
+  <c:chart>
+    <c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="ko-KR" sz="1200"/><a:t>시장점유율</a:t></a:r></a:p></c:rich></c:tx><c:layout/><c:overlay val="0"/></c:title>
+    <c:autoTitleDeleted val="0"/>
+    <c:plotArea><c:layout/><c:pieChart><c:varyColors val="1"/>
+      <c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>건수</c:v></c:tx>
+        ${colors}
+        <c:dLbls><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="1"/><c:showLeaderLines val="1"/></c:dLbls>
+        <c:cat><c:strRef><c:f>'시장점유율'!$A$${firstRow}:$A$${lastRow}</c:f><c:strCache><c:ptCount val="${report.rows.length}"/>${categories}</c:strCache></c:strRef></c:cat>
+        <c:val><c:numRef><c:f>'시장점유율'!$E$${firstRow}:$E$${lastRow}</c:f><c:numCache><c:formatCode>0</c:formatCode><c:ptCount val="${report.rows.length}"/>${values}</c:numCache></c:numRef></c:val>
+      </c:ser><c:firstSliceAng val="270"/>
+    </c:pieChart></c:plotArea>
+    <c:legend><c:legendPos val="r"/><c:layout/><c:overlay val="0"/></c:legend>
+    <c:plotVisOnly val="1"/><c:dispBlanksAs val="zero"/><c:showDLblsOverMax val="0"/>
+  </c:chart>
+  <c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings>
+</c:chartSpace>`;
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 function inReportPeriod(date: string, period: { year: number; quarter?: number }) {
   return Number(date.slice(0, 4)) === period.year
     && (period.quarter === undefined || Math.ceil(Number(date.slice(5, 7)) / 3) === period.quarter);
-}
-
-function matchesExportRegion(regionName: string, region: ReportRegion) {
-  return region === "all" || regionName === "\uBD80\uC0B0";
 }
 
 function categoryLabel(category: string) {

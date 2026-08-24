@@ -11,6 +11,7 @@
 .filterGroup { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; }
 .filterLabel { color: #59635e; font-size: 12px; font-weight: 650; white-space: nowrap; }
 .filters select { box-sizing: border-box; width: 96px; height: 34px; border: 1px solid #cbd2ce; border-radius: 5px; padding: 0 28px 0 10px; background: #fff; font: inherit; font-size: 13px; }
+.filters .regionSelect { width: 176px; }
 .segments { display: inline-flex; border: 1px solid #cbd2ce; border-radius: 5px; overflow: hidden; }
 .segments button { height: 32px; min-width: 58px; padding: 0 11px; border: 0; border-right: 1px solid #dfe4e1; background: #fff; font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
 .segments button:last-child { border-right: 0; }
