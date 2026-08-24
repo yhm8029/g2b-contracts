@@ -76,9 +76,31 @@ export async function syncMarketData(db: Database.Database, now = new Date()) {
       lastSyncedAt,
     };
   } catch (error) {
-    setMarketSyncState(db, "failed", "동기화가 중단되었습니다. 중단 전까지 수집한 데이터는 저장했습니다.");
+    const classified = classifyMarketSyncError(error);
+    setMarketSyncState(db, classified.status, classified.message);
     throw error;
   }
+}
+
+export function classifyMarketSyncError(error: unknown): {
+  status: "failed" | "quota_exhausted";
+  code: "G2B_SYNC_FAILED" | "DATA_GO_KR_DAILY_QUOTA_EXHAUSTED";
+  message: string;
+} {
+  const message = error instanceof Error ? error.message : String(error);
+  const quotaExhausted = /\b429\b|LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR|DAILY[^\n]*(?:TRAFFIC|REQUEST)[^\n]*(?:LIMIT|EXCEED)|일일[^\n]*(?:트래픽|요청|호출)[^\n]*(?:제한|초과)|요청제한횟수[^\n]*초과/i.test(message);
+  if (quotaExhausted) {
+    return {
+      status: "quota_exhausted",
+      code: "DATA_GO_KR_DAILY_QUOTA_EXHAUSTED",
+      message: "공공데이터 API 일일 할당량이 소진되었습니다. 한국시간 자정 이후 다시 동기화해 주세요. 기존 데이터는 유지됩니다.",
+    };
+  }
+  return {
+    status: "failed",
+    code: "G2B_SYNC_FAILED",
+    message: "동기화가 중단되었습니다. 중단 전까지 수집한 데이터는 저장했습니다.",
+  };
 }
 
 async function collectTargetNotices(
@@ -216,7 +238,7 @@ async function collectTargetContracts(
     for (let pageNo = 1; ; pageNo += 1) {
       const payload = await fetchShoppingMallPage(range.from.slice(0, 8), range.to.slice(0, 8), pageNo);
       if (payload.pageNo !== pageNo || payload.pageSize !== PAGE_SIZE) {
-        throw new Error("\uC1A1\uC77C\uB9C8\uC744 \uACC4\uC57D \uD398\uC774\uC9C0 \uC815\uBCF4\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
+        throw new Error("종합쇼핑몰 계약 페이지 정보가 일치하지 않습니다.");
       }
       const pageContracts: StoredMarketContract[] = [];
       for (const item of payload.items) {
@@ -278,6 +300,7 @@ async function fetchG2bJsonWithRetry(base: string, operation: string, params: Re
 }
 
 function parseContractPage(payload: unknown) {
+  assertMarketApiSuccess(payload);
   const response = record(payload).response;
   const body = record(record(response).body);
   const pageNo = integer(body.pageNo);
@@ -293,7 +316,7 @@ function parseContractPage(payload: unknown) {
   const expected = totalCount === 0
     ? 0
     : Math.min(pageSize, Math.max(0, totalCount - (pageNo - 1) * pageSize));
-  if (items.length !== expected) throw new Error("\uACC4\uC57D \uD398\uC774\uC9C0 \uAC74\uC218\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
+  if (items.length !== expected) throw new Error("종합쇼핑몰 계약 페이지 건수가 일치하지 않습니다.");
   return { pageNo, pageSize, totalCount, items };
 }
 
@@ -437,6 +460,7 @@ async function collectAwardRange(range: { from: string; to: string }): Promise<A
 }
 
 function parseSearchPage(payload: unknown) {
+  assertMarketApiSuccess(payload);
   const response = record(payload).response;
   const body = record(record(response).body);
   const pageNo = integer(body.pageNo);
@@ -454,6 +478,16 @@ function parseSearchPage(payload: unknown) {
     : Math.min(pageSize, Math.max(0, totalCount - (pageNo - 1) * pageSize));
   if (items.length !== expected) throw new Error("\uB300\uC0C1 \uACF5\uACE0 \uD398\uC774\uC9C0 \uAC74\uC218\uAC00 \uC77C\uCE58\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
   return { pageNo, pageSize, totalCount, items };
+}
+
+export function assertMarketApiSuccess(payload: unknown) {
+  const root = record(payload);
+  const response = record(root.response);
+  const header = record(response.header ?? root.header);
+  const resultCode = text(header.resultCode);
+  if (!resultCode || resultCode === "00" || resultCode === "0") return;
+  const resultMessage = text(header.resultMsg) || text(header.resultMessage) || "공급자 오류";
+  throw new Error(`나라장터 API 오류 ${resultCode}: ${resultMessage}`);
 }
 
 function record(value: unknown): Record<string, unknown> {

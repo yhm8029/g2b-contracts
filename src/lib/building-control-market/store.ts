@@ -153,14 +153,20 @@ function refreshStoredRegionNames(db: Database.Database) {
 }
 
 function removeDuplicateMarketContracts(db: Database.Database) {
-  const normalizedName = "replace(replace(replace(replace(trim(contract_name), ' ', ''), char(9), ''), char(10), ''), char(13), '')";
-  const normalizedAgency = "replace(replace(replace(replace(trim(coalesce(demand_agency_name, '')), ' ', ''), char(9), ''), char(10), ''), char(13), '')";
   db.exec(`DELETE FROM market_contracts
     WHERE source_identity IN (
       SELECT source_identity FROM (
         SELECT source_identity,
           row_number() OVER (
-            PARTITION BY winner_biz_no, ${normalizedName}, ${normalizedAgency}
+            PARTITION BY CASE
+              WHEN source_identity LIKE 'standard:%' AND trim(coalesce(notice_no, '')) != ''
+                THEN 'standard_notice:' || trim(notice_no)
+              WHEN source_identity LIKE 'standard:%'
+                THEN 'standard_contract:' || trim(coalesce(contract_no, ''))
+              WHEN source_identity LIKE 'shopping-mall:%'
+                THEN 'shopping_contract:' || trim(coalesce(contract_no, ''))
+              ELSE 'legacy:' || coalesce(winner_biz_no, '') || '|' || replace(replace(replace(replace(trim(coalesce(contract_name, '')), ' ', ''), char(9), ''), char(10), ''), char(13), '') || '|' || replace(replace(replace(replace(trim(coalesce(demand_agency_name, '')), ' ', ''), char(9), ''), char(10), ''), char(13), '')
+            END
             ORDER BY contract_date ASC, contract_no ASC, source_identity ASC
           ) AS duplicate_rank
         FROM market_contracts
@@ -340,12 +346,12 @@ export function listMarketContracts(db: Database.Database): StoredMarketContract
 
 export function getMarketSyncState(db: Database.Database) {
   const row = db.prepare("SELECT last_synced_at, status, message FROM market_sync_state WHERE singleton=1").get() as {
-    last_synced_at: string | null; status: "never" | "syncing" | "ready" | "failed"; message: string | null;
+    last_synced_at: string | null; status: "never" | "syncing" | "ready" | "failed" | "quota_exhausted"; message: string | null;
   };
   return { lastSyncedAt: row.last_synced_at, status: row.status, message: row.message };
 }
 
-export function setMarketSyncState(db: Database.Database, status: "never" | "syncing" | "ready" | "failed", message: string | null, lastSyncedAt?: string | null) {
+export function setMarketSyncState(db: Database.Database, status: "never" | "syncing" | "ready" | "failed" | "quota_exhausted", message: string | null, lastSyncedAt?: string | null) {
   db.prepare(`UPDATE market_sync_state SET status=?, message=?,
     last_synced_at=CASE WHEN ? IS NULL THEN last_synced_at ELSE ? END WHERE singleton=1`)
     .run(status, message, lastSyncedAt ?? null, lastSyncedAt ?? null);

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { initMarketStore } from "@/lib/building-control-market/store";
-import { syncMarketData } from "@/lib/building-control-market/sync";
+import { classifyMarketSyncError, syncMarketData } from "@/lib/building-control-market/sync";
 import { createSqliteConnection } from "@/lib/db/client";
 import { redactG2bSecrets } from "@/lib/g2b/http";
 
@@ -20,11 +20,13 @@ export async function POST() {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const detail = redactG2bSecrets(message);
+    const classified = classifyMarketSyncError(error);
     console.error("building-control-market sync failed:", detail);
     return NextResponse.json({
-      error: "나라장터 동기화에 실패했습니다.",
-      detail,
-    }, { status: 502 });
+      error: classified.message,
+      code: classified.code,
+      detail: classified.status === "quota_exhausted" ? undefined : detail,
+    }, { status: classified.status === "quota_exhausted" ? 429 : 502 });
   } finally {
     inFlight = null;
     db.close();

@@ -25,6 +25,8 @@ import {
   upsertMarketContracts,
 } from "@/lib/building-control-market/store";
 import {
+  assertMarketApiSuccess,
+  classifyMarketSyncError,
   demandAgencyNameFromNotice,
   mapShoppingMallContractRow,
 } from "@/lib/building-control-market/sync";
@@ -159,11 +161,11 @@ describe("selectAwardRecords / selectContractRecords", () => {
     expect(records).toHaveLength(4);
   });
 
-  it("keeps the G2B notice when the combined view contains the same shopping fact", () => {
+  it("prefers the linked shopping contract when the combined view contains the same business", () => {
     const duplicateAward: MarketAwardInput = {
       noticeNo: "R26BK0001", noticeOrder: "000", noticeName: "학교 자동제어장치 구매",
       finalAwardDate: "2026-02-10", winnerBizNo: "2048145651", winnerName: "(주)파노텍",
-      amount: 99_794_000, demandAgencyName: "강원특별자치도교육청",
+      amount: 110_000_000, demandAgencyName: "강원특별자치도교육청",
     };
     const duplicateContract: MarketContractInput = {
       contractNo: "R26TB0002", contractName: "학교 자동제어장치 (구매)",
@@ -172,7 +174,7 @@ describe("selectAwardRecords / selectContractRecords", () => {
     };
 
     expect(selectAwardRecords({ basis: "combined", region: "all", awards: [duplicateAward], contracts: [duplicateContract] }))
-      .toMatchObject([{ noticeNo: "R26BK0001" }]);
+      .toMatchObject([{ noticeNo: "R26TB0002", finalAwardDate: "2026-02-11", amount: 99_794_000 }]);
     expect(selectAwardRecords({ basis: "contract", region: "all", awards: [duplicateAward], contracts: [duplicateContract] }))
       .toHaveLength(1);
   });
@@ -201,6 +203,18 @@ describe("market regions", () => {
       "문화체육관광부",
       "국립광주박물관 전시관 빌딩자동제어장치(기계)설치공사",
     )).toBe("gwangju");
+  });
+
+  it.each([
+    ["국립창원대학교", "gyeongnam"],
+    ["국립순천대학교", "jeonnam"],
+    ["청주교육대학교", "chungbuk"],
+    ["국립공주대학교", "chungnam"],
+    ["국립군산대학교", "jeonbuk"],
+    ["국립안동대학교", "gyeongbuk"],
+    ["춘천교육대학교", "gangwon"],
+  ] as const)("classifies city-only agency %s", (agency, region) => {
+    expect(classifyMarketRegion(agency)).toBe(region);
   });
 });
 
@@ -275,6 +289,88 @@ describe("shopping mall workbook", () => {
     expect(chartXml).toContain("<c:pieChart>");
     expect(chartXml).toContain("'시장점유율'!$A$7:$A$10");
     expect(chartXml).toContain("'시장점유율'!$E$7:$E$10");
+  });
+
+  it("keeps the G2B award as the combined representative and exports the linked shopping contract", async () => {
+    const awards = [{
+      noticeNo: "R25BK00818157", noticeOrder: "000", finalAwardDate: "2025-05-15",
+      winnerBizNo: "2048145651", winnerName: "(주)파노텍", amount: 262_900_000,
+      noticeName: "동구청사 전기·기계설비 자동제어 교체",
+      demandAgencyName: "부산광역시 동구", regionName: "부산",
+      sourceUrl: "https://example.test/award",
+    }];
+    const contracts = [{
+      sourceIdentity: "shopping-1", contractNo: "R25TA00533645-01",
+      contractName: "동구청사 전기·기계설비 자동제어 교체",
+      contractDate: "2025-08-18", noticeNo: null, noticeOrder: null,
+      winnerBizNo: "2048145651", winnerName: "(주)파노텍", amount: 251_449_000,
+      demandAgencyName: "부산광역시 동구", regionName: "부산",
+      sourceUrl: null,
+    }];
+    const report = buildMarketShareReport({
+      period: { year: 2025 }, awards, contracts, basis: "combined", region: "all",
+      excellentRegistry, cooperativeBizNo: cooperative,
+    });
+
+    const bytes = await buildMarketWorkbook({ report, basis: "combined", region: "all", awards, contracts });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes);
+    const details = workbook.getWorksheet("통합내역")!;
+
+    expect(details.rowCount).toBe(2);
+    expect(details.getRow(1).values).toEqual([
+      undefined, "기준", "지역", "내역명", "기준일", "나라장터 공고번호",
+      "나라장터 낙찰일", "종합쇼핑몰 계약번호", "종합쇼핑몰 계약일", "업체명", "사업자번호",
+      "집계금액", "나라장터 낙찰금액", "종합쇼핑몰 계약금액", "수요기관", "원문 URL", "집계업체",
+    ]);
+    expect(details.getCell("A2").value).toBe("종합쇼핑몰(나라장터 연계)");
+    expect(details.getCell("D2").value).toBe("2025-08-18");
+    expect(details.getCell("E2").value).toBe("R25BK00818157");
+    expect(details.getCell("F2").value).toBe("2025-05-15");
+    expect(details.getCell("G2").value).toBe("R25TA00533645-01");
+    expect(details.getCell("H2").value).toBe("2025-08-18");
+    expect(details.getCell("K2").value).toBe(251_449_000);
+    expect(details.getCell("L2").value).toBe(262_900_000);
+    expect(details.getCell("M2").value).toBe(251_449_000);
+
+    const summary = workbook.getWorksheet("시장점유율")!;
+    expect(summary.getCell("E7").value).toMatchObject({
+      formula: "COUNTIF('통합내역'!$P:$P,A7)",
+    });
+    expect(summary.getCell("F7").value).toMatchObject({
+      formula: "IFERROR(E7/SUM($E$7:$E$10),0)",
+    });
+  });
+});
+
+describe("market sync error classification", () => {
+  it("surfaces the provider result message before parsing page numbers", () => {
+    expect(() => assertMarketApiSuccess({
+      response: {
+        header: {
+          resultCode: "22",
+          resultMsg: "LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR",
+        },
+      },
+    })).toThrow("LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR");
+  });
+
+  it.each([
+    "G2B API request failed with status 429.",
+    "LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR",
+    "일일 트래픽 제한을 초과했습니다.",
+  ])("classifies daily quota exhaustion: %s", (message) => {
+    expect(classifyMarketSyncError(new Error(message))).toMatchObject({
+      status: "quota_exhausted",
+      code: "DATA_GO_KR_DAILY_QUOTA_EXHAUSTED",
+    });
+  });
+
+  it("keeps ordinary provider failures separate", () => {
+    expect(classifyMarketSyncError(new Error("페이지 번호 형식이 올바르지 않습니다."))).toMatchObject({
+      status: "failed",
+      code: "G2B_SYNC_FAILED",
+    });
   });
 });
 
@@ -378,6 +474,168 @@ describe("incremental market persistence", () => {
       regionName: "부산",
     });
     expect(listMarketContracts(db)).toHaveLength(1);
+    db.close();
+  });
+
+  it("keeps the earliest standard contract for each non-empty notice number regardless of contract number", () => {
+    const db = new Database(":memory:");
+    initMarketStore(db);
+    const base = {
+      contractName: "\uC790\uB3D9\uC81C\uC5B4 \uAD6C\uB9E4\uACC4\uC57D",
+      noticeNo: "R25BK000001",
+      noticeOrder: "00",
+      winnerBizNo: "3148613145",
+      winnerName: "company-a",
+      amount: 100,
+      demandAgencyName: "\uD55C\uAD6D\uB18C\uC5B4\uCD0C\uACF0",
+      regionName: "\uAE30\uD0C0",
+      sourceUrl: null,
+    };
+
+    upsertMarketContracts(db, [{
+      ...base,
+      sourceIdentity: "standard:3148613145:R26TA000002:0:2026-01-15:100",
+      contractNo: "R26TA000002",
+      contractDate: "2026-01-15",
+    }]);
+    upsertMarketContracts(db, [{
+      ...base,
+      sourceIdentity: "standard:3148613145:R25TA000001:0:2025-03-10:100",
+      contractNo: "R25TA000001",
+      contractDate: "2025-03-10",
+      contractName: "original contract title",
+      noticeOrder: "000",
+      winnerBizNo: "2222222222",
+      winnerName: "original winner",
+      demandAgencyName: "original agency",
+    }]);
+
+    expect(listMarketContracts(db)).toMatchObject([{
+      sourceIdentity: "standard:3148613145:R25TA000001:0:2025-03-10:100",
+      contractNo: "R25TA000001",
+      contractDate: "2025-03-10",
+    }]);
+    db.close();
+  });
+
+  it("uses contract number as the standard contract identity when notice number is empty", () => {
+    const db = new Database(":memory:");
+    initMarketStore(db);
+    const base = {
+      contractNo: "C-NO-NOTICE",
+      contractName: "\uC790\uB3D9\uC81C\uC5B4 \uAD6C\uB9E4\uACC4\uC57D",
+      noticeNo: null,
+      noticeOrder: null,
+      winnerBizNo: "3148613145",
+      winnerName: "company-a",
+      amount: 100,
+      demandAgencyName: "\uD55C\uAD6D\uB18C\uC5B4\uCD0C\uACF0",
+      regionName: "\uAE30\uD0C0",
+      sourceUrl: null,
+    };
+
+    upsertMarketContracts(db, [{
+      ...base,
+      sourceIdentity: "standard:3148613145:C-NO-NOTICE:0:2026-01-15:100",
+      contractDate: "2026-01-15",
+    }]);
+    upsertMarketContracts(db, [{
+      ...base,
+      sourceIdentity: "standard:3148613145:C-NO-NOTICE:0:2025-03-10:100",
+      contractDate: "2025-03-10",
+      contractName: "original no-notice title",
+      winnerBizNo: "2222222222",
+      winnerName: "original no-notice winner",
+      demandAgencyName: "original no-notice agency",
+    }]);
+
+    expect(listMarketContracts(db)).toMatchObject([{
+      sourceIdentity: "standard:3148613145:C-NO-NOTICE:0:2025-03-10:100",
+      contractDate: "2025-03-10",
+    }]);
+    db.close();
+  });
+
+  it.each([
+    ["2026 first", ["2026-03-10", "2025-03-10"], "2025-03-10"],
+    ["2025 first", ["2025-03-10", "2026-03-10"], "2025-03-10"],
+  ])("is order-independent when syncing %s", (_label, dates, expectedDate) => {
+    const db = new Database(":memory:");
+    initMarketStore(db);
+    const [firstDate, secondDate] = dates;
+
+    upsertMarketContracts(db, [{
+      sourceIdentity: `standard:3148613145:R${firstDate === "2025-03-10" ? "25" : "26"}TA00000${firstDate === "2025-03-10" ? "1" : "2"}:0:${firstDate}:100`,
+      contractNo: firstDate === "2025-03-10" ? "R25TA000001" : "R26TA000002",
+      contractName: "\uC790\uB3D9\uC81C\uC5B4 \uAD6C\uB9E4\uACC4\uC57D",
+      contractDate: firstDate,
+      noticeNo: "R25BK000001",
+      noticeOrder: "00",
+      winnerBizNo: "3148613145",
+      winnerName: "company-a",
+      amount: 100,
+      demandAgencyName: "\uD55C\uAD6D\uB18C\uC5B4\uCD0C\uACF0",
+      regionName: "\uAE30\uD0C0",
+      sourceUrl: null,
+    }]);
+    upsertMarketContracts(db, [{
+      sourceIdentity: `standard:3148613145:R${secondDate === "2025-03-10" ? "25" : "26"}TA00000${secondDate === "2025-03-10" ? "1" : "2"}:0:${secondDate}:100`,
+      contractNo: secondDate === "2025-03-10" ? "R25TA000001" : "R26TA000002",
+      contractName: "\uC790\uB3D9\uC81C\uC5B4 \uAD6C\uB9E4\uACC4\uC57D",
+      contractDate: secondDate,
+      noticeNo: "R25BK000001",
+      noticeOrder: "00",
+      winnerBizNo: "3148613145",
+      winnerName: "company-a",
+      amount: 100,
+      demandAgencyName: "\uD55C\uAD6D\uB18C\uC5B4\uCD0C\uACF0",
+      regionName: "\uAE30\uD0C0",
+      sourceUrl: null,
+    }]);
+
+    expect(listMarketContracts(db)).toHaveLength(1);
+    expect(listMarketContracts(db)[0]?.contractDate).toBe(expectedDate);
+    db.close();
+  });
+
+  it("does not collapse shopping-mall delivery requests that share a framework notice number", () => {
+    const db = new Database(":memory:");
+    initMarketStore(db);
+    const shared = {
+      contractName: "\uC6B0\uC218\uC870\uB2EC\uBB3C\uD488 \uB2E4\uB4E0\uC2DC\uC7A5 \uC2DC\uC138",
+      noticeNo: "R25TA000001",
+      noticeOrder: "00",
+      winnerBizNo: "3148613145",
+      winnerName: "company-a",
+      amount: 100,
+      demandAgencyName: "\uC870\uB2EC\uCCAD",
+      regionName: "\uAE30\uD0C0",
+      sourceUrl: null,
+    };
+
+    upsertMarketContracts(db, [
+      { ...shared, sourceIdentity: "shopping-mall:3148613145:R25DL000001:0:0:2025-03-10:100", contractNo: "R25DL000001", contractDate: "2025-03-10" },
+      { ...shared, sourceIdentity: "shopping-mall:3148613145:R25DL000002:0:0:2025-03-11:100", contractNo: "R25DL000002", contractDate: "2025-03-11" },
+    ]);
+
+    expect(listMarketContracts(db)).toHaveLength(2);
+    expect(listMarketContracts(db).map((row) => row.contractNo).sort()).toEqual(["R25DL000001", "R25DL000002"]);
+    db.close();
+  });
+
+  it("upsert keeps only the earliest shopping-mall revision per contractNo", () => {
+    const db = new Database(":memory:");
+    initMarketStore(db);
+    const rows = [
+      { sourceIdentity: "shopping-mall:3148613145:C-001:1:0:2026-03-01:1200000", contractNo: "C-001", contractName: "Mall Renovation 2026", contractDate: "2026-03-01", noticeNo: "N-2026-01", noticeOrder: "1", winnerBizNo: "B-2026", winnerName: "Winner 2026", amount: 1200000, demandAgencyName: "Mall Holdings", regionName: "Seoul", sourceUrl: "https://example.com/2026" },
+      { sourceIdentity: "shopping-mall:3148613145:C-001:0:0:2025-06-15:900000", contractNo: "C-001", contractName: "Mall Renovation 2025", contractDate: "2025-06-15", noticeNo: "N-2025-01", noticeOrder: "1", winnerBizNo: "B-2025", winnerName: "Winner 2025", amount: 900000, demandAgencyName: "Mall Holdings", regionName: "Seoul", sourceUrl: "https://example.com/2025" },
+    ];
+    upsertMarketContracts(db, rows);
+    const stored = listMarketContracts(db);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.contractNo).toBe("C-001");
+    expect(stored[0]?.sourceIdentity).toBe("shopping-mall:3148613145:C-001:0:0:2025-06-15:900000");
+    expect(stored[0]?.contractDate).toBe("2025-06-15");
     db.close();
   });
 

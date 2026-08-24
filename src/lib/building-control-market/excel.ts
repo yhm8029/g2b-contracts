@@ -2,7 +2,7 @@ import ExcelJS from "exceljs";
 import JSZip from "jszip";
 
 import {
-  removeCrossSourceDuplicateContracts,
+  linkCrossSourceMarketFacts,
   type MarketShareReport,
   type ReportBasis,
   type ReportRegion,
@@ -44,6 +44,9 @@ export async function buildMarketWorkbook(input: {
   const { report, basis, region, awards, contracts } = input;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "g2b-contracts";
+  workbook.calcProperties.fullCalcOnLoad = true;
+  const detailsSheetName = basis === "award" ? "공고내역" : basis === "contract" ? "쇼핑몰내역" : "통합내역";
+  const detailsBucketColumn = basis === "combined" ? "P" : "L";
 
   const summary = workbook.addWorksheet("\uc2dc\uc7a5\uc810\uc720\uc728", { views: [{ state: "frozen", ySplit: 5 }] });
   summary.columns = [32, 14, 18, 15, 12, 14].map((width) => ({ width }));
@@ -63,21 +66,106 @@ export async function buildMarketWorkbook(input: {
   for (const row of report.rows) {
     const added = summary.addRow([
       row.companyName, categoryLabel(row.category), row.bizNo ?? "", row.designationEndDate ?? "",
-      row.awardCount, row.marketSharePercent / 100,
+      null, null,
     ]);
+    added.getCell(5).value = {
+      formula: `COUNTIF('${detailsSheetName}'!$${detailsBucketColumn}:$${detailsBucketColumn},A${added.number})`,
+      result: row.awardCount,
+    };
+    added.getCell(6).value = {
+      formula: `IFERROR(E${added.number}/SUM($E$7:$E$${6 + report.rows.length}),0)`,
+      result: row.marketSharePercent / 100,
+    };
     added.getCell(6).numFmt = "0.0%";
   }
   summary.autoFilter = { from: "A6", to: `F${Math.max(6, summary.rowCount)}` };
-  const details = workbook.addWorksheet(basis === "award" ? "\uacf5\uace0\ub0b4\uc5ed" : basis === "contract" ? "\uc1fc\ud551\ubab0\ub0b4\uc5ed" : "\ud1b5\ud569\ub0b4\uc5ed", { views: [{ state: "frozen", ySplit: 1 }] });
-  details.columns = [14, 14, 36, 14, 20, 20, 22, 18, 18, 28, 48].map((width) => ({ width }));
+  const details = workbook.addWorksheet(detailsSheetName, { views: [{ state: "frozen", ySplit: 1 }] });
+  details.columns = (basis === "combined"
+    ? [26, 14, 40, 14, 20, 14, 22, 14, 22, 18, 18, 18, 18, 30, 48, 24]
+    : [14, 14, 36, 14, 20, 20, 22, 18, 18, 28, 48, 24]
+  ).map((width) => ({ width }));
   details.getRow(1).values = basis === "award"
     ? ["\uae30\uc900", "\uc9c0\uc5ed", "\uacf5\uace0\uba85", "\ub099\ucc30\uc77c", "\uacf5\uace0\ubc88\ud638", "\uc5f0\uacc4\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"]
     : basis === "contract"
       ? ["\uae30\uc900", "\uc9c0\uc5ed", "\ub0a9\ud488\uc694\uad6c\uba85", "\ub0a9\ud488\uc694\uad6c\uc77c", "\ub0a9\ud488\uc694\uad6c\ubc88\ud638", "\uc6d0 \ub2e8\uac00\uacc4\uc57d\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"]
-      : ["\uae30\uc900", "\uc9c0\uc5ed", "\ub0b4\uc5ed\uba85", "\uae30\uc900\uc77c", "\ubc88\ud638", "\uc6d0 \ub2e8\uac00\uacc4\uc57d\ubc88\ud638", "\uc5c5\uccb4\uba85", "\uc0ac\uc5c5\uc790\ubc88\ud638", "\uae08\uc561", "\uc218\uc694\uae30\uad00", "\uc6d0\ubb38 URL"];
+      : ["기준", "지역", "내역명", "기준일", "나라장터 공고번호", "나라장터 낙찰일", "종합쇼핑몰 계약번호", "종합쇼핑몰 계약일", "업체명", "사업자번호", "집계금액", "나라장터 낙찰금액", "종합쇼핑몰 계약금액", "수요기관", "원문 URL", "집계업체"];
+  if (basis !== "combined") details.getRow(1).getCell(12).value = "집계업체";
   styleHeader(details.getRow(1));
 
-  if (basis !== "contract") {
+  if (basis === "combined") {
+    const eligibleAwards = awards.filter((award) => !isExcludedMarketFrameworkName(award.noticeName));
+    const linked = linkCrossSourceMarketFacts(eligibleAwards, contracts);
+    for (const { award, contract } of linked.links.filter(({ contract }) =>
+      inReportPeriod(contract.contractDate, report.period)
+      && matchesMarketRegion(contract.demandAgencyName, region, contract.contractName))) {
+      const sourceUrl = contract.sourceUrl ?? award.sourceUrl;
+      const row = details.addRow([
+        "종합쇼핑몰(나라장터 연계)",
+        marketRegionLabel(resolveMarketRegion(contract.demandAgencyName, contract.contractName)),
+        contract.contractName,
+        contract.contractDate,
+        award.noticeNo,
+        award.finalAwardDate,
+        contract.contractNo,
+        contract.contractDate,
+        contract.winnerName,
+        contract.winnerBizNo,
+        contract.amount,
+        award.amount,
+        contract.amount,
+        contract.demandAgencyName ?? "",
+        sourceUrl ?? "",
+        marketBucketName(report, contract.contractDate, contract.winnerBizNo),
+      ]);
+      setHyperlink(row, 15, sourceUrl);
+    }
+    for (const award of linked.unmatchedAwards.filter((item) =>
+      inReportPeriod(item.finalAwardDate, report.period)
+      && matchesMarketRegion(item.demandAgencyName, region, item.noticeName))) {
+      const row = details.addRow([
+        "나라장터 공고",
+        marketRegionLabel(resolveMarketRegion(award.demandAgencyName, award.noticeName)),
+        award.noticeName ?? "",
+        award.finalAwardDate,
+        award.noticeNo,
+        award.finalAwardDate,
+        "",
+        "",
+        award.winnerName,
+        award.winnerBizNo,
+        award.amount,
+        award.amount,
+        "",
+        award.demandAgencyName ?? "",
+        award.sourceUrl ?? "",
+        marketBucketName(report, award.finalAwardDate, award.winnerBizNo),
+      ]);
+      setHyperlink(row, 15, award.sourceUrl);
+    }
+    for (const contract of linked.unmatchedContracts.filter((item) =>
+      inReportPeriod(item.contractDate, report.period)
+      && matchesMarketRegion(item.demandAgencyName, region, item.contractName))) {
+      const row = details.addRow([
+        "종합쇼핑몰",
+        marketRegionLabel(resolveMarketRegion(contract.demandAgencyName, contract.contractName)),
+        contract.contractName,
+        contract.contractDate,
+        "",
+        "",
+        contract.contractNo,
+        contract.contractDate,
+        contract.winnerName,
+        contract.winnerBizNo,
+        contract.amount,
+        "",
+        contract.amount,
+        contract.demandAgencyName ?? "",
+        contract.sourceUrl ?? "",
+        marketBucketName(report, contract.contractDate, contract.winnerBizNo),
+      ]);
+      setHyperlink(row, 15, contract.sourceUrl);
+    }
+  } else if (basis === "award") {
     for (const award of awards.filter((item) =>
       !isExcludedMarketFrameworkName(item.noticeName)
       && inReportPeriod(item.finalAwardDate, report.period)
@@ -94,18 +182,12 @@ export async function buildMarketWorkbook(input: {
         award.amount,
         award.demandAgencyName ?? "",
         award.sourceUrl ?? "",
+        marketBucketName(report, award.finalAwardDate, award.winnerBizNo),
       ]);
-      if (award.sourceUrl && /^https?:\/\//i.test(award.sourceUrl)) {
-        row.getCell(11).value = { text: award.sourceUrl, hyperlink: award.sourceUrl };
-        row.getCell(11).font = { color: { argb: "FF0563C1" }, underline: true };
-      }
+      setHyperlink(row, 11, award.sourceUrl);
     }
-  }
-  if (basis !== "award") {
-    const sourceContracts = basis === "combined"
-      ? removeCrossSourceDuplicateContracts(awards, contracts)
-      : contracts;
-    for (const contract of sourceContracts.filter((item) =>
+  } else {
+    for (const contract of contracts.filter((item) =>
       inReportPeriod(item.contractDate, report.period)
       && matchesMarketRegion(item.demandAgencyName, region, item.contractName))) {
       const row = details.addRow([
@@ -120,22 +202,45 @@ export async function buildMarketWorkbook(input: {
         contract.amount,
         contract.demandAgencyName ?? "",
         contract.sourceUrl ?? "",
+        marketBucketName(report, contract.contractDate, contract.winnerBizNo),
       ]);
-      if (contract.sourceUrl && /^https?:\/\//i.test(contract.sourceUrl)) {
-        row.getCell(11).value = { text: contract.sourceUrl, hyperlink: contract.sourceUrl };
-        row.getCell(11).font = { color: { argb: "FF0563C1" }, underline: true };
-      }
+      setHyperlink(row, 11, contract.sourceUrl);
     }
   }
 
-  details.getColumn(9).numFmt = "#,##0";
-  details.autoFilter = { from: "A1", to: `K${Math.max(1, details.rowCount)}` };
+  if (basis === "combined") {
+    for (const column of [11, 12, 13]) details.getColumn(column).numFmt = "#,##0";
+  } else {
+    details.getColumn(9).numFmt = "#,##0";
+  }
+  details.autoFilter = { from: "A1", to: `${basis === "combined" ? "P" : "L"}${Math.max(1, details.rowCount)}` };
 
   const output = await workbook.xlsx.writeBuffer();
   const bytes = await addNativePieChart(Buffer.from(output), report);
   const result = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(result).set(bytes);
   return result;
+}
+
+function setHyperlink(row: ExcelJS.Row, column: number, url: string | null | undefined) {
+  if (!url || !/^https?:\/\//i.test(url)) return;
+  row.getCell(column).value = { text: url, hyperlink: url };
+  row.getCell(column).font = { color: { argb: "FF0563C1" }, underline: true };
+}
+
+function marketBucketName(report: MarketShareReport, date: string, bizNo: string): string {
+  const normalizedBizNo = bizNo.replace(/\D/g, "");
+  const cooperative = report.rows.find((row) => row.category === "cooperative" && row.bizNo === normalizedBizNo);
+  if (cooperative) return cooperative.companyName;
+  const excellent = report.rows.find((row) =>
+    row.category === "excellent"
+    && row.bizNo === normalizedBizNo
+    && row.designationStartDate !== null
+    && row.designationEndDate !== null
+    && date >= row.designationStartDate
+    && date <= row.designationEndDate);
+  if (excellent) return excellent.companyName;
+  return report.rows.find((row) => row.category === "non_excellent")?.companyName ?? "조달우수X";
 }
 
 function styleHeader(row: ExcelJS.Row) {
